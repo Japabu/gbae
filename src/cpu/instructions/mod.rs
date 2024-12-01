@@ -5,6 +5,7 @@ use super::CPU;
 mod dp;
 mod branch;
 mod ctrl_ext;
+mod ls;
 pub mod lut;
 
 fn set_nz_flags(cpu: &mut CPU, value: u32) {

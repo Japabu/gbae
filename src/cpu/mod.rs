@@ -2,7 +2,7 @@ mod instructions;
 
 use instructions::lut::InstructionLut;
 
-use crate::bitutil::{format_instruction, get_bit, get_bits, set_bit, set_bits};
+use crate::bitutil::{format_instruction, get_bit, get_bits, read_u16, read_u32, set_bit, set_bits};
 
 const MODE_USR: u32 = 0b10000;
 const MODE_FIQ: u32 = 0b10001;
@@ -12,27 +12,29 @@ const MODE_ABT: u32 = 0b10111;
 const MODE_UND: u32 = 0b11011;
 const MODE_SYS: u32 = 0b11111;
 
-pub struct CPU {
+pub struct CPU<'a> {
     pub r: [u32; 16],   /* r13: stack pointer, r14: link register, r15: pc */
     pub cpsr: u32,      /* current program status register */
     pub spsr: u32,      /* saved program status register */
+    pub mem: &'a mut [u8],
 }
 
-impl CPU {
-    pub fn new() -> Self {
+impl <'a> CPU<'a> {
+    pub fn new(mem: &'a mut [u8]) -> Self {
         InstructionLut::initialize();
 
         let mut cpu = CPU {
             r: [0; 16],
             cpsr: 0,
             spsr: 0,
+            mem,
         };
         cpu.reset();
         cpu
     }
 
-    pub fn cycle(&mut self, mem: &mut [u8]) {
-        let instruction = self.fetch(mem);
+    pub fn cycle(&mut self) {
+        let instruction = self.fetch();
         self.advance_pc();
 
         if !self.evaluate_condition(instruction) {
@@ -62,21 +64,13 @@ impl CPU {
         self.r[15] = 0x00000000;
     }
 
-    fn fetch(&self, mem: &[u8]) -> u32 {
+    fn fetch(&self) -> u32 {
         let pc = self.r[15] as usize;
         println!("Fetching @ {:#x}", pc);
         if self.get_thumb_state() {
-            u16::from_le_bytes(
-                mem[pc..pc + 2]
-                    .try_into()
-                    .expect("Failed to fetch thumb instruction"),
-            ) as u32
+            read_u16(&self.mem, pc) as u32
         } else {
-            u32::from_le_bytes(
-                mem[pc..pc + 4]
-                    .try_into()
-                    .expect("Failed to fetch arm instruction"),
-            )
+            read_u32(&self.mem, pc)
         }
     }
 

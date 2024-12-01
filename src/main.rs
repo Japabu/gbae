@@ -14,8 +14,8 @@ fn main() {
     let cartridge = CartridgeInfo::parse(&data).expect("Failed to parse cartridge info");
     println!("Title: {}", cartridge.title);
 
-    let mut cpu = CPU::new();
+    let mut cpu = CPU::new(&mut data);
     loop {
-        cpu.cycle(&mut data);
+        cpu.cycle();
     }
 }

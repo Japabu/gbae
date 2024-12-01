@@ -1,12 +1,13 @@
 use crate::{bitutil::{self, get_bit, get_bits}, cpu::{instructions::set_nz_flags, CPU}};
 
 type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
+type DpHandlerFn = fn(&mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool);
 
 pub fn handler(
     cpu: &mut CPU,
     instruction: u32,
     operand2_decoder: Operand2Fn,
-    handler: fn(&mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool),
+    handler: DpHandlerFn,
 ) {
     // set flags bit
     let s = get_bit(instruction, 20);

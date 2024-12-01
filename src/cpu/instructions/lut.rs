@@ -1,4 +1,4 @@
-use crate::cpu::instructions::{branch, ctrl_ext, dp};
+use crate::cpu::instructions::{branch, ctrl_ext, dp, ls};
 use crate::{
     bitutil::{format_instruction, get_bits},
     cpu::CPU,
@@ -6,24 +6,35 @@ use crate::{
 
 macro_rules! add_dp_patterns {
     ($lut:expr, $($opcode:expr => $handler:expr),* $(,)?) => {
-        use super::dp::{op2_imm, op2_imm_shift, op2_reg_shift};
         $(
-            $lut.add_pattern(&format!("001{}xxxxx", $opcode), dp_handler!(op2_imm, $handler));
-            $lut.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(op2_imm_shift, $handler));
-            $lut.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(op2_reg_shift, $handler));
+            $lut.add_pattern(&format!("001{}xxxxx", $opcode), dp_handler!(dp::op2_imm, $handler));
+            $lut.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(dp::op2_imm_shift, $handler));
+            $lut.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(dp::op2_reg_shift, $handler));
         )*
     };
 }
 
 macro_rules! dp_handler {
-    ($operand2_decoder:ident, $dp_handler:expr) => {
+    ($operand2_decoder:expr, $dp_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| {
-            use super::dp::handler;
-            handler(
+            dp::handler(
                 cpu,
                 instruction,
                 $operand2_decoder,
                 $dp_handler,
+            );
+        }
+    };
+}
+
+macro_rules! ls_handler {
+    ($adress_decoder:expr, $ls_handler:expr) => {
+        |cpu: &mut CPU, instruction: u32| {
+            ls::handler(
+                cpu,
+                instruction,
+                $adress_decoder,
+                $ls_handler,
             );
         }
     };
@@ -73,6 +84,7 @@ impl InstructionLut {
         );
         self.add_pattern("1010xxxxxxxx", branch::imm);
         self.add_pattern("00010x100000", ctrl_ext::msr_reg);
+        self.add_pattern("010xxxx1xxxx", ls_handler!(ls::addr_imm, ls::ldr));
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionFn) {

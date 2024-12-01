@@ -1,5 +1,5 @@
 use crate::{bitutil::{format_instruction, get_bit, get_bits}, cpu::CPU};
-use super::dp::{mov, add};
+use super::dp::{mov, add, and};
 
 macro_rules! dp_handler {
     ($operand2_decoder:ident, $dp_handler:expr) => {
@@ -34,17 +34,18 @@ impl InstructionLut {
     }
 
     fn setup_patterns(&mut self) {
-        // Data processing immediate operand
-        self.add_pattern("0011101xxxx0", dp_handler!(op2_imm, mov));    // MOV
-        self.add_pattern("0010100xxxx0", dp_handler!(op2_imm, add));    // ADD
-
-        // Data processing immediate shift
-        self.add_pattern("0001101xxxx0", dp_handler!(op2_imm_shift, mov));    // MOV
-        self.add_pattern("0000100xxxx0", dp_handler!(op2_imm_shift, add));    // ADD
-
-        // Data processing register shift
-        self.add_pattern("0001101xxxx1", dp_handler!(op2_reg_shift, mov));    // MOV
-        self.add_pattern("0000100xxxx1", dp_handler!(op2_reg_shift, add));    // ADD
+        // Add patterns for each instruction type with all operand variants
+        for (opcode, handler) in [
+            ("1101", mov),  // MOV
+            ("0100", add),  // ADD
+            ("0000", and),  // AND
+        ] {
+            // Immediate operand (I=1)
+            self.add_pattern(&format!("001{}xxxx0", opcode), dp_handler!(op2_imm, handler));
+            // Register operands (I=0)
+            self.add_pattern(&format!("000{}xxxx0", opcode), dp_handler!(op2_imm_shift, handler));
+            self.add_pattern(&format!("000{}xxxx1", opcode), dp_handler!(op2_reg_shift, handler));
+        }
     }
 
     pub fn get(instruction: u32) -> InstructionFn {

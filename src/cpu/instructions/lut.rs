@@ -1,10 +1,10 @@
 use crate::{bitutil::{format_instruction, get_bit, get_bits}, cpu::CPU};
-use super::dp_lut::DataProcessingLut;
+use super::dp::{mov};
 
 macro_rules! dp_handler {
-    ($operand2_decoder:ident) => {
+    ($operand2_decoder:ident, $dp_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| {
-            InstructionLut::data_processing_handler(cpu, instruction, $operand2_decoder);
+            InstructionLut::data_processing_handler(cpu, instruction, $operand2_decoder, $dp_handler);
         }
     };
 }
@@ -36,9 +36,14 @@ impl InstructionLut {
     }
 
     fn setup_patterns(&mut self) {
-        self.add_pattern("001xxxxxxxx0", dp_handler!(op2_imm));
-        self.add_pattern("000xxxxxxxx0", dp_handler!(op2_imm_shift));
-        self.add_pattern("000xxxxxxxx1", dp_handler!(op2_reg_shift));
+        // Data processing immediate operand
+        self.add_pattern("0011101xxxx0", dp_handler!(op2_imm, mov));
+
+        // Data processing immediate shift
+        self.add_pattern("0001101xxxx0", dp_handler!(op2_imm_shift, mov));
+
+        // Data processing register shift
+        self.add_pattern("0001101xxxx1", dp_handler!(op2_reg_shift, mov));
     }
 
     pub fn get(instruction: u32) -> InstructionFn {
@@ -92,7 +97,12 @@ impl InstructionLut {
         panic!("Unknown instruction: {}", format_instruction(instruction));
     }
     
-    fn data_processing_handler(cpu: &mut CPU, instruction: u32, operand2_decoder: Operand2Fn) {
+    fn data_processing_handler(
+        cpu: &mut CPU, 
+        instruction: u32, 
+        operand2_decoder: Operand2Fn,
+        handler: fn(&mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool)
+    ) {
         // set flags bit
         let s = get_bit(instruction, 20);
     
@@ -103,8 +113,7 @@ impl InstructionLut {
         let d = get_bits(instruction, 12, 4);
         let (so, sco) = operand2_decoder(cpu, instruction);
     
-        let opcode = get_bits(instruction, 21, 4);
-        DataProcessingLut::get(opcode)(cpu, s, n, d, so, sco);
+        handler(cpu, s, n, d, so, sco);
     }
 }
 

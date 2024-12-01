@@ -9,6 +9,8 @@ macro_rules! dp_handler {
     };
 }
 
+
+
 type InstructionFn = fn(&mut CPU, instruction: u32);
 type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
 

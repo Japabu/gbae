@@ -1,12 +1,38 @@
 use crate::{bitutil::{get_bit, get_bits}, cpu::{instructions::set_nz_flags, CPU}};
 
+type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
+
+pub fn handler(
+    cpu: &mut CPU,
+    instruction: u32,
+    operand2_decoder: Operand2Fn,
+    handler: fn(&mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool),
+) {
+    // set flags bit
+    let s = get_bit(instruction, 20);
+
+    // operand 1 register
+    let n = get_bits(instruction, 16, 4) as usize;
+
+    // destination register
+    let d = get_bits(instruction, 12, 4) as usize;
+
+    if d == 15 {
+        panic!("dp instructions with destination register 15 not implemented");
+    }
+
+    let (so, sco) = operand2_decoder(cpu, instruction);
+
+    handler(cpu, s, n, d, so, sco);
+}
+
 pub fn op2_imm(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
     let immed_8 = get_bits(instruction, 0, 8);
     let rotate_imm = get_bits(instruction, 8, 4);
     let shifter_operand = immed_8.rotate_right(2 * rotate_imm);
     let carry: bool;
     if rotate_imm == 0 {
-        carry = cpu.r.get_carry_flag()
+        carry = cpu.get_carry_flag()
     } else {
         carry = get_bit(shifter_operand, 31)
     };
@@ -22,35 +48,35 @@ pub fn op2_reg_shift(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
 }
 
 
-pub fn add(cpu: &mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool) {
+pub fn add(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
     let op1 = cpu.r[n];
     let (result, carry) = op1.overflowing_add(so);
-    cpu.r[d] = result;
+    cpu.r[d as usize] = result;
 
     if s {
         set_nz_flags(cpu, result);
-        cpu.r.set_carry_flag(carry);
+        cpu.set_carry_flag(carry);
         // Set overflow flag if sign of both operands is different from result
         let overflow = (op1 ^ result) & (so ^ result) & 0x8000_0000 != 0;
-        cpu.r.set_overflow_flag(overflow);
+        cpu.set_overflow_flag(overflow);
     }
 }
 
-pub fn and(cpu: &mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool) {
+pub fn and(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
     cpu.r[d] = so & cpu.r[n];
 
     if s {
         set_nz_flags(cpu, cpu.r[d]);
-        cpu.r.set_carry_flag(sco);
+        cpu.set_carry_flag(sco);
     }
 }
 
-pub fn mov(cpu: &mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool) {
+pub fn mov(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
     debug_assert_eq!(n, 0);
 
     cpu.r[d] = so;
     if s {
         set_nz_flags(cpu, cpu.r[d]);
-        cpu.r.set_carry_flag(sco);
+        cpu.set_carry_flag(sco);
     }
 }

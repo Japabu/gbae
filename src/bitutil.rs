@@ -34,11 +34,22 @@ pub fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
 
 pub fn format_instruction(instruction: u32) -> String {
     format!(
-        "{:012b} ({:04b} {:04b} {:04b})",
+        "Instruction: {:012b}\n\
+        Bit Index:   27 26 25 24 23 22 21 20 07 06 05 04\n\
+        Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2}\n",
         instruction,
-        get_bits(instruction, 24, 4),
-        get_bits(instruction, 20, 4),
-        get_bits(instruction, 4, 4)
+        get_bit(instruction, 27) as u32,
+        get_bit(instruction, 26) as u32,
+        get_bit(instruction, 25) as u32,
+        get_bit(instruction, 24) as u32,
+        get_bit(instruction, 23) as u32,
+        get_bit(instruction, 22) as u32,
+        get_bit(instruction, 21) as u32,
+        get_bit(instruction, 20) as u32,
+        get_bit(instruction, 7) as u32,
+        get_bit(instruction, 6) as u32,
+        get_bit(instruction, 5) as u32,
+        get_bit(instruction, 4) as u32,
     )
 }
 

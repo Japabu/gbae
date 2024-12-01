@@ -1,6 +1,6 @@
-use crate::cpu::instructions::{branch, dp};
+use crate::cpu::instructions::{branch, ctrl_ext, dp};
 use crate::{
-    bitutil::{format_instruction, get_bit, get_bits},
+    bitutil::{format_instruction, get_bits},
     cpu::CPU,
 };
 
@@ -8,7 +8,7 @@ macro_rules! add_dp_patterns {
     ($lut:expr, $($opcode:expr => $handler:expr),* $(,)?) => {
         use super::dp::{op2_imm, op2_imm_shift, op2_reg_shift};
         $(
-            $lut.add_pattern(&format!("001{}xxxx0", $opcode), dp_handler!(op2_imm, $handler));
+            $lut.add_pattern(&format!("001{}xxxxx", $opcode), dp_handler!(op2_imm, $handler));
             $lut.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(op2_imm_shift, $handler));
             $lut.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(op2_reg_shift, $handler));
         )*
@@ -18,7 +18,8 @@ macro_rules! add_dp_patterns {
 macro_rules! dp_handler {
     ($operand2_decoder:ident, $dp_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| {
-            InstructionLut::data_processing_handler(
+            use super::dp::handler;
+            handler(
                 cpu,
                 instruction,
                 $operand2_decoder,
@@ -29,7 +30,6 @@ macro_rules! dp_handler {
 }
 
 type InstructionFn = fn(&mut CPU, instruction: u32);
-type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
 
 const LUT_SIZE: usize = 1 << 12;
 
@@ -50,16 +50,6 @@ impl InstructionLut {
         }
     }
 
-    fn setup_patterns(&mut self) {
-        add_dp_patterns!(
-            self,
-            "0000" => dp::and,  // AND
-            "0100" => dp::add,  // ADD
-            "1101" => dp::mov,  // MOV
-        );
-        self.add_pattern("1010xxxxxxxx", branch::imm);
-    }
-
     pub fn get(instruction: u32) -> InstructionFn {
         unsafe {
             if let Some(ref lut) = INSTRUCTION_LUT {
@@ -72,6 +62,17 @@ impl InstructionLut {
                 panic!("Instruction LUT not initialized!");
             }
         }
+    }
+
+    fn setup_patterns(&mut self) {
+        add_dp_patterns!(
+            self,
+            "0000" => dp::and,
+            "0100" => dp::add,
+            "1101" => dp::mov,
+        );
+        self.add_pattern("1010xxxxxxxx", branch::imm);
+        self.add_pattern("00110x100000", ctrl_ext::msr_reg);
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionFn) {
@@ -109,29 +110,5 @@ impl InstructionLut {
 
     fn unknown_instruction_handler(_cpu: &mut CPU, instruction: u32) {
         panic!("Unknown instruction: {}", format_instruction(instruction));
-    }
-
-    fn data_processing_handler(
-        cpu: &mut CPU,
-        instruction: u32,
-        operand2_decoder: Operand2Fn,
-        handler: fn(&mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool),
-    ) {
-        // set flags bit
-        let s = get_bit(instruction, 20);
-
-        // operand 1 register
-        let n = get_bits(instruction, 16, 4);
-
-        // destination register
-        let d = get_bits(instruction, 12, 4);
-
-        if d == 15 {
-            panic!("dp instructions with destination register 15 not implemented");
-        }
-
-        let (so, sco) = operand2_decoder(cpu, instruction);
-
-        handler(cpu, s, n, d, so, sco);
     }
 }

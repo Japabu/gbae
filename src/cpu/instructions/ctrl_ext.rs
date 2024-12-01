@@ -54,7 +54,7 @@ fn msr(cpu: &mut crate::cpu::CPU, instruction: u32, operand: u32) {
             mask &= USER_MASK | PRIV_MASK | STATE_MASK;
             cpu.spsr = (cpu.spsr & !mask) | (operand & mask);
         } else {
-            panic!("Attempt to set SPSR in a mode which does not have one");
+            panic!("UNPREDICTABLE");
         }
     }
 }

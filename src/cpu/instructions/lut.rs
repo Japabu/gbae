@@ -72,7 +72,7 @@ impl InstructionLut {
             "1101" => dp::mov,
         );
         self.add_pattern("1010xxxxxxxx", branch::imm);
-        self.add_pattern("00110x100000", ctrl_ext::msr_reg);
+        self.add_pattern("00010x100000", ctrl_ext::msr_reg);
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionFn) {

@@ -34,7 +34,7 @@ pub fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
 
 pub fn format_instruction(instruction: u32) -> String {
     format!(
-        "Instruction: {:012b}\n\
+        "Instruction: {:08x}\n\
         Bit Index:   27 26 25 24 23 22 21 20 07 06 05 04\n\
         Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2}\n",
         instruction,
@@ -51,6 +51,28 @@ pub fn format_instruction(instruction: u32) -> String {
         get_bit(instruction, 5) as u32,
         get_bit(instruction, 4) as u32,
     )
+}
+
+/// Adds two 32-bit unsigned integers and returns the result along with carry and overflow flags.
+/// 
+/// # Arguments
+/// 
+/// * `op1` - The first operand.
+/// * `op2` - The second operand.
+/// 
+/// # Returns
+/// 
+/// A tuple containing:
+/// * The 32-bit result of the addition.
+/// * A boolean value indicating whether a carry occurred.
+/// * A boolean value indicating whether an overflow occurred.
+pub fn add(op1: u32, op2: u32) -> (u32, bool, bool) {
+    let (result, carry) = op1.overflowing_add(op2);
+    let sign_op1 = get_bit(op1, 31);
+    let sign_op2 = get_bit(op2, 31);
+    let sign_result = get_bit(result, 31);
+    let overflow = sign_op1 == sign_op2 && sign_op1 != sign_result;
+    (result, carry, overflow)
 }
 
 #[cfg(test)]

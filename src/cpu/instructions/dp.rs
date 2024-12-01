@@ -1,4 +1,4 @@
-use crate::{bitutil::{get_bit, get_bits}, cpu::{instructions::set_nz_flags, CPU}};
+use crate::{bitutil::{self, get_bit, get_bits}, cpu::{instructions::set_nz_flags, CPU}};
 
 type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
 
@@ -39,27 +39,13 @@ pub fn op2_imm(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
     (shifter_operand, carry)
 }
 
-pub fn op2_imm_shift(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
+pub fn op2_imm_shift(_cpu: &mut CPU,_instructionn: u32) -> (u32, bool) {
     panic!("op2_imm_shift");
 }
 
-pub fn op2_reg_shift(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
+
+pub fn op2_reg_shift(_cpu: &mut CPU, _instruction: u32) -> (u32, bool) {
     panic!("op2_reg_shift");
-}
-
-
-pub fn add(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
-    let op1 = cpu.r[n];
-    let (result, carry) = op1.overflowing_add(so);
-    cpu.r[d as usize] = result;
-
-    if s {
-        set_nz_flags(cpu, result);
-        cpu.set_carry_flag(carry);
-        // Set overflow flag if sign of both operands is different from result
-        let overflow = (op1 ^ result) & (so ^ result) & 0x8000_0000 != 0;
-        cpu.set_overflow_flag(overflow);
-    }
 }
 
 pub fn and(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
@@ -68,6 +54,17 @@ pub fn and(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
     if s {
         set_nz_flags(cpu, cpu.r[d]);
         cpu.set_carry_flag(sco);
+    }
+}
+
+pub fn add(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
+    let (result, carry, overflow) = bitutil::add(cpu.r[n], so);
+    cpu.r[d] = result;
+
+    if s {
+        set_nz_flags(cpu, cpu.r[d]);
+        cpu.set_carry_flag(carry);
+        cpu.set_overflow_flag(overflow);
     }
 }
 

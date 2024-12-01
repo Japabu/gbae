@@ -1,5 +1,5 @@
 use crate::{bitutil::{format_instruction, get_bit, get_bits}, cpu::CPU};
-use super::dp::{mov};
+use super::dp::{mov, add};
 
 macro_rules! dp_handler {
     ($operand2_decoder:ident, $dp_handler:expr) => {
@@ -35,13 +35,16 @@ impl InstructionLut {
 
     fn setup_patterns(&mut self) {
         // Data processing immediate operand
-        self.add_pattern("0011101xxxx0", dp_handler!(op2_imm, mov));
+        self.add_pattern("0011101xxxx0", dp_handler!(op2_imm, mov));    // MOV
+        self.add_pattern("0010100xxxx0", dp_handler!(op2_imm, add));    // ADD
 
         // Data processing immediate shift
-        self.add_pattern("0001101xxxx0", dp_handler!(op2_imm_shift, mov));
+        self.add_pattern("0001101xxxx0", dp_handler!(op2_imm_shift, mov));    // MOV
+        self.add_pattern("0000100xxxx0", dp_handler!(op2_imm_shift, add));    // ADD
 
         // Data processing register shift
-        self.add_pattern("0001101xxxx1", dp_handler!(op2_reg_shift, mov));
+        self.add_pattern("0001101xxxx1", dp_handler!(op2_reg_shift, mov));    // MOV
+        self.add_pattern("0000100xxxx1", dp_handler!(op2_reg_shift, add));    // ADD
     }
 
     pub fn get(instruction: u32) -> InstructionFn {

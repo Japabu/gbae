@@ -2,7 +2,7 @@ use crate::{bitutil::{format_instruction, get_bit, get_bits}, cpu::CPU};
 use super::dp::{mov, add, and};
 
 macro_rules! add_dp_patterns {
-    ($self:expr, $($opcode:expr -> $handler:expr),* $(,)?) => {
+    ($self:expr, $($opcode:expr => $handler:expr),* $(,)?) => {
         $(
             $self.add_pattern(&format!("001{}xxxx0", $opcode), dp_handler!(op2_imm, $handler));
             $self.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(op2_imm_shift, $handler));
@@ -46,9 +46,9 @@ impl InstructionLut {
     fn setup_patterns(&mut self) {
         add_dp_patterns!(
             self,
-            "1101" -> mov,  // MOV
-            "0100" -> add,  // ADD
-            "0000" -> and,  // AND
+            "0000" => and,  // AND
+            "0100" => add,  // ADD
+            "1101" => mov,  // MOV
         );
     }
 

@@ -1,5 +1,6 @@
 use crate::{bitutil::{format_instruction, get_bit, get_bits}, cpu::CPU};
-
+use lazy_static::lazy_static;
+use std::sync::Mutex;
 use super::dp_lut::DataProcessingLut;
 
 macro_rules! dp_handler {
@@ -15,24 +16,33 @@ type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
 
 const LUT_SIZE: usize = 1 << 12;
 
+lazy_static! {
+    static ref INSTRUCTION_LUT: Mutex<InstructionLut> = Mutex::new(InstructionLut::new());
+}
+
 pub struct InstructionLut {
-    table: [InstructionFn; 1 << 12],
+    table: [InstructionFn; LUT_SIZE],
     dp_lut: DataProcessingLut,
 }
 
 impl InstructionLut {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let mut lut = Self {
             table: [Self::unknown_instruction_handler; LUT_SIZE],
             dp_lut: DataProcessingLut::new(),
         };
-        lut.add_pattern("001xxxxxxxx0", dp_handler!(op2_imm));
-        lut.add_pattern("000xxxxxxxx0", dp_handler!(op2_imm_shift));
-        lut.add_pattern("000xxxxxxxx1", dp_handler!(op2_reg_shift));
+        lut.initialize();
         lut
     }
 
-    pub fn get(&self, instruction: u32) -> InstructionFn {
+    fn initialize(&mut self) {
+        self.add_pattern("001xxxxxxxx0", dp_handler!(op2_imm));
+        self.add_pattern("000xxxxxxxx0", dp_handler!(op2_imm_shift));
+        self.add_pattern("000xxxxxxxx1", dp_handler!(op2_reg_shift));
+    }
+
+    pub fn get(instruction: u32) -> InstructionFn {
+        let lut = INSTRUCTION_LUT.lock().unwrap();
         // Bits 4-7 and 20-27 can be used to differentiate instructions and then index into the table
         let upper = get_bits(instruction, 20, 8);
         let lower = get_bits(instruction, 4, 4);

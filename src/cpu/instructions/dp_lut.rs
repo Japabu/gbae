@@ -1,38 +1,34 @@
 use crate::cpu::CPU;
+use lazy_static::lazy_static;
+use std::sync::Mutex;
 
 type InstructionFn = fn(&mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool);
 
 const LUT_SIZE: usize = 1 << 4;
+
+lazy_static! {
+    static ref DP_LUT: Mutex<DataProcessingLut> = Mutex::new(DataProcessingLut::new());
+}
 
 pub struct DataProcessingLut {
     table: [InstructionFn; LUT_SIZE],
 }
 
 impl DataProcessingLut {
-    pub fn new() -> Self {
-        Self {
-            table: [
-                /*0000*/ unknown_opcode_handler,
-                /*0001*/ unknown_opcode_handler,
-                /*0010*/ unknown_opcode_handler,
-                /*0011*/ unknown_opcode_handler,
-                /*0100*/ unknown_opcode_handler,
-                /*0101*/ unknown_opcode_handler,
-                /*0110*/ unknown_opcode_handler,
-                /*0111*/ unknown_opcode_handler,
-                /*1000*/ unknown_opcode_handler,
-                /*1001*/ unknown_opcode_handler,
-                /*1010*/ unknown_opcode_handler,
-                /*1011*/ unknown_opcode_handler,
-                /*1100*/ unknown_opcode_handler,
-                /*1101*/ mov,
-                /*1110*/ unknown_opcode_handler,
-                /*1111*/ unknown_opcode_handler,
-            ],
-        }
+    fn new() -> Self {
+        let mut lut = Self {
+            table: [unknown_opcode_handler; LUT_SIZE],
+        };
+        lut.initialize();
+        lut
     }
 
-    pub(crate) fn get(&self, opcode: u32) -> InstructionFn {
+    fn initialize(&mut self) {
+        self.table[0b1101] = mov; // MOV
+    }
+
+    pub(crate) fn get(opcode: u32) -> InstructionFn {
+        let lut = DP_LUT.lock().unwrap();
         self.table[opcode as usize]
     }
 }

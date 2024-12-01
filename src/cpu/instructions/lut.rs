@@ -32,9 +32,12 @@ impl InstructionLut {
         lut
     }
 
-    pub fn get(&self, index: usize) -> InstructionFn {
-        let index =
-        self.table[index]
+    pub fn get(&self, instruction: u32) -> InstructionFn {
+        // Bits 4-7 and 20-27 can be used to differentiate instructions and then index into the table
+        let upper = get_bits(instruction, 20, 8);
+        let lower = get_bits(instruction, 4, 4);
+        let index = (upper << 4) | lower;
+        self.table[index as usize]
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionFn) {

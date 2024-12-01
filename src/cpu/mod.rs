@@ -1,14 +1,12 @@
 mod branch;
 mod condition;
-mod data_processing;
-mod data_processing_operand;
 mod registers;
 mod instructions;
 
 use instructions::lut::InstructionLut;
 use registers::{Registers, MODE_SVC};
 
-use crate::bitutil::{format_instruction, get_bits};
+use crate::bitutil::format_instruction;
 
 pub struct CPU {
     r: Registers,
@@ -44,7 +42,7 @@ impl CPU {
         let pc_old = self.r[15];
 
         println!("Executing: {}", format_instruction(instruction));
-        self.lut.get(index)(self.lut, self, instruction);
+        self.lut.get(instruction)(&self.lut, self, instruction);
         // let instruction_fn = lut::LUT[lut::lut_index(instruction)];
         //(instruction_fn)(self, instruction);
 

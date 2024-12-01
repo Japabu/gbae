@@ -1,4 +1,4 @@
-use crate::cpu::CPU;
+use crate::cpu::{instructions::set_nz_flags, CPU};
 
 type InstructionFn = fn(&mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool);
 
@@ -15,11 +15,9 @@ impl DataProcessingLut {
         let mut lut = Self {
             table: [unknown_opcode_handler; LUT_SIZE],
         };
+        lut.setup_patterns();
         unsafe {
             DP_LUT = Some(lut);
-            if let Some(ref mut l) = DP_LUT {
-                l.setup_patterns();
-            }
         }
     }
 
@@ -50,7 +48,7 @@ fn mov(cpu: &mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool) {
 
     cpu.r[d] = so;
     if s {
-        cpu.set_flags(cpu.r[d]);
+        set_nz_flags(cpu, cpu.r[d]);
         cpu.r.set_carry_flag(sco);
     }
 }

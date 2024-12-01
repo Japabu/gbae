@@ -1,27 +1,21 @@
-mod branch;
-mod condition;
 mod registers;
 mod instructions;
 
 use instructions::lut::InstructionLut;
 use registers::{Registers, MODE_SVC};
 
-use crate::bitutil::format_instruction;
+use crate::bitutil::{format_instruction, get_bits};
 
 pub struct CPU {
     r: Registers,
-    lut: InstructionLut,
-}
-
-fn unknown_instruction(instruction: u32) {
-    panic!("Unknown instruction: {:#x}", instruction);
 }
 
 impl CPU {
     pub fn new() -> Self {
+        InstructionLut::initialize();
+
         let mut cpu = CPU {
             r: Registers::new(),
-            lut: InstructionLut::new(),
         };
         cpu.reset();
         cpu
@@ -42,9 +36,7 @@ impl CPU {
         let pc_old = self.r[15];
 
         println!("Executing: {}", format_instruction(instruction));
-        self.lut.get(instruction)(&self.lut, self, instruction);
-        // let instruction_fn = lut::LUT[lut::lut_index(instruction)];
-        //(instruction_fn)(self, instruction);
+        InstructionLut::get(instruction)(self, instruction);
 
         // If there was no branch set pc to the next instruction
         if pc_old == self.r[15] {
@@ -75,6 +67,17 @@ impl CPU {
                     .try_into()
                     .expect("Failed to fetch arm instruction"),
             )
+        }
+    }
+
+    fn evaluate_condition(&self, instruction: u32) -> bool {
+        let condition = get_bits(instruction, 28, 4);
+        match condition {
+            0b0000 => self.r.get_zero_flag(),
+            0b0010 => self.r.get_carry_flag(),
+            0b0100 => self.r.get_negative_flag(),
+            0b1110 => true,
+            _ => panic!("Unknown condition: {:04b}", condition),
         }
     }
 

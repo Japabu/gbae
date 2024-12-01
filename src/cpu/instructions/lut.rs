@@ -3,13 +3,13 @@ use super::dp_lut::DataProcessingLut;
 
 macro_rules! dp_handler {
     ($operand2_decoder:ident) => {
-        |lut: &InstructionLut, cpu: &mut CPU, instruction: u32| {
-            InstructionLut::data_processing_handler(lut, cpu, instruction, $operand2_decoder);
+        |cpu: &mut CPU, instruction: u32| {
+            InstructionLut::data_processing_handler(cpu, instruction, $operand2_decoder);
         }
     };
 }
 
-type InstructionFn = fn(&InstructionLut, &mut CPU, instruction: u32);
+type InstructionFn = fn(&mut CPU, instruction: u32);
 type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
 
 const LUT_SIZE: usize = 1 << 12;
@@ -18,20 +18,18 @@ static mut INSTRUCTION_LUT: Option<InstructionLut> = None;
 
 pub struct InstructionLut {
     table: [InstructionFn; LUT_SIZE],
-    dp_lut: DataProcessingLut,
 }
 
 impl InstructionLut {
     pub fn initialize() {
+        DataProcessingLut::initialize();
+
         let mut lut = Self {
             table: [Self::unknown_instruction_handler; LUT_SIZE],
-            dp_lut: DataProcessingLut::new(),
         };
+        lut.setup_patterns();
         unsafe {
             INSTRUCTION_LUT = Some(lut);
-            if let Some(ref mut l) = INSTRUCTION_LUT {
-                l.setup_patterns();
-            }
         }
     }
 
@@ -88,11 +86,11 @@ impl InstructionLut {
         }
     }
 
-    fn unknown_instruction_handler(&self, _cpu: &mut CPU, instruction: u32) {
+    fn unknown_instruction_handler(_cpu: &mut CPU, instruction: u32) {
         panic!("Unknown instruction: {}", format_instruction(instruction));
     }
     
-    fn data_processing_handler(&self, cpu: &mut CPU, instruction: u32, operand2_decoder: Operand2Fn) {
+    fn data_processing_handler(cpu: &mut CPU, instruction: u32, operand2_decoder: Operand2Fn) {
         // set flags bit
         let s = get_bit(instruction, 20);
     
@@ -104,7 +102,7 @@ impl InstructionLut {
         let (so, sco) = operand2_decoder(cpu, instruction);
     
         let opcode = get_bits(instruction, 21, 4);
-        self.dp_lut.get(opcode)(cpu, s, n, d, so, sco);
+        DataProcessingLut::get(opcode)(cpu, s, n, d, so, sco);
     }
 }
 

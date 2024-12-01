@@ -8,7 +8,7 @@ const USER_MASK: u32 = 0xF0000000;
 const PRIV_MASK: u32 = 0x0000000F;
 const STATE_MASK: u32 = 0x00000020;
 
-pub fn msr_reg(cpu: &mut crate::cpu::CPU, instruction: u32) {
+pub fn msr_reg(cpu: &mut crate::system::CPU, instruction: u32) {
     debug_assert_eq!(get_bits(instruction, 8, 4), 0b0000);
 
     let m = get_bits(instruction, 0, 4) as usize;
@@ -18,7 +18,7 @@ pub fn msr_reg(cpu: &mut crate::cpu::CPU, instruction: u32) {
 }
 
 
-fn msr(cpu: &mut crate::cpu::CPU, instruction: u32, operand: u32) {
+fn msr(cpu: &mut crate::system::CPU, instruction: u32, operand: u32) {
     debug_assert_eq!(get_bits(instruction, 12, 4), 0b1111);
 
     let field_mask = get_bits(instruction, 16, 4);

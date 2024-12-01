@@ -1,8 +1,8 @@
-mod instructions;
+use crate::bitutil::{
+    format_instruction, get_bit, get_bits, set_bit, set_bits,
+};
 
-use instructions::lut::InstructionLut;
-
-use crate::bitutil::{format_instruction, get_bit, get_bits, read_u16, read_u32, set_bit, set_bits};
+use super::{instructions::lut::InstructionLut, memory::Memory};
 
 const MODE_USR: u32 = 0b10000;
 const MODE_FIQ: u32 = 0b10001;
@@ -13,14 +13,14 @@ const MODE_UND: u32 = 0b11011;
 const MODE_SYS: u32 = 0b11111;
 
 pub struct CPU<'a> {
-    pub r: [u32; 16],   /* r13: stack pointer, r14: link register, r15: pc */
-    pub cpsr: u32,      /* current program status register */
-    pub spsr: u32,      /* saved program status register */
-    pub mem: &'a mut [u8],
+    pub r: [u32; 16], /* r13: stack pointer, r14: link register, r15: pc */
+    pub cpsr: u32,    /* current program status register */
+    pub spsr: u32,    /* saved program status register */
+    pub mem: &'a mut Memory,
 }
 
-impl <'a> CPU<'a> {
-    pub fn new(mem: &'a mut [u8]) -> Self {
+impl<'a> CPU<'a> {
+    pub fn new(mem: &'a mut Memory) -> Self {
         InstructionLut::initialize();
 
         let mut cpu = CPU {
@@ -41,7 +41,6 @@ impl <'a> CPU<'a> {
             println!("Skipping: {}", format_instruction(instruction));
             return;
         }
-
 
         // Advance pc to two instructions because thats where it should be in the execution stage
         self.advance_pc();
@@ -68,9 +67,9 @@ impl <'a> CPU<'a> {
         let pc = self.r[15] as usize;
         println!("Fetching @ {:#x}", pc);
         if self.get_thumb_state() {
-            read_u16(&self.mem, pc) as u32
+            self.mem.read_u16(pc) as u32
         } else {
-            read_u32(&self.mem, pc)
+            self.mem.read_u32(pc)
         }
     }
 

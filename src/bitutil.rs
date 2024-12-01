@@ -75,22 +75,6 @@ pub fn add(op1: u32, op2: u32) -> (u32, bool, bool) {
     (result, carry, overflow)
 }
 
-pub fn read_u16(data: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes(
-        data[offset..offset + 2]
-            .try_into()
-            .expect("Failed to read u16"),
-    )
-}
-
-pub fn read_u32(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(
-        data[offset..offset + 4]
-            .try_into()
-            .expect("Failed to read u32"),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

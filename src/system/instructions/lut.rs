@@ -1,7 +1,7 @@
-use crate::cpu::instructions::{branch, ctrl_ext, dp, ls};
+use crate::system::instructions::{branch, ctrl_ext, dp, ls};
 use crate::{
     bitutil::{format_instruction, get_bits},
-    cpu::CPU,
+    system::CPU,
 };
 
 macro_rules! add_dp_patterns {

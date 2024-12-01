@@ -1,12 +1,16 @@
-use crate::{bitutil::{format_instruction, get_bit, get_bits}, cpu::CPU};
-use super::dp::{mov, add, and};
+use crate::cpu::instructions::{branch, dp};
+use crate::{
+    bitutil::{format_instruction, get_bit, get_bits},
+    cpu::CPU,
+};
 
 macro_rules! add_dp_patterns {
-    ($self:expr, $($opcode:expr => $handler:expr),* $(,)?) => {
+    ($lut:expr, $($opcode:expr => $handler:expr),* $(,)?) => {
+        use super::dp::{op2_imm, op2_imm_shift, op2_reg_shift};
         $(
-            $self.add_pattern(&format!("001{}xxxx0", $opcode), dp_handler!(op2_imm, $handler));
-            $self.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(op2_imm_shift, $handler));
-            $self.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(op2_reg_shift, $handler));
+            $lut.add_pattern(&format!("001{}xxxx0", $opcode), dp_handler!(op2_imm, $handler));
+            $lut.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(op2_imm_shift, $handler));
+            $lut.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(op2_reg_shift, $handler));
         )*
     };
 }
@@ -14,12 +18,15 @@ macro_rules! add_dp_patterns {
 macro_rules! dp_handler {
     ($operand2_decoder:ident, $dp_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| {
-            InstructionLut::data_processing_handler(cpu, instruction, $operand2_decoder, $dp_handler);
+            InstructionLut::data_processing_handler(
+                cpu,
+                instruction,
+                $operand2_decoder,
+                $dp_handler,
+            );
         }
     };
 }
-
-
 
 type InstructionFn = fn(&mut CPU, instruction: u32);
 type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
@@ -46,10 +53,11 @@ impl InstructionLut {
     fn setup_patterns(&mut self) {
         add_dp_patterns!(
             self,
-            "0000" => and,  // AND
-            "0100" => add,  // ADD
-            "1101" => mov,  // MOV
+            "0000" => dp::and,  // AND
+            "0100" => dp::add,  // ADD
+            "1101" => dp::mov,  // MOV
         );
+        self.add_pattern("1010xxxxxxxx", branch::imm);
     }
 
     pub fn get(instruction: u32) -> InstructionFn {
@@ -102,19 +110,19 @@ impl InstructionLut {
     fn unknown_instruction_handler(_cpu: &mut CPU, instruction: u32) {
         panic!("Unknown instruction: {}", format_instruction(instruction));
     }
-    
+
     fn data_processing_handler(
-        cpu: &mut CPU, 
-        instruction: u32, 
+        cpu: &mut CPU,
+        instruction: u32,
         operand2_decoder: Operand2Fn,
-        handler: fn(&mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool)
+        handler: fn(&mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool),
     ) {
         // set flags bit
         let s = get_bit(instruction, 20);
-    
+
         // operand 1 register
         let n = get_bits(instruction, 16, 4);
-    
+
         // destination register
         let d = get_bits(instruction, 12, 4);
 
@@ -123,28 +131,7 @@ impl InstructionLut {
         }
 
         let (so, sco) = operand2_decoder(cpu, instruction);
-    
+
         handler(cpu, s, n, d, so, sco);
     }
-}
-
-fn op2_imm(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
-    let immed_8 = get_bits(instruction, 0, 8);
-    let rotate_imm = get_bits(instruction, 8, 4);
-    let shifter_operand = immed_8.rotate_right(2 * rotate_imm);
-    let carry: bool;
-    if rotate_imm == 0 {
-        carry = cpu.r.get_carry_flag()
-    } else {
-        carry = get_bit(shifter_operand, 31)
-    };
-    (shifter_operand, carry)
-}
-
-fn op2_imm_shift(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
-    panic!("op2_imm_shift");
-}
-
-fn op2_reg_shift(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
-    panic!("op2_reg_shift");
 }

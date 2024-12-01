@@ -1,4 +1,25 @@
-use crate::cpu::{instructions::set_nz_flags, CPU};
+use crate::{bitutil::{get_bit, get_bits}, cpu::{instructions::set_nz_flags, CPU}};
+
+pub fn op2_imm(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
+    let immed_8 = get_bits(instruction, 0, 8);
+    let rotate_imm = get_bits(instruction, 8, 4);
+    let shifter_operand = immed_8.rotate_right(2 * rotate_imm);
+    let carry: bool;
+    if rotate_imm == 0 {
+        carry = cpu.r.get_carry_flag()
+    } else {
+        carry = get_bit(shifter_operand, 31)
+    };
+    (shifter_operand, carry)
+}
+
+pub fn op2_imm_shift(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
+    panic!("op2_imm_shift");
+}
+
+pub fn op2_reg_shift(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
+    panic!("op2_reg_shift");
+}
 
 
 pub fn add(cpu: &mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool) {

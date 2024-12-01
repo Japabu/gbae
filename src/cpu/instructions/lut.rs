@@ -24,8 +24,6 @@ pub struct InstructionLut {
 
 impl InstructionLut {
     pub fn initialize() {
-        DataProcessingLut::initialize();
-
         let mut lut = Self {
             table: [Self::unknown_instruction_handler; LUT_SIZE],
         };
@@ -111,6 +109,11 @@ impl InstructionLut {
     
         // destination register
         let d = get_bits(instruction, 12, 4);
+
+        if d == 15 {
+            panic!("dp instructions with destination register 15 not implemented");
+        }
+
         let (so, sco) = operand2_decoder(cpu, instruction);
     
         handler(cpu, s, n, d, so, sco);

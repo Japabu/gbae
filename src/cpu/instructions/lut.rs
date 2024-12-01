@@ -1,6 +1,4 @@
 use crate::{bitutil::{format_instruction, get_bit, get_bits}, cpu::CPU};
-use lazy_static::lazy_static;
-use std::sync::Mutex;
 use super::dp_lut::DataProcessingLut;
 
 macro_rules! dp_handler {
@@ -16,9 +14,7 @@ type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
 
 const LUT_SIZE: usize = 1 << 12;
 
-lazy_static! {
-    static ref INSTRUCTION_LUT: Mutex<InstructionLut> = Mutex::new(InstructionLut::new());
-}
+static mut INSTRUCTION_LUT: Option<InstructionLut> = None;
 
 pub struct InstructionLut {
     table: [InstructionFn; LUT_SIZE],
@@ -26,28 +22,37 @@ pub struct InstructionLut {
 }
 
 impl InstructionLut {
-    fn new() -> Self {
+    pub fn initialize() {
         let mut lut = Self {
             table: [Self::unknown_instruction_handler; LUT_SIZE],
             dp_lut: DataProcessingLut::new(),
         };
-        lut.initialize();
-        lut
+        unsafe {
+            INSTRUCTION_LUT = Some(lut);
+            if let Some(ref mut l) = INSTRUCTION_LUT {
+                l.setup_patterns();
+            }
+        }
     }
 
-    fn initialize(&mut self) {
+    fn setup_patterns(&mut self) {
         self.add_pattern("001xxxxxxxx0", dp_handler!(op2_imm));
         self.add_pattern("000xxxxxxxx0", dp_handler!(op2_imm_shift));
         self.add_pattern("000xxxxxxxx1", dp_handler!(op2_reg_shift));
     }
 
     pub fn get(instruction: u32) -> InstructionFn {
-        let lut = INSTRUCTION_LUT.lock().unwrap();
-        // Bits 4-7 and 20-27 can be used to differentiate instructions and then index into the table
-        let upper = get_bits(instruction, 20, 8);
-        let lower = get_bits(instruction, 4, 4);
-        let index = (upper << 4) | lower;
-        self.table[index as usize]
+        unsafe {
+            if let Some(ref lut) = INSTRUCTION_LUT {
+                // Bits 4-7 and 20-27 can be used to differentiate instructions and then index into the table
+                let upper = get_bits(instruction, 20, 8);
+                let lower = get_bits(instruction, 4, 4);
+                let index = (upper << 4) | lower;
+                lut.table[index as usize]
+            } else {
+                panic!("Instruction LUT not initialized!");
+            }
+        }
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionFn) {

@@ -1,35 +1,40 @@
 use crate::cpu::CPU;
-use lazy_static::lazy_static;
-use std::sync::Mutex;
 
 type InstructionFn = fn(&mut CPU, s: bool, n: u32, d: u32, so: u32, sco: bool);
 
 const LUT_SIZE: usize = 1 << 4;
 
-lazy_static! {
-    static ref DP_LUT: Mutex<DataProcessingLut> = Mutex::new(DataProcessingLut::new());
-}
+static mut DP_LUT: Option<DataProcessingLut> = None;
 
 pub struct DataProcessingLut {
     table: [InstructionFn; LUT_SIZE],
 }
 
 impl DataProcessingLut {
-    fn new() -> Self {
+    pub fn initialize() {
         let mut lut = Self {
             table: [unknown_opcode_handler; LUT_SIZE],
         };
-        lut.initialize();
-        lut
+        unsafe {
+            DP_LUT = Some(lut);
+            if let Some(ref mut l) = DP_LUT {
+                l.setup_patterns();
+            }
+        }
     }
 
-    fn initialize(&mut self) {
+    fn setup_patterns(&mut self) {
         self.table[0b1101] = mov; // MOV
     }
 
     pub(crate) fn get(opcode: u32) -> InstructionFn {
-        let lut = DP_LUT.lock().unwrap();
-        self.table[opcode as usize]
+        unsafe {
+            if let Some(ref lut) = DP_LUT {
+                lut.table[opcode as usize]
+            } else {
+                panic!("Data Processing LUT not initialized!");
+            }
+        }
     }
 }
 

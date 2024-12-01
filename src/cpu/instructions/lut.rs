@@ -1,6 +1,16 @@
 use crate::{bitutil::{format_instruction, get_bit, get_bits}, cpu::CPU};
 use super::dp::{mov, add, and};
 
+macro_rules! add_dp_patterns {
+    ($self:expr, $($opcode:expr -> $handler:expr),* $(,)?) => {
+        $(
+            $self.add_pattern(&format!("001{}xxxx0", $opcode), dp_handler!(op2_imm, $handler));
+            $self.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(op2_imm_shift, $handler));
+            $self.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(op2_reg_shift, $handler));
+        )*
+    };
+}
+
 macro_rules! dp_handler {
     ($operand2_decoder:ident, $dp_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| {
@@ -34,20 +44,12 @@ impl InstructionLut {
     }
 
     fn setup_patterns(&mut self) {
-        // MOV
-        self.add_pattern("0011101xxxx0", dp_handler!(op2_imm, mov));
-        self.add_pattern("0001101xxxx0", dp_handler!(op2_imm_shift, mov));
-        self.add_pattern("0001101xxxx1", dp_handler!(op2_reg_shift, mov));
-
-        // ADD
-        self.add_pattern("0010100xxxx0", dp_handler!(op2_imm, add));
-        self.add_pattern("0000100xxxx0", dp_handler!(op2_imm_shift, add));
-        self.add_pattern("0000100xxxx1", dp_handler!(op2_reg_shift, add));
-
-        // AND
-        self.add_pattern("0010000xxxx0", dp_handler!(op2_imm, and));
-        self.add_pattern("0000000xxxx0", dp_handler!(op2_imm_shift, and));
-        self.add_pattern("0000000xxxx1", dp_handler!(op2_reg_shift, and));
+        add_dp_patterns!(
+            self,
+            "1101" -> mov,  // MOV
+            "0100" -> add,  // ADD
+            "0000" -> and,  // AND
+        );
     }
 
     pub fn get(instruction: u32) -> InstructionFn {

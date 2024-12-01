@@ -1,0 +1,8 @@
+/target
+*.gba
+.vscode
+.aider*
+.env
+*.log
+*.txt
+*.bin

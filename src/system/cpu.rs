@@ -2,7 +2,7 @@ use crate::{bitutil::{
     get_bit, get_bits, set_bit, set_bits,
 }, system::instructions::format_instruction};
 
-use super::{instructions::lut::InstructionLut, memory::Memory};
+use super::{instructions::{self, lut::InstructionLut}, memory::Memory};
 
 const MODE_USR: u32 = 0b10000;
 const MODE_FIQ: u32 = 0b10001;
@@ -37,7 +37,7 @@ impl CPU {
         let instruction = self.fetch();
         self.advance_pc();
 
-        if !self.evaluate_condition(instruction) {
+        if !instructions::evaluate_condition(&self, instruction) {
             //println!("Skipping: {}", format_instruction(instruction));
             return;
         }
@@ -80,18 +80,6 @@ impl CPU {
             self.mem.read_u16(pc) as u32
         } else {
             self.mem.read_u32(pc)
-        }
-    }
-
-    fn evaluate_condition(&self, instruction: u32) -> bool {
-        let condition = get_bits(instruction, 28, 4);
-        match condition {
-            0b0000 => self.get_zero_flag(),
-            0b0010 => self.get_carry_flag(),
-            0b0100 => self.get_negative_flag(),
-            0b1011 => self.get_negative_flag() != self.get_overflow_flag(),
-            0b1110 => true,
-            _ => panic!("Unknown condition: {:04b}", condition),
         }
     }
 

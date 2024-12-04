@@ -27,6 +27,14 @@ macro_rules! ls_handler {
     };
 }
 
+macro_rules! dec {
+    ($string:expr) => {
+        |_| {
+            $string.to_string()
+        }
+    };
+}
+
 use super::DecoderFn;
 
 type InstructionHandlerFn = fn(&mut CPU, instruction: u32);
@@ -44,7 +52,7 @@ impl InstructionLut {
     pub fn initialize() {
         let mut lut = Self {
             handlers: [Self::unknown_instruction_handler; LUT_SIZE],
-            decoders: [|_| "???".to_string(); LUT_SIZE],
+            decoders: [Self::unknown_instruction_decoder; LUT_SIZE],
         };
         lut.setup_patterns();
         unsafe {
@@ -84,20 +92,20 @@ impl InstructionLut {
         // data processing
         add_dp_patterns!(
             self,
-            "0000" => (dp::and, "and"),
-            "0010" => (dp::sub, "sub"),
-            "0100" => (dp::add, "add"),
-            "1101" => (dp::mov, "mov"),
+            "0000" => (dp::and, dec!("and")),
+            "0010" => (dp::sub, dec!("sub")),
+            "0100" => (dp::add, dec!("add")),
+            "1101" => (dp::mov, dec!("mov")),
         );
         self.add_pattern("101xxxxx xxxx", branch::b, branch::b_dec);
         // extensions
-        self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, "msr");
-        self.add_pattern("00010010 0001", branch::bx, "bx");
+        self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, dec!("msr"));
+        self.add_pattern("00010010 0001", branch::bx, dec!("bx"));
         // load store
-        self.add_pattern("010xxxx1 xxxx", ls_handler!(ls::addr_imm, ls::ldr), "ldr");
-        self.add_pattern("010xxxx0 xxxx", ls_handler!(ls::addr_imm, ls::str), "str");
-        self.add_pattern("011xxxx1 xxxx", ls_handler!(ls::addr_reg, ls::ldr), "ldr");
-        self.add_pattern("011xxxx0 xxxx", ls_handler!(ls::addr_reg, ls::str), "str");
+        self.add_pattern("010xxxx1 xxxx", ls_handler!(ls::addr_imm, ls::ldr), dec!("ldr"));
+        self.add_pattern("010xxxx0 xxxx", ls_handler!(ls::addr_imm, ls::str), dec!("str"));
+        self.add_pattern("011xxxx1 xxxx", ls_handler!(ls::addr_reg, ls::ldr), dec!("ldr"));
+        self.add_pattern("011xxxx0 xxxx", ls_handler!(ls::addr_reg, ls::str), dec!("str"));
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: DecoderFn) {
@@ -137,5 +145,9 @@ impl InstructionLut {
 
     fn unknown_instruction_handler(_cpu: &mut CPU, instruction: u32) {
         panic!("Unknown instruction: {}", format_instruction(instruction));
+    }
+
+    fn unknown_instruction_decoder(_instruction: u32) -> String {
+        "???".to_string()
     }
 }

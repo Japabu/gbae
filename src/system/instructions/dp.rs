@@ -59,7 +59,14 @@ pub fn and(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
 }
 
 pub fn sub(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
-    
+    let (result, borrow, overflow) = bitutil::sub_with_flags(cpu.r[n], so);
+    cpu.r[d] = result;
+
+    if s {
+        set_nz_flags(cpu, cpu.r[d]);
+        cpu.set_carry_flag(!borrow);
+        cpu.set_overflow_flag(overflow);
+    }
 }
 
 pub fn add(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {

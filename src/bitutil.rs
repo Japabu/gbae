@@ -36,8 +36,8 @@ pub fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
 ///
 /// # Arguments
 ///
-/// * `op1` - The first operand.
-/// * `op2` - The second operand.
+/// * `a` - The first operand.
+/// * `b` - The second operand.
 ///
 /// # Returns
 ///
@@ -45,15 +45,28 @@ pub fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
 /// * The 32-bit result of the addition.
 /// * A boolean value indicating whether a carry occurred.
 /// * A boolean value indicating whether an overflow occurred.
-pub fn add_with_flags(op1: u32, op2: u32) -> (u32, bool, bool) {
-    let (result, carry) = op1.overflowing_add(op2);
-    let sign_op1 = get_bit(op1, 31);
-    let sign_op2 = get_bit(op2, 31);
+pub fn add_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
+    let (result, carry) = a.overflowing_add(b);
+    let sign_op1 = get_bit(a, 31);
+    let sign_op2 = get_bit(b, 31);
     let sign_result = get_bit(result, 31);
     let overflow = sign_op1 == sign_op2 && sign_op1 != sign_result;
     (result, carry, overflow)
 }
 
+/// Subtracts two 32-bit unsigned integers and returns the result along with borrow and overflow flags.
+/// 
+/// # Arguments
+///
+/// * `a` - The first operand.
+/// * `b` - The second operand.
+///
+/// # Returns
+///
+/// A tuple containing:
+/// * The 32-bit result of the subtraction.
+/// * A boolean value indicating whether a borrow occurred.
+/// * A boolean value indicating whether an overflow occurred.
 pub fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
     let (result, borrow) = a.overflowing_sub(b);
     let sign_a = get_bit(a, 31);

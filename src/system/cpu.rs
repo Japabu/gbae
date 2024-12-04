@@ -47,7 +47,7 @@ impl CPU {
         let pc_old = self.r[15];
 
         println!("Executing: {}", format_instruction(instruction));
-        InstructionLut::get(instruction)(self, instruction);
+        InstructionLut::get_handler(instruction)(self, instruction);
 
         // If there was no branch set pc to the next instruction
         if pc_old == self.r[15] {

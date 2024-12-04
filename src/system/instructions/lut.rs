@@ -1,15 +1,12 @@
 use crate::system::instructions::{branch, ctrl_ext, dp, format_instruction, ls};
-use crate::{
-    bitutil::{get_bits},
-    system::cpu::CPU,
-};
+use crate::{bitutil::get_bits, system::cpu::CPU};
 
 macro_rules! add_dp_patterns {
-    ($lut:expr, $($opcode:expr => $handler:expr),* $(,)?) => {
+    ($lut:expr, $($opcode:expr => ($handler:expr, $decoder:expr)),* $(,)?) => {
         $(
-            $lut.add_pattern(&format!("001{}xxxxx", $opcode), dp_handler!(dp::op2_imm, $handler));
-            $lut.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(dp::op2_imm_shift, $handler));
-            $lut.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(dp::op2_reg_shift, $handler));
+            $lut.add_pattern(&format!("001{}xxxxx", $opcode), dp_handler!(dp::op2_imm, $handler), $decoder);
+            $lut.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(dp::op2_imm_shift, $handler), $decoder);
+            $lut.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(dp::op2_reg_shift, $handler), $decoder);
         )*
     };
 }
@@ -17,12 +14,7 @@ macro_rules! add_dp_patterns {
 macro_rules! dp_handler {
     ($operand2_decoder:expr, $dp_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| {
-            dp::handler(
-                cpu,
-                instruction,
-                $operand2_decoder,
-                $dp_handler,
-            )
+            dp::handler(cpu, instruction, $operand2_decoder, $dp_handler)
         }
     };
 }
@@ -30,12 +22,7 @@ macro_rules! dp_handler {
 macro_rules! ls_handler {
     ($adress_decoder:expr, $ls_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| {
-            ls::handler(
-                cpu,
-                instruction,
-                $adress_decoder,
-                $ls_handler,
-            )
+            ls::handler(cpu, instruction, $adress_decoder, $ls_handler)
         }
     };
 }
@@ -55,7 +42,7 @@ impl InstructionLut {
     pub fn initialize() {
         let mut lut = Self {
             handlers: [Self::unknown_instruction_handler; LUT_SIZE],
-            decoders: ["Unknown instruction"; LUT_SIZE],
+            decoders: ["???"; LUT_SIZE],
         };
         lut.setup_patterns();
         unsafe {
@@ -63,30 +50,44 @@ impl InstructionLut {
         }
     }
 
-    pub fn get(instruction: u32) -> InstructionHandlerFn {
+    pub fn get_handler(instruction: u32) -> InstructionHandlerFn {
         unsafe {
             if let Some(ref lut) = INSTRUCTION_LUT {
-                // Bits 4-7 and 20-27 can be used to differentiate instructions and then index into the table
-                let upper = get_bits(instruction, 20, 8);
-                let lower = get_bits(instruction, 4, 4);
-                let index = (upper << 4) | lower;
-                lut.handlers[index as usize]
+                lut.handlers[Self::index(instruction)]
             } else {
                 panic!("Instruction LUT not initialized!");
             }
         }
     }
 
+    pub fn get_decoder(instruction: u32) -> &'static str {
+        unsafe {
+            if let Some(ref lut) = INSTRUCTION_LUT {
+                lut.decoders[Self::index(instruction)]
+            } else {
+                panic!("Instruction LUT not initialized!");
+            }
+        }
+    }
+
+
+    fn index(instruction: u32) -> usize {
+        // Bits 4-7 and 20-27 can be used to differentiate instructions and then index into the table
+        let upper = get_bits(instruction, 20, 8);
+        let lower = get_bits(instruction, 4, 4);
+        ((upper << 4) | lower) as usize
+    }
+
     fn setup_patterns(&mut self) {
         add_dp_patterns!(
             self,
-            "0000" => dp::and,
-            "0100" => dp::add,
-            "1101" => dp::mov,
+            "0000" => (dp::and, "and"),
+            "0100" => (dp::add, "add"),
+            "1101" => (dp::mov, "mov"),
         );
-        self.add_pattern("1010xxxxxxxx", branch::imm, ("b"));
-        self.add_pattern("00010x100000", ctrl_ext::msr_reg, ("msr"));
-        self.add_pattern("010xxxx1xxxx", ls_handler!(ls::addr_imm, ls::ldr, ("ldr")));
+        self.add_pattern("1010xxxxxxxx", branch::imm, "b");
+        self.add_pattern("00010x100000", ctrl_ext::msr_reg, "msr");
+        self.add_pattern("010xxxx1xxxx", ls_handler!(ls::addr_imm, ls::ldr), "ldr");
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: &'static str) {

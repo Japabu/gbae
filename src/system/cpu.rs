@@ -56,6 +56,15 @@ impl CPU {
         }
     }
 
+    pub fn peek_next_instruction(&self) -> u32 {
+        let pc = self.r[15] as usize;
+        if self.get_thumb_state() {
+            self.mem.read_u16(pc) as u32
+        } else {
+            self.mem.read_u32(pc)
+        }
+    }
+
     fn reset(&mut self) {
         self.set_mode(MODE_SVC);
         self.set_thumb_state(false);
@@ -86,7 +95,7 @@ impl CPU {
         }
     }
 
-    fn print_registers(&self) {
+    pub fn print_registers(&self) {
         println!("r0: {:#x}", self.r[0]);
         println!("r1: {:#x}", self.r[1]);
         println!("r2: {:#x}", self.r[2]);

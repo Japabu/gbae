@@ -38,7 +38,7 @@ impl CPU {
         self.advance_pc();
 
         if !self.evaluate_condition(instruction) {
-            println!("Skipping: {}", format_instruction(instruction));
+            //println!("Skipping: {}", format_instruction(instruction));
             return;
         }
 
@@ -46,7 +46,8 @@ impl CPU {
         self.advance_pc();
         let pc_old = self.r[15];
 
-        println!("Executing: {}", format_instruction(instruction));
+        //self.print_registers();
+        //println!("Executing: {}", format_instruction(instruction));
         InstructionLut::get_handler(instruction)(self, instruction);
 
         // If there was no branch set pc to the next instruction
@@ -65,7 +66,7 @@ impl CPU {
 
     fn fetch(&mut self) -> u32 {
         let pc = self.r[15] as usize;
-        println!("Fetching @ {:#x}", pc);
+        //println!("Fetching @ {:#x}", pc);
         if self.get_thumb_state() {
             self.mem.read_u16(pc) as u32
         } else {
@@ -79,9 +80,29 @@ impl CPU {
             0b0000 => self.get_zero_flag(),
             0b0010 => self.get_carry_flag(),
             0b0100 => self.get_negative_flag(),
+            0b1011 => self.get_negative_flag() != self.get_overflow_flag(),
             0b1110 => true,
             _ => panic!("Unknown condition: {:04b}", condition),
         }
+    }
+
+    fn print_registers(&self) {
+        println!("r0: {:#x}", self.r[0]);
+        println!("r1: {:#x}", self.r[1]);
+        println!("r2: {:#x}", self.r[2]);
+        println!("r3: {:#x}", self.r[3]);
+        println!("r4: {:#x}", self.r[4]);
+        println!("r5: {:#x}", self.r[5]);
+        println!("r6: {:#x}", self.r[6]);
+        println!("r7: {:#x}", self.r[7]);
+        println!("r8: {:#x}", self.r[8]);
+        println!("r9: {:#x}", self.r[9]);
+        println!("r10: {:#x}", self.r[10]);
+        println!("r11: {:#x}", self.r[11]);
+        println!("r12: {:#x}", self.r[12]);
+        println!("sp: {:#x}", self.r[13]);
+        println!("lr: {:#x}", self.r[14]);
+        println!("pc: {:#x}", self.r[15]);
     }
 
     fn instruction_size_in_bytes(&self) -> u32 {
@@ -148,6 +169,9 @@ impl CPU {
         get_bit(self.cpsr, 5)
     }
     pub fn set_thumb_state(&mut self, v: bool) {
+        if v {
+            panic!("Switching to thumb mode");
+        }
         self.cpsr = set_bit(self.cpsr, 5, v);
     }
 

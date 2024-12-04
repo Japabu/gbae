@@ -79,6 +79,7 @@ impl InstructionLut {
     }
 
     fn setup_patterns(&mut self) {
+        // data processing
         add_dp_patterns!(
             self,
             "0000" => (dp::and, "and"),
@@ -86,10 +87,15 @@ impl InstructionLut {
             "0100" => (dp::add, "add"),
             "1101" => (dp::mov, "mov"),
         );
-        self.add_pattern("101xxxxx xxxx", branch::imm, "b");
+        self.add_pattern("101xxxxx xxxx", branch::b, "b");
+        // extensions
         self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, "msr");
+        self.add_pattern("00010010 0001", branch::bx, "bx");
+        // load store
         self.add_pattern("010xxxx1 xxxx", ls_handler!(ls::addr_imm, ls::ldr), "ldr");
         self.add_pattern("010xxxx0 xxxx", ls_handler!(ls::addr_imm, ls::str), "str");
+        self.add_pattern("011xxxx1 xxxx", ls_handler!(ls::addr_reg, ls::ldr), "ldr");
+        self.add_pattern("011xxxx0 xxxx", ls_handler!(ls::addr_reg, ls::str), "str");
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: &'static str) {

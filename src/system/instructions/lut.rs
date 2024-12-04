@@ -95,7 +95,7 @@ impl InstructionLut {
             "0000" => (dp::and, dec!("and")),
             "0010" => (dp::sub, dec!("sub")),
             "0100" => (dp::add, dec!("add")),
-            "1101" => (dp::mov, dec!("mov")),
+            "1101" => (dp::mov, dp::mov_dec),
         );
         self.add_pattern("101xxxxx xxxx", branch::b, branch::b_dec);
         // extensions

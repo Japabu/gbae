@@ -89,3 +89,26 @@ pub fn mov(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
         cpu.set_carry_flag(sco);
     }
 }
+
+pub fn mov_dec(instruction: u32) -> String {
+    let s = get_bit(instruction, 20);
+    let rd = get_bits(instruction, 12, 4);
+    let immediate = get_bit(instruction, 25);
+    
+    let operand = if immediate {
+        let imm = get_bits(instruction, 0, 8);
+        let rotate = get_bits(instruction, 8, 4) * 2;
+        let value = imm.rotate_right(rotate);
+        format!("#{:#x}", value)
+    } else {
+        let rm = get_bits(instruction, 0, 4);
+        format!("r{}", rm)
+    };
+
+    format!("MOV{}{} r{}, {}", 
+        super::get_condition_code(instruction),
+        if s { "S" } else { "" },
+        rd,
+        operand
+    )
+}

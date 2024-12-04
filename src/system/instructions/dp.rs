@@ -1,4 +1,4 @@
-use crate::{bitutil::{self, get_bit, get_bits}, system::{instructions::set_nz_flags, CPU}};
+use crate::{bitutil::{self, get_bit, get_bits}, system::{instructions::set_nz_flags, cpu::CPU}};
 
 type Operand2Fn = fn(&mut CPU, u32) -> (u32, bool);
 type DpHandlerFn = fn(&mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool);

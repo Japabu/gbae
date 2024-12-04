@@ -1,4 +1,4 @@
-use crate::{bitutil::{get_bit, get_bits, read_u32}, system::CPU};
+use crate::{bitutil::{get_bit, get_bits}, system::cpu::CPU};
 
 type AddressDecoderFn = fn(&mut CPU, u32) -> u32;
 type LsHandlerFn = fn(&mut CPU, d: usize, address: u32);
@@ -28,6 +28,6 @@ pub fn handler(cpu: &mut CPU, instruction: u32, address_decoder: AddressDecoderF
 }
 
 pub fn ldr(cpu: &mut CPU, d: usize, address: u32) {
-    cpu.r[d] = read_u32(&cpu.mem, address as usize);
+    cpu.r[d] = cpu.mem.read_u32(address as usize);
 }
 

@@ -1,6 +1,5 @@
 use crate::{
-    bitutil::{get_bit, get_bits, sign_extend},
-    system::CPU,
+    bitutil::{get_bit, get_bits, sign_extend}, system::cpu::CPU,
 };
 
 pub fn imm(cpu: &mut CPU, instruction: u32) {

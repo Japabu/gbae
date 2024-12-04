@@ -1,6 +1,6 @@
-use crate::bitutil::{
-    format_instruction, get_bit, get_bits, set_bit, set_bits,
-};
+use crate::{bitutil::{
+    get_bit, get_bits, set_bit, set_bits,
+}, system::instructions::format_instruction};
 
 use super::{instructions::lut::InstructionLut, memory::Memory};
 
@@ -12,15 +12,15 @@ const MODE_ABT: u32 = 0b10111;
 const MODE_UND: u32 = 0b11011;
 const MODE_SYS: u32 = 0b11111;
 
-pub struct CPU<'a> {
+pub struct CPU {
     pub r: [u32; 16], /* r13: stack pointer, r14: link register, r15: pc */
     pub cpsr: u32,    /* current program status register */
     pub spsr: u32,    /* saved program status register */
-    pub mem: &'a mut Memory,
+    pub mem: Memory,
 }
 
-impl<'a> CPU<'a> {
-    pub fn new(mem: &'a mut Memory) -> Self {
+impl CPU {
+    pub fn new(mem: Memory) -> Self {
         InstructionLut::initialize();
 
         let mut cpu = CPU {
@@ -99,7 +99,7 @@ impl<'a> CPU<'a> {
         self.r[15] -= self.instruction_size_in_bytes()
     }
 
-    fn next_instruction_address_from_execution_stage(&self) -> u32 {
+    pub fn next_instruction_address_from_execution_stage(&self) -> u32 {
         self.r[15] - self.instruction_size_in_bytes()
     }
 

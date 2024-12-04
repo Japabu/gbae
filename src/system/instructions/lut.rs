@@ -1,7 +1,7 @@
-use crate::system::instructions::{branch, ctrl_ext, dp, ls};
+use crate::system::instructions::{branch, ctrl_ext, dp, format_instruction, ls};
 use crate::{
-    bitutil::{format_instruction, get_bits},
-    system::CPU,
+    bitutil::{get_bits},
+    system::cpu::CPU,
 };
 
 macro_rules! add_dp_patterns {
@@ -22,7 +22,7 @@ macro_rules! dp_handler {
                 instruction,
                 $operand2_decoder,
                 $dp_handler,
-            );
+            )
         }
     };
 }
@@ -35,25 +35,27 @@ macro_rules! ls_handler {
                 instruction,
                 $adress_decoder,
                 $ls_handler,
-            );
+            )
         }
     };
 }
 
-type InstructionFn = fn(&mut CPU, instruction: u32);
+type InstructionHandlerFn = fn(&mut CPU, instruction: u32);
 
 const LUT_SIZE: usize = 1 << 12;
 
 static mut INSTRUCTION_LUT: Option<InstructionLut> = None;
 
 pub struct InstructionLut {
-    table: [InstructionFn; LUT_SIZE],
+    handlers: [InstructionHandlerFn; LUT_SIZE],
+    decoders: [&'static str; LUT_SIZE],
 }
 
 impl InstructionLut {
     pub fn initialize() {
         let mut lut = Self {
-            table: [Self::unknown_instruction_handler; LUT_SIZE],
+            handlers: [Self::unknown_instruction_handler; LUT_SIZE],
+            decoders: ["Unknown instruction"; LUT_SIZE],
         };
         lut.setup_patterns();
         unsafe {
@@ -61,14 +63,14 @@ impl InstructionLut {
         }
     }
 
-    pub fn get(instruction: u32) -> InstructionFn {
+    pub fn get(instruction: u32) -> InstructionHandlerFn {
         unsafe {
             if let Some(ref lut) = INSTRUCTION_LUT {
                 // Bits 4-7 and 20-27 can be used to differentiate instructions and then index into the table
                 let upper = get_bits(instruction, 20, 8);
                 let lower = get_bits(instruction, 4, 4);
                 let index = (upper << 4) | lower;
-                lut.table[index as usize]
+                lut.handlers[index as usize]
             } else {
                 panic!("Instruction LUT not initialized!");
             }
@@ -82,12 +84,12 @@ impl InstructionLut {
             "0100" => dp::add,
             "1101" => dp::mov,
         );
-        self.add_pattern("1010xxxxxxxx", branch::imm);
-        self.add_pattern("00010x100000", ctrl_ext::msr_reg);
-        self.add_pattern("010xxxx1xxxx", ls_handler!(ls::addr_imm, ls::ldr));
+        self.add_pattern("1010xxxxxxxx", branch::imm, ("b"));
+        self.add_pattern("00010x100000", ctrl_ext::msr_reg, ("msr"));
+        self.add_pattern("010xxxx1xxxx", ls_handler!(ls::addr_imm, ls::ldr, ("ldr")));
     }
 
-    fn add_pattern(&mut self, pattern: &str, handler: InstructionFn) {
+    fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: &'static str) {
         assert_eq!(pattern.len(), 12, "Pattern must be 12 bits long");
 
         // Determine which bits are fixed and which are wildcards
@@ -116,7 +118,8 @@ impl InstructionLut {
                     index &= !(1 << pos);
                 }
             }
-            self.table[index] = handler;
+            self.handlers[index] = handler;
+            self.decoders[index] = decoder;
         }
     }
 

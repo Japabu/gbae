@@ -33,14 +33,14 @@ pub fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
 }
 
 /// Adds two 32-bit unsigned integers and returns the result along with carry and overflow flags.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `op1` - The first operand.
 /// * `op2` - The second operand.
-/// 
+///
 /// # Returns
-/// 
+///
 /// A tuple containing:
 /// * The 32-bit result of the addition.
 /// * A boolean value indicating whether a carry occurred.
@@ -54,14 +54,14 @@ pub fn add_with_flags(op1: u32, op2: u32) -> (u32, bool, bool) {
     (result, carry, overflow)
 }
 
-pub fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {                                                                                                                                
-    let (result, borrow) = a.overflowing_sub(b);                                                                                                                                            
-    let sign_a = get_bit(a, 31);                                                                                                                                                            
-    let sign_b = get_bit(b, 31);                                                                                                                                                            
-    let sign_result = get_bit(result, 31);                                                                                                                                                  
-    let overflow = sign_a != sign_b && sign_a != sign_result;                                                                                                                               
-    (result, borrow, overflow)                                                                                                                                                              
-}  
+pub fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
+    let (result, borrow) = a.overflowing_sub(b);
+    let sign_a = get_bit(a, 31);
+    let sign_b = get_bit(b, 31);
+    let sign_result = get_bit(result, 31);
+    let overflow = sign_a != sign_b && sign_a != sign_result;
+    (result, borrow, overflow)
+}
 
 #[cfg(test)]
 mod tests {
@@ -136,5 +136,53 @@ mod tests {
         // Edge case: Shift by 0 (no change)
         assert_eq!(arithmetic_shift_right(0x12345678, 0), 0x12345678); // No shift
         assert_eq!(arithmetic_shift_right(0xFFFFFFFF, 0), 0xFFFFFFFF); // No shift
+    }
+
+    #[test]
+    fn test_add_with_flags() {
+        // Basic addition without carry or overflow
+        assert_eq!(add_with_flags(1, 1), (2, false, false));
+
+        // Test carry flag (unsigned overflow)
+        assert_eq!(add_with_flags(0xFFFFFFFF, 1), (0, true, false));
+        assert_eq!(add_with_flags(0xFFFFFFFF, 2), (1, true, false));
+
+        // Test overflow flag (signed overflow)
+        // Positive + Positive = Negative (overflow)
+        assert_eq!(add_with_flags(0x7FFFFFFF, 1), (0x80000000, false, true));
+
+        // Negative + Negative = Positive (overflow)
+        assert_eq!(add_with_flags(0x80000000, 0x80000000), (0, true, true));
+
+        // No overflow when adding numbers of different signs
+        assert_eq!(add_with_flags(0x80000000, 1), (0x80000001, false, false));
+
+        // Edge cases
+        assert_eq!(add_with_flags(0, 0), (0, false, false));
+    }
+
+    #[test]
+    fn test_sub_with_flags() {
+        // Basic subtraction without borrow or overflow
+        assert_eq!(sub_with_flags(2, 1), (1, false, false));
+
+        // Test borrow flag (unsigned underflow)
+        assert_eq!(sub_with_flags(0, 1), (0xFFFFFFFF, true, false));
+
+        // Test overflow flag (signed overflow)
+        // Positive - Negative = Negative (overflow)
+        assert_eq!(sub_with_flags(0x7FFFFFFF, 0x80000000), (0xFFFFFFFF, true, true));
+
+        // Negative - Positive = Positive (overflow)
+        assert_eq!(sub_with_flags(0x80000000, 1), (0x7FFFFFFF, false, true));
+
+        // No overflow when subtracting numbers of same sign
+        assert_eq!(sub_with_flags(0x80000000, 0x80000000), (0, false, false));
+        assert_eq!(sub_with_flags(1, 1), (0, false, false));
+
+        // Edge cases
+        assert_eq!(sub_with_flags(0, 0), (0, false, false));
+        // 0x80000000 - 0x7FFFFFFF = 1 (overflow: negative - positive = positive)
+        assert_eq!(sub_with_flags(0x80000000, 0x7FFFFFFF), (1, false, true));
     }
 }

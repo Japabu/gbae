@@ -82,10 +82,11 @@ impl InstructionLut {
         add_dp_patterns!(
             self,
             "0000" => (dp::and, "and"),
+            "0010" => (dp::sub, "sub"),
             "0100" => (dp::add, "add"),
             "1101" => (dp::mov, "mov"),
         );
-        self.add_pattern("1010xxxx xxxx", branch::imm, "b");
+        self.add_pattern("101xxxxx xxxx", branch::imm, "b");
         self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, "msr");
         self.add_pattern("010xxxx1 xxxx", ls_handler!(ls::addr_imm, ls::ldr), "ldr");
         self.add_pattern("010xxxx0 xxxx", ls_handler!(ls::addr_imm, ls::str), "str");

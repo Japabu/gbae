@@ -58,8 +58,12 @@ pub fn and(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
     }
 }
 
+pub fn sub(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
+    
+}
+
 pub fn add(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
-    let (result, carry, overflow) = bitutil::add(cpu.r[n], so);
+    let (result, carry, overflow) = bitutil::add_with_flags(cpu.r[n], so);
     cpu.r[d] = result;
 
     if s {

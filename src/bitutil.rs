@@ -45,13 +45,19 @@ pub fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
 /// * The 32-bit result of the addition.
 /// * A boolean value indicating whether a carry occurred.
 /// * A boolean value indicating whether an overflow occurred.
-pub fn add(op1: u32, op2: u32) -> (u32, bool, bool) {
+pub fn add_with_flags(op1: u32, op2: u32) -> (u32, bool, bool) {
     let (result, carry) = op1.overflowing_add(op2);
     let sign_op1 = get_bit(op1, 31);
     let sign_op2 = get_bit(op2, 31);
     let sign_result = get_bit(result, 31);
     let overflow = sign_op1 == sign_op2 && sign_op1 != sign_result;
     (result, carry, overflow)
+}
+
+pub fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
+    let (result, borrow_from) = a.overflowing_sub(b);
+    let overflow_from = (a > b && result > a) || (a < b && result < a);
+    (result, borrow_from, overflow_from)
 }
 
 #[cfg(test)]

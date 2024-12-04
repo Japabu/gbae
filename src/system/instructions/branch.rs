@@ -1,6 +1,6 @@
 use crate::{
     bitutil::{get_bit, get_bits, sign_extend}, 
-    system::cpu::CPU,
+    system::{cpu::CPU, instructions::get_condition_code},
 };
 
 pub fn b(cpu: &mut CPU, instruction: u32) {
@@ -20,7 +20,7 @@ pub fn b_dec(instruction: u32) -> String {
     
     format!("B{}{} #{:+#x}", 
         if l { "L" } else { "" },
-        super::get_condition_code(instruction),
+        get_condition_code(instruction),
         offset
     )
 }
@@ -33,4 +33,9 @@ pub fn bx(cpu: &mut CPU, instruction: u32) {
 
     cpu.set_thumb_state(get_bit(r_m, 0));
     cpu.r[15] = r_m & 0xFFFFFFFE;
+}
+
+pub fn bx_dec(instruction: u32) -> String {
+    let m = get_bits(instruction, 0, 4) as usize;
+    format!("BX{} r{}", get_condition_code(instruction), m)
 }

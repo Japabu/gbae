@@ -4,40 +4,47 @@ use crate::{bitutil::get_bits, system::cpu::CPU};
 macro_rules! add_dp_patterns {
     ($lut:expr, $($opcode:expr => ($handler:expr, $decoder:expr)),* $(,)?) => {
         $(
-            $lut.add_pattern(&format!("001{}xxxxx", $opcode), dp_handler!(dp::op2_imm, $handler), $decoder);
-            $lut.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(dp::op2_imm_shift, $handler), $decoder);
-            $lut.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(dp::op2_reg_shift, $handler), $decoder);
+            $lut.add_pattern(&format!("001{}xxxxx", $opcode), dp_handler!(dp::op2_imm, $handler), dp_dec!(dp::op2_imm_dec, $decoder));
+            $lut.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(dp::op2_imm_shift, $handler), dp_dec!(dp::op2_imm_shift_dec, $decoder));
+            $lut.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(dp::op2_reg_shift, $handler), dp_dec!(dp::op2_reg_shift_dec, $decoder));
         )*
     };
 }
 
 macro_rules! dp_handler {
-    ($operand2_decoder:expr, $dp_handler:expr) => {
+    ($operand2_evluator:expr, $dp_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| {
-            dp::handler(cpu, instruction, $operand2_decoder, $dp_handler)
+            dp::handler(cpu, instruction, $operand2_evluator, $dp_handler)
+        }
+    };
+}
+
+macro_rules! dp_dec {
+    ($operand2_dec:expr, $dp_decoder:expr) => {
+        |instruction: u32| {
+            dp::dec(instruction, $operand2_dec, $dp_decoder)
         }
     };
 }
 
 macro_rules! ls_handler {
-    ($adress_decoder:expr, $ls_handler:expr) => {
+    ($adress_evaluator:expr, $ls_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| {
-            ls::handler(cpu, instruction, $adress_decoder, $ls_handler)
+            ls::handler(cpu, instruction, $adress_evaluator, $ls_handler)
         }
     };
 }
 
-macro_rules! dec {
-    ($string:expr) => {
-        |_| {
-            $string.to_string()
+macro_rules! ls_dec {
+    ($adress_dec:expr, $ls_decoder:expr) => {
+        |instruction: u32| {
+            ls::dec(instruction, $adress_dec, $ls_decoder)
         }
     };
 }
-
-use super::DecoderFn;
 
 type InstructionHandlerFn = fn(&mut CPU, instruction: u32);
+type DecoderFn = fn(u32) -> String;
 
 const LUT_SIZE: usize = 1 << 12;
 
@@ -92,20 +99,20 @@ impl InstructionLut {
         // data processing
         add_dp_patterns!(
             self,
-            "0000" => (dp::and, dec!("and")),
-            "0010" => (dp::sub, dec!("sub")),
-            "0100" => (dp::add, dec!("add")),
+            "0000" => (dp::and, dp::and_dec),
+            "0010" => (dp::sub, dp::sub_dec),
+            "0100" => (dp::add, dp::add_dec),
             "1101" => (dp::mov, dp::mov_dec),
         );
         self.add_pattern("101xxxxx xxxx", branch::b, branch::b_dec);
         // extensions
-        self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, dec!("msr"));
-        self.add_pattern("00010010 0001", branch::bx, dec!("bx"));
+        self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, ctrl_ext::msr_reg_dec);
+        self.add_pattern("00010010 0001", branch::bx, branch::bx_dec);
         // load store
-        self.add_pattern("010xxxx1 xxxx", ls_handler!(ls::addr_imm, ls::ldr), dec!("ldr"));
-        self.add_pattern("010xxxx0 xxxx", ls_handler!(ls::addr_imm, ls::str), dec!("str"));
-        self.add_pattern("011xxxx1 xxxx", ls_handler!(ls::addr_reg, ls::ldr), dec!("ldr"));
-        self.add_pattern("011xxxx0 xxxx", ls_handler!(ls::addr_reg, ls::str), dec!("str"));
+        self.add_pattern("010xxxx1 xxxx", ls_handler!(ls::addr_imm, ls::ldr), ls_dec!(ls::addr_imm_dec, ls::ldr_dec));
+        self.add_pattern("010xxxx0 xxxx", ls_handler!(ls::addr_imm, ls::str), ls_dec!(ls::addr_imm_dec, ls::str_dec));
+        self.add_pattern("011xxxx1 xxxx", ls_handler!(ls::addr_reg, ls::ldr), ls_dec!(ls::addr_reg_dec, ls::ldr_dec));
+        self.add_pattern("011xxxx0 xxxx", ls_handler!(ls::addr_reg, ls::str), ls_dec!(ls::addr_reg_dec, ls::str_dec));
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: DecoderFn) {

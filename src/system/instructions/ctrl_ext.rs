@@ -1,6 +1,9 @@
 use core::panic;
 
-use crate::{bitutil::{get_bit, get_bits}, system::cpu::CPU};
+use crate::{
+    bitutil::{get_bit, get_bits},
+    system::{cpu::CPU, instructions::get_condition_code},
+};
 
 // Masks for processor ARM7TDMI
 const UNALLOC_MASK: u32 = 0x0FFFFF00;
@@ -17,24 +20,46 @@ pub fn msr_reg(cpu: &mut CPU, instruction: u32) {
     msr(cpu, instruction, r_m);
 }
 
+pub fn msr_reg_dec(instruction: u32) -> String {
+    let r = get_bit(instruction, 22);
+    let c = get_bit(instruction, 16);
+    let x = get_bit(instruction, 17);
+    let s = get_bit(instruction, 18);
+    let f = get_bit(instruction, 19);
+    let m = get_bits(instruction, 0, 4) as usize;
+
+    format!(
+        "MSR{} {}_{}{}{}{}, r{}",
+        get_condition_code(instruction),
+        if r { "SPSR" } else { "CPSR" },
+        if c { "c" } else { "-" },
+        if x { "x" } else { "-" },
+        if s { "s" } else { "-" },
+        if f { "f" } else { "-" },
+        m
+    )
+}
 
 fn msr(cpu: &mut CPU, instruction: u32, operand: u32) {
     debug_assert_eq!(get_bits(instruction, 12, 4), 0b1111);
 
-    let field_mask = get_bits(instruction, 16, 4);
     let r = get_bit(instruction, 22);
+    let c = get_bit(instruction, 16);
+    let x = get_bit(instruction, 17);
+    let s = get_bit(instruction, 18);
+    let f = get_bit(instruction, 19);
 
     let mut mask = 0u32;
-    if get_bit(field_mask, 0) {
+    if c {
         mask |= 0x000000FF;
     }
-    if get_bit(field_mask, 1) {
+    if x {
         mask |= 0x0000FF00;
     }
-    if get_bit(field_mask, 2) {
+    if s {
         mask |= 0x00FF0000;
     }
-    if get_bit(field_mask, 3) {
+    if f {
         mask |= 0xFF000000;
     }
 

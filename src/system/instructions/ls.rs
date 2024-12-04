@@ -1,7 +1,26 @@
 use crate::{bitutil::{get_bit, get_bits}, system::cpu::CPU};
 
-type AddressDecoderFn = fn(&mut CPU, u32) -> u32;
+type AddressEvaluatorFn = fn(&mut CPU, u32) -> u32;
 type LsHandlerFn = fn(&mut CPU, d: usize, address: u32);
+type AddressDecoderFn = fn(u32) -> String;
+type LsDecFn = fn(instruction: u32, d: usize, address: String) -> String;
+
+pub fn handler(cpu: &mut CPU, instruction: u32, address_decoder: AddressEvaluatorFn, handler: LsHandlerFn) {
+    let address = address_decoder(cpu, instruction);
+    let d = get_bits(instruction, 12, 4) as usize;
+
+    if d == 15 {
+        panic!("ldr with destination register 15 not implemented");
+    }
+
+    handler(cpu, d, address);
+}
+
+pub fn dec(instruction: u32, address_decoder: AddressDecoderFn, ls_decoder: LsDecFn) -> String {
+    let address = address_decoder(instruction);
+    let d = get_bits(instruction, 12, 4) as usize;
+    ls_decoder(instruction, d, address)
+}
 
 pub fn addr_imm(cpu: &mut CPU, instruction: u32) -> u32 {
     let p = get_bit(instruction, 24);
@@ -22,6 +41,12 @@ pub fn addr_imm(cpu: &mut CPU, instruction: u32) -> u32 {
     } else {
         r_n.wrapping_sub(offset_12)
     }
+}
+
+pub fn addr_imm_dec(instruction: u32) -> String {
+    let u = get_bit(instruction, 23);
+    let offset_12 = get_bits(instruction, 0, 12);
+    format!("#{}{:#x}", if u { "+" } else { "-" }, offset_12)
 }
 
 pub fn addr_reg(cpu: &mut CPU, instruction: u32) -> u32 {
@@ -47,21 +72,26 @@ pub fn addr_reg(cpu: &mut CPU, instruction: u32) -> u32 {
     }
 }
 
-pub fn handler(cpu: &mut CPU, instruction: u32, address_decoder: AddressDecoderFn, handler: LsHandlerFn) {
-    let address = address_decoder(cpu, instruction);
-    let d = get_bits(instruction, 12, 4) as usize;
-
-    if d == 15 {
-        panic!("ldr with destination register 15 not implemented");
-    }
-
-    handler(cpu, d, address);
+pub fn addr_reg_dec(instruction: u32) -> String {
+    let u = get_bit(instruction, 23);
+    let n = get_bits(instruction, 16, 4) as usize;
+    let m = get_bits(instruction, 0, 4) as usize;
+    format!("[r{} {} r{}]", if u { "+" } else { "-" },n, m)
 }
 
 pub fn ldr(cpu: &mut CPU, d: usize, address: u32) {
     cpu.r[d] = cpu.mem.read_u32(address as usize);
 }
 
+pub fn ldr_dec(_instruction: u32, d: usize, address: String) -> String {
+    format!("LDR r{}, [{}]", d, address)
+}
+
+
 pub fn str(cpu: &mut CPU, d: usize, address: u32) {
     cpu.mem.write_u32(address as usize, cpu.r[d]);
+}
+
+pub fn str_dec(_instruction: u32, d: usize, address: String) -> String {
+    format!("STR r{}, [{}]", d, address)
 }

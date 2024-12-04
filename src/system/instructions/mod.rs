@@ -12,8 +12,6 @@ fn set_nz_flags(cpu: &mut CPU, value: u32) {
     cpu.set_zero_flag(value == 0);
 }
 
-pub type DecoderFn = fn(u32) -> String;
-
 pub fn get_condition_code(instruction: u32) -> &'static str {
     match get_bits(instruction, 28, 4) {
         0b0000 => "EQ", // Equal

@@ -22,6 +22,12 @@ fn main() {
     
     loop {
         if !debugger.running || debugger.should_break(&cpu) {
+
+            // Print current instruction before executing it
+            let instruction = cpu.peek_next_instruction();
+            println!("0x{:08X}: {}", cpu.r[15], format_instruction(instruction));
+
+
             debugger.running = false;
             print!("> ");
             stdout().flush().unwrap();
@@ -32,10 +38,6 @@ fn main() {
         }
 
         if debugger.running {
-            // Print current instruction before executing it
-            let instruction = cpu.peek_next_instruction();
-            println!("0x{:08X}: {}", cpu.r[15], format_instruction(instruction));
-            
             cpu.cycle();
         }
     }

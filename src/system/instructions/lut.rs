@@ -27,6 +27,8 @@ macro_rules! ls_handler {
     };
 }
 
+use super::DecoderFn;
+
 type InstructionHandlerFn = fn(&mut CPU, instruction: u32);
 
 const LUT_SIZE: usize = 1 << 12;
@@ -35,14 +37,14 @@ static mut INSTRUCTION_LUT: Option<InstructionLut> = None;
 
 pub struct InstructionLut {
     handlers: [InstructionHandlerFn; LUT_SIZE],
-    decoders: [&'static str; LUT_SIZE],
+    decoders: [DecoderFn; LUT_SIZE],
 }
 
 impl InstructionLut {
     pub fn initialize() {
         let mut lut = Self {
             handlers: [Self::unknown_instruction_handler; LUT_SIZE],
-            decoders: ["???"; LUT_SIZE],
+            decoders: [|_| "???".to_string(); LUT_SIZE],
         };
         lut.setup_patterns();
         unsafe {
@@ -60,10 +62,10 @@ impl InstructionLut {
         }
     }
 
-    pub fn get_decoder(instruction: u32) -> &'static str {
+    pub fn get_decoder(instruction: u32) -> String {
         unsafe {
             if let Some(ref lut) = INSTRUCTION_LUT {
-                lut.decoders[Self::index(instruction)]
+                (lut.decoders[Self::index(instruction)])(instruction)
             } else {
                 panic!("Instruction LUT not initialized!");
             }
@@ -87,7 +89,7 @@ impl InstructionLut {
             "0100" => (dp::add, "add"),
             "1101" => (dp::mov, "mov"),
         );
-        self.add_pattern("101xxxxx xxxx", branch::b, "b");
+        self.add_pattern("101xxxxx xxxx", branch::b, branch::b_dec);
         // extensions
         self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, "msr");
         self.add_pattern("00010010 0001", branch::bx, "bx");
@@ -98,7 +100,7 @@ impl InstructionLut {
         self.add_pattern("011xxxx0 xxxx", ls_handler!(ls::addr_reg, ls::str), "str");
     }
 
-    fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: &'static str) {
+    fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: DecoderFn) {
         let pattern = pattern.to_string().replace(" ", "");
         assert_eq!(pattern.len(), 12, "Pattern must be 12 bits long");
 

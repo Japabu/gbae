@@ -12,85 +12,27 @@ fn set_nz_flags(cpu: &mut CPU, value: u32) {
     cpu.set_zero_flag(value == 0);
 }
 
-pub trait InstructionDecoder {
-    fn decode(&self, instruction: u32) -> String;
-}
+pub type DecoderFn = fn(u32) -> String;
 
-pub struct BranchDecoder;
-
-pub struct DataProcessingDecoder;
-
-impl DataProcessingDecoder {
-    fn get_condition_code(instruction: u32) -> &'static str {
-        BranchDecoder::get_condition_code(instruction)
-    }
-
-    fn decode_operand2(&self, instruction: u32) -> String {
-        let immediate = get_bit(instruction, 25);
-        if immediate {
-            let imm = get_bits(instruction, 0, 8);
-            let rotate = get_bits(instruction, 8, 4) * 2;
-            let value = imm.rotate_right(rotate);
-            format!("#{:#x}", value)
-        } else {
-            let rm = get_bits(instruction, 0, 4);
-            format!("r{}", rm)
-        }
-    }
-}
-
-impl InstructionDecoder for DataProcessingDecoder {
-    fn decode(&self, instruction: u32) -> String {
-        let cond = Self::get_condition_code(instruction);
-        let s = get_bit(instruction, 20);
-        let rd = get_bits(instruction, 12, 4);
-        let operand2 = self.decode_operand2(instruction);
-        
-        format!("MOV{}{} r{}, {}", 
-            cond,
-            if s { "S" } else { "" },
-            rd,
-            operand2
-        )
-    }
-}
-
-impl BranchDecoder {
-    fn get_condition_code(instruction: u32) -> &'static str {
-        match get_bits(instruction, 28, 4) {
-            0b0000 => "EQ",  // Equal
-            0b0001 => "NE",  // Not Equal
-            0b0010 => "CS",  // Carry Set
-            0b0011 => "CC",  // Carry Clear
-            0b0100 => "MI",  // Minus
-            0b0101 => "PL",  // Plus
-            0b0110 => "VS",  // Overflow Set
-            0b0111 => "VC",  // Overflow Clear
-            0b1000 => "HI",  // Higher
-            0b1001 => "LS",  // Lower or Same
-            0b1010 => "GE",  // Greater or Equal
-            0b1011 => "LT",  // Less Than
-            0b1100 => "GT",  // Greater Than
-            0b1101 => "LE",  // Less or Equal
-            0b1110 => "",    // Always
-            0b1111 => "NV",  // Never
-            _ => unreachable!()
-        }
-    }
-}
-
-impl InstructionDecoder for BranchDecoder {
-    fn decode(&self, instruction: u32) -> String {
-        let link = get_bit(instruction, 24);
-        let offset = get_bits(instruction, 0, 24);
-        let target = ((offset as i32) << 8) >> 6; // Sign extend and multiply by 4
-        let cond = Self::get_condition_code(instruction);
-        
-        format!("B{}{} #{:+}", 
-            if link { "L" } else { "" },
-            cond,
-            target
-        )
+pub fn get_condition_code(instruction: u32) -> &'static str {
+    match get_bits(instruction, 28, 4) {
+        0b0000 => "EQ",  // Equal
+        0b0001 => "NE",  // Not Equal
+        0b0010 => "CS",  // Carry Set
+        0b0011 => "CC",  // Carry Clear
+        0b0100 => "MI",  // Minus
+        0b0101 => "PL",  // Plus
+        0b0110 => "VS",  // Overflow Set
+        0b0111 => "VC",  // Overflow Clear
+        0b1000 => "HI",  // Higher
+        0b1001 => "LS",  // Lower or Same
+        0b1010 => "GE",  // Greater or Equal
+        0b1011 => "LT",  // Less Than
+        0b1100 => "GT",  // Greater Than
+        0b1101 => "LE",  // Less or Equal
+        0b1110 => "",    // Always
+        0b1111 => "NV",  // Never
+        _ => unreachable!()
     }
 }
 

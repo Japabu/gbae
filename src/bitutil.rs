@@ -54,11 +54,14 @@ pub fn add_with_flags(op1: u32, op2: u32) -> (u32, bool, bool) {
     (result, carry, overflow)
 }
 
-pub fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
-    let (result, borrow_from) = a.overflowing_sub(b);
-    let overflow_from = (a > b && result > a) || (a < b && result < a);
-    (result, borrow_from, overflow_from)
-}
+pub fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {                                                                                                                                
+    let (result, borrow) = a.overflowing_sub(b);                                                                                                                                            
+    let sign_a = get_bit(a, 31);                                                                                                                                                            
+    let sign_b = get_bit(b, 31);                                                                                                                                                            
+    let sign_result = get_bit(result, 31);                                                                                                                                                  
+    let overflow = sign_a != sign_b && sign_a != sign_result;                                                                                                                               
+    (result, borrow, overflow)                                                                                                                                                              
+}  
 
 #[cfg(test)]
 mod tests {

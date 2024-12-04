@@ -18,6 +18,43 @@ pub trait InstructionDecoder {
 
 pub struct BranchDecoder;
 
+pub struct DataProcessingDecoder;
+
+impl DataProcessingDecoder {
+    fn get_condition_code(instruction: u32) -> &'static str {
+        BranchDecoder::get_condition_code(instruction)
+    }
+
+    fn decode_operand2(&self, instruction: u32) -> String {
+        let immediate = get_bit(instruction, 25);
+        if immediate {
+            let imm = get_bits(instruction, 0, 8);
+            let rotate = get_bits(instruction, 8, 4) * 2;
+            let value = imm.rotate_right(rotate);
+            format!("#{:#x}", value)
+        } else {
+            let rm = get_bits(instruction, 0, 4);
+            format!("r{}", rm)
+        }
+    }
+}
+
+impl InstructionDecoder for DataProcessingDecoder {
+    fn decode(&self, instruction: u32) -> String {
+        let cond = Self::get_condition_code(instruction);
+        let s = get_bit(instruction, 20);
+        let rd = get_bits(instruction, 12, 4);
+        let operand2 = self.decode_operand2(instruction);
+        
+        format!("MOV{}{} r{}, {}", 
+            cond,
+            if s { "S" } else { "" },
+            rd,
+            operand2
+        )
+    }
+}
+
 impl BranchDecoder {
     fn get_condition_code(instruction: u32) -> &'static str {
         match get_bits(instruction, 28, 4) {
@@ -61,6 +98,8 @@ pub fn format_instruction(instruction: u32) -> String {
     // Determine instruction type and get appropriate decoder
     let decoder: Box<dyn InstructionDecoder> = if get_bits(instruction, 25, 3) == 0b101 {
         Box::new(BranchDecoder)
+    } else if get_bits(instruction, 21, 7) == 0b0001101 {
+        Box::new(DataProcessingDecoder)
     } else {
         // Default to old decoder for now
         return format!(

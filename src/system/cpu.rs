@@ -63,7 +63,7 @@ impl CPU {
         self.r[15] = 0x00000000;
     }
 
-    fn fetch(&self) -> u32 {
+    fn fetch(&mut self) -> u32 {
         let pc = self.r[15] as usize;
         println!("Fetching @ {:#x}", pc);
         if self.get_thumb_state() {

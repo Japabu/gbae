@@ -85,12 +85,14 @@ impl InstructionLut {
             "0100" => (dp::add, "add"),
             "1101" => (dp::mov, "mov"),
         );
-        self.add_pattern("1010xxxxxxxx", branch::imm, "b");
-        self.add_pattern("00010x100000", ctrl_ext::msr_reg, "msr");
-        self.add_pattern("010xxxx1xxxx", ls_handler!(ls::addr_imm, ls::ldr), "ldr");
+        self.add_pattern("1010xxxx xxxx", branch::imm, "b");
+        self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, "msr");
+        self.add_pattern("010xxxx1 xxxx", ls_handler!(ls::addr_imm, ls::ldr), "ldr");
+        self.add_pattern("010xxxx0 xxxx", ls_handler!(ls::addr_imm, ls::str), "str");
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: &'static str) {
+        let pattern = pattern.to_string().replace(" ", "");
         assert_eq!(pattern.len(), 12, "Pattern must be 12 bits long");
 
         // Determine which bits are fixed and which are wildcards

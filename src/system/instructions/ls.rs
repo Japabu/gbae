@@ -31,3 +31,6 @@ pub fn ldr(cpu: &mut CPU, d: usize, address: u32) {
     cpu.r[d] = cpu.mem.read_u32(address as usize);
 }
 
+pub fn str(cpu: &mut CPU, d: usize, address: u32) {
+    cpu.mem.write_u32(address as usize, cpu.r[d]);
+}

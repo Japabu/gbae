@@ -83,25 +83,6 @@ impl CPU {
         }
     }
 
-    pub fn print_registers(&self) {
-        println!("r0: {:#x}", self.r[0]);
-        println!("r1: {:#x}", self.r[1]);
-        println!("r2: {:#x}", self.r[2]);
-        println!("r3: {:#x}", self.r[3]);
-        println!("r4: {:#x}", self.r[4]);
-        println!("r5: {:#x}", self.r[5]);
-        println!("r6: {:#x}", self.r[6]);
-        println!("r7: {:#x}", self.r[7]);
-        println!("r8: {:#x}", self.r[8]);
-        println!("r9: {:#x}", self.r[9]);
-        println!("r10: {:#x}", self.r[10]);
-        println!("r11: {:#x}", self.r[11]);
-        println!("r12: {:#x}", self.r[12]);
-        println!("sp: {:#x}", self.r[13]);
-        println!("lr: {:#x}", self.r[14]);
-        println!("pc: {:#x}", self.r[15]);
-    }
-
     fn instruction_size_in_bytes(&self) -> u32 {
         if self.get_thumb_state() {
             2

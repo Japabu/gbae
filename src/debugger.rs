@@ -55,7 +55,7 @@ impl Debugger {
                 }
             }
             Some("p") | Some("print") => {
-                cpu.print_registers();
+                Self::print_registers(&cpu);
                 println!("CPSR: 0x{:08X}", cpu.cpsr);
             }
             Some("q") | Some("quit") => {
@@ -72,5 +72,24 @@ impl Debugger {
             }
             _ => println!("Unknown command. Type 'h' for help"),
         }
+    }
+
+    fn print_registers(cpu: &CPU) {
+        println!("r0: {:#x}", cpu.r[0]);
+        println!("r1: {:#x}", cpu.r[1]);
+        println!("r2: {:#x}", cpu.r[2]);
+        println!("r3: {:#x}", cpu.r[3]);
+        println!("r4: {:#x}", cpu.r[4]);
+        println!("r5: {:#x}", cpu.r[5]);
+        println!("r6: {:#x}", cpu.r[6]);
+        println!("r7: {:#x}", cpu.r[7]);
+        println!("r8: {:#x}", cpu.r[8]);
+        println!("r9: {:#x}", cpu.r[9]);
+        println!("r10: {:#x}", cpu.r[10]);
+        println!("r11: {:#x}", cpu.r[11]);
+        println!("r12: {:#x}", cpu.r[12]);
+        println!("sp: {:#x}", cpu.r[13]);
+        println!("lr: {:#x}", cpu.r[14]);
+        println!("pc: {:#x}", cpu.r[15]);
     }
 }

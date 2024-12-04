@@ -35,8 +35,18 @@ impl Debugger {
                 self.step_mode = false;
             }
             Some("s") | Some("step") => {
-                self.running = true;
-                self.step_mode = true;
+                if let Some(n) = parts.get(1).and_then(|s| s.parse::<u32>().ok()) {
+                    // Step n instructions
+                    self.running = true;
+                    self.step_mode = true;
+                    for _ in 0..n-1 {
+                        cpu.cycle();
+                    }
+                } else {
+                    // Single step
+                    self.running = true;
+                    self.step_mode = true;
+                }
             }
             Some("b") | Some("break") => {
                 if let Some(addr) = parts.get(1).and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok()) {
@@ -54,7 +64,7 @@ impl Debugger {
             Some("h") | Some("help") => {
                 println!("Commands:");
                 println!("  c/continue - Continue execution");
-                println!("  s/step - Step one instruction");
+                println!("  s/step [n] - Step one or n instructions");
                 println!("  b/break <addr> - Set breakpoint at address");
                 println!("  p/print - Print CPU state");
                 println!("  q/quit - Exit debugger");

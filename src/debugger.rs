@@ -1,4 +1,4 @@
-use crate::system::cpu::CPU;
+use crate::system::cpu::{format_mode, CPU, MODE_ABT, MODE_FIQ, MODE_IRQ, MODE_SVC, MODE_UND};
 
 pub struct Debugger {
     breakpoints: Vec<u32>,
@@ -39,7 +39,7 @@ impl Debugger {
                     // Step n instructions
                     self.running = true;
                     self.step_mode = true;
-                    for _ in 0..n-1 {
+                    for _ in 0..n - 1 {
                         cpu.cycle();
                     }
                 } else {
@@ -49,14 +49,17 @@ impl Debugger {
                 }
             }
             Some("b") | Some("break") => {
-                if let Some(addr) = parts.get(1).and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok()) {
+                if let Some(addr) = parts
+                    .get(1)
+                    .and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+                {
                     self.add_breakpoint(addr);
                     println!("Breakpoint added at 0x{:08X}", addr);
                 }
             }
             Some("p") | Some("print") => {
-                Self::print_registers(&cpu);
-                println!("CPSR: 0x{:08X}", cpu.cpsr);
+                cpu.print_registers();
+                cpu.print_status();
             }
             Some("q") | Some("quit") => {
                 std::process::exit(0);
@@ -72,24 +75,5 @@ impl Debugger {
             }
             _ => println!("Unknown command. Type 'h' for help"),
         }
-    }
-
-    fn print_registers(cpu: &CPU) {
-        println!("r0: {:#x}", cpu.get_r(0));
-        println!("r1: {:#x}", cpu.get_r(1));
-        println!("r2: {:#x}", cpu.get_r(2));
-        println!("r3: {:#x}", cpu.get_r(3));
-        println!("r4: {:#x}", cpu.get_r(4));
-        println!("r5: {:#x}", cpu.get_r(5));
-        println!("r6: {:#x}", cpu.get_r(6));
-        println!("r7: {:#x}", cpu.get_r(7));
-        println!("r8: {:#x}", cpu.get_r(8));
-        println!("r9: {:#x}", cpu.get_r(9));
-        println!("r10: {:#x}", cpu.get_r(10));
-        println!("r11: {:#x}", cpu.get_r(11));
-        println!("r12: {:#x}", cpu.get_r(12));
-        println!("sp: {:#x}", cpu.get_r(13));
-        println!("lr: {:#x}", cpu.get_r(14));
-        println!("pc: {:#x}", cpu.get_r(15));
     }
 }

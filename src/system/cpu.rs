@@ -8,13 +8,26 @@ use super::{
     memory::Memory,
 };
 
-const MODE_USR: u32 = 0b10000;
-const MODE_FIQ: u32 = 0b10001;
-const MODE_IRQ: u32 = 0b10010;
-const MODE_SVC: u32 = 0b10011;
-const MODE_ABT: u32 = 0b10111;
-const MODE_UND: u32 = 0b11011;
-const MODE_SYS: u32 = 0b11111;
+pub const MODE_USR: u32 = 0b10000;
+pub const MODE_FIQ: u32 = 0b10001;
+pub const MODE_IRQ: u32 = 0b10010;
+pub const MODE_SVC: u32 = 0b10011;
+pub const MODE_ABT: u32 = 0b10111;
+pub const MODE_UND: u32 = 0b11011;
+pub const MODE_SYS: u32 = 0b11111;
+
+pub fn format_mode(mode: u32) -> &'static str {
+    match mode {
+        MODE_USR => "USR",
+        MODE_FIQ => "FIQ",
+        MODE_IRQ => "IRQ",
+        MODE_SVC => "SVC",
+        MODE_ABT => "ABT",
+        MODE_UND => "UND",
+        MODE_SYS => "SYS",
+        _ => panic!("Invalid mode"),
+    }
+}
 
 pub struct CPU {
     pub cpsr: u32, /* current program status register */
@@ -38,7 +51,7 @@ pub struct CPU {
 impl CPU {
     pub fn get_r(&self, r: usize) -> u32 {
         let banked_registers: &[u32] = match self.get_mode() {
-            MODE_USR | MODE_SYS => &self.r,
+            MODE_USR | MODE_SYS => &[],
             MODE_SVC => &self.r_svc,
             MODE_ABT => &self.r_abt,
             MODE_UND => &self.r_und,
@@ -252,5 +265,34 @@ impl CPU {
     }
     pub fn in_a_privileged_mode(&self) -> bool {
         self.get_mode() != MODE_USR
+    }
+
+    pub fn print_registers(&self) {
+        for i in (0..16).step_by(4) {
+            println!(
+                "r{}: {:#x}  r{}: {:#x}  r{}: {:#x}  r{}: {:#x}",
+                i,
+                self.get_r(i),
+                i + 1,
+                self.get_r(i + 1),
+                i + 2,
+                self.get_r(i + 2),
+                i + 3,
+                self.get_r(i + 3),
+            );
+        }
+    }
+
+    pub fn print_status(&self) {
+        print!(
+            "CPSR: 0x{:08X}{} MODE: {}",
+            self.cpsr,
+            if self.current_mode_has_spsr() {
+                format!(" SPSR: 0x{:08X}", self.get_spsr())
+            } else {
+                String::new()
+            },
+            format_mode(self.get_mode())
+        );
     }
 }

@@ -50,7 +50,7 @@ pub fn format_instruction(instruction: u32) -> String {
     format!(
         "{} ({:08x})\n\
             Bit Index:   27 26 25 24 23 22 21 20   07 06 05 04\n\
-            Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<4} {:<2} {:<2} {:<2} {:<2}\n",
+            Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<4} {:<2} {:<2} {:<2} {:<2}",
         lut::InstructionLut::get_decoder(instruction),
         instruction,
         get_bit(instruction, 27) as u32,

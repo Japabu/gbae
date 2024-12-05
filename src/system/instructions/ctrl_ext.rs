@@ -15,7 +15,7 @@ pub fn msr_reg(cpu: &mut CPU, instruction: u32) {
     debug_assert_eq!(get_bits(instruction, 8, 4), 0b0000);
 
     let m = get_bits(instruction, 0, 4) as usize;
-    let r_m = cpu.r[m];
+    let r_m = cpu.get_r(m);
 
     msr(cpu, instruction, r_m);
 }
@@ -77,7 +77,7 @@ fn msr(cpu: &mut CPU, instruction: u32, operand: u32) {
     } else {
         if cpu.current_mode_has_spsr() {
             mask &= USER_MASK | PRIV_MASK | STATE_MASK;
-            cpu.spsr = (cpu.spsr & !mask) | (operand & mask);
+            cpu.set_spsr((cpu.get_spsr() & !mask) | (operand & mask));
         } else {
             panic!("Tried to set SPSR in user or system mode");
         }

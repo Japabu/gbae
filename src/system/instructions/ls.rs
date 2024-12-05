@@ -40,7 +40,7 @@ pub fn addr_imm(cpu: &mut CPU, instruction: u32) -> u32 {
     assert_eq!(p, true);
     assert_eq!(w, false);
 
-    let r_n = cpu.r[n];
+    let r_n = cpu.get_r(n);
 
     if u {
         r_n.wrapping_add(offset_12)
@@ -67,8 +67,8 @@ pub fn addr_reg(cpu: &mut CPU, instruction: u32) -> u32 {
     assert_eq!(w, false);
     assert_eq!(get_bits(instruction, 4, 8), 0);
 
-    let r_n = cpu.r[n];
-    let r_m = cpu.r[m];
+    let r_n = cpu.get_r(n);
+    let r_m = cpu.get_r(m);
 
     if u {
         r_n.wrapping_add(r_m)
@@ -85,7 +85,7 @@ pub fn addr_reg_dec(instruction: u32) -> String {
 }
 
 pub fn ldr(cpu: &mut CPU, d: usize, address: u32) {
-    cpu.r[d] = cpu.mem.read_u32(address as usize);
+    cpu.set_r(d, cpu.mem.read_u32(address as usize));
 }
 
 pub fn ldr_dec(instruction: u32, d: usize, address: String) -> String {

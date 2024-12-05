@@ -24,7 +24,7 @@ impl Debugger {
     }
 
     pub fn should_break(&self, cpu: &CPU) -> bool {
-        self.step_mode || self.breakpoints.contains(&cpu.r[15])
+        self.step_mode || self.breakpoints.contains(&cpu.get_r(15))
     }
 
     pub fn handle_command(&mut self, cpu: &mut CPU, command: &str) {
@@ -75,21 +75,21 @@ impl Debugger {
     }
 
     fn print_registers(cpu: &CPU) {
-        println!("r0: {:#x}", cpu.r[0]);
-        println!("r1: {:#x}", cpu.r[1]);
-        println!("r2: {:#x}", cpu.r[2]);
-        println!("r3: {:#x}", cpu.r[3]);
-        println!("r4: {:#x}", cpu.r[4]);
-        println!("r5: {:#x}", cpu.r[5]);
-        println!("r6: {:#x}", cpu.r[6]);
-        println!("r7: {:#x}", cpu.r[7]);
-        println!("r8: {:#x}", cpu.r[8]);
-        println!("r9: {:#x}", cpu.r[9]);
-        println!("r10: {:#x}", cpu.r[10]);
-        println!("r11: {:#x}", cpu.r[11]);
-        println!("r12: {:#x}", cpu.r[12]);
-        println!("sp: {:#x}", cpu.r[13]);
-        println!("lr: {:#x}", cpu.r[14]);
-        println!("pc: {:#x}", cpu.r[15]);
+        println!("r0: {:#x}", cpu.get_r(0));
+        println!("r1: {:#x}", cpu.get_r(1));
+        println!("r2: {:#x}", cpu.get_r(2));
+        println!("r3: {:#x}", cpu.get_r(3));
+        println!("r4: {:#x}", cpu.get_r(4));
+        println!("r5: {:#x}", cpu.get_r(5));
+        println!("r6: {:#x}", cpu.get_r(6));
+        println!("r7: {:#x}", cpu.get_r(7));
+        println!("r8: {:#x}", cpu.get_r(8));
+        println!("r9: {:#x}", cpu.get_r(9));
+        println!("r10: {:#x}", cpu.get_r(10));
+        println!("r11: {:#x}", cpu.get_r(11));
+        println!("r12: {:#x}", cpu.get_r(12));
+        println!("sp: {:#x}", cpu.get_r(13));
+        println!("lr: {:#x}", cpu.get_r(14));
+        println!("pc: {:#x}", cpu.get_r(15));
     }
 }

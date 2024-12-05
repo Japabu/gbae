@@ -25,7 +25,7 @@ fn main() {
 
             // Print current instruction before executing it
             let instruction = cpu.peek_next_instruction();
-            println!("0x{:08X}: {}", cpu.r[15], format_instruction(instruction));
+            println!("0x{:08X}: {}", cpu.get_r(15), format_instruction(instruction));
 
 
             debugger.running = false;

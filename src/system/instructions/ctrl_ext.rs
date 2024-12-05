@@ -79,7 +79,7 @@ fn msr(cpu: &mut CPU, instruction: u32, operand: u32) {
             mask &= USER_MASK | PRIV_MASK | STATE_MASK;
             cpu.spsr = (cpu.spsr & !mask) | (operand & mask);
         } else {
-            panic!("UNPREDICTABLE");
+            panic!("Tried to set SPSR in user or system mode");
         }
     }
 }

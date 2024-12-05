@@ -100,7 +100,7 @@ pub fn ldr_dec(instruction: u32, d: usize, address: String) -> String {
 }
 
 pub fn str(cpu: &mut CPU, d: usize, address: u32) {
-    cpu.mem.write_u32(address as usize, cpu.r[d]);
+    cpu.mem.write_u32(address as usize, cpu.get_r(d));
 }
 
 pub fn str_dec(instruction: u32, d: usize, address: String) -> String {

@@ -1,9 +1,6 @@
 use crate::{
     bitutil::{arithmetic_shift_right, get_bit, get_bits},
-    system::{
-        cpu::CPU,
-        instructions::{format_instruction, get_condition_code},
-    },
+    system::{cpu::CPU, instructions::get_condition_code},
 };
 
 pub fn handler(cpu: &mut CPU, instruction: u32) {

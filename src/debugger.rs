@@ -1,4 +1,4 @@
-use crate::system::cpu::{format_mode, CPU, MODE_ABT, MODE_FIQ, MODE_IRQ, MODE_SVC, MODE_UND};
+use crate::system::cpu::CPU;
 
 pub struct Debugger {
     breakpoints: Vec<u32>,

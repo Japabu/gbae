@@ -39,11 +39,21 @@ pub(crate) fn evaluate_condition(cpu: &CPU, instruction: u32) -> bool {
     let condition = get_bits(instruction, 28, 4);
     match condition {
         0b0000 => cpu.get_zero_flag(),
+        0b0001 => !cpu.get_zero_flag(),
         0b0010 => cpu.get_carry_flag(),
+        0b0011 => !cpu.get_carry_flag(),
         0b0100 => cpu.get_negative_flag(),
+        0b0101 => !cpu.get_negative_flag(),
+        0b0110 => cpu.get_overflow_flag(),
+        0b0111 => !cpu.get_overflow_flag(),
+        0b1000 => cpu.get_carry_flag() && !cpu.get_zero_flag(),
+        0b1001 => !cpu.get_carry_flag() || cpu.get_zero_flag(),
+        0b1010 => cpu.get_negative_flag() == cpu.get_overflow_flag(),
         0b1011 => cpu.get_negative_flag() != cpu.get_overflow_flag(),
+        0b1100 => !cpu.get_zero_flag() && (cpu.get_negative_flag() == cpu.get_overflow_flag()),
+        0b1101 => cpu.get_zero_flag() || (cpu.get_negative_flag() != cpu.get_overflow_flag()),
         0b1110 => true,
-        _ => panic!("Unknown condition: {:04b}", condition),
+        _ => panic!("Invalid condition: {:04b}", condition),
     }
 }
 

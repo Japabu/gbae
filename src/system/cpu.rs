@@ -1,7 +1,4 @@
-use crate::{
-    bitutil::{get_bit, get_bits, set_bit, set_bits},
-    system::instructions::format_instruction,
-};
+use crate::bitutil::{get_bit, get_bits, set_bit, set_bits};
 
 use super::{
     instructions::{self, lut::InstructionLut},

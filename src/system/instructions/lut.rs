@@ -1,25 +1,19 @@
 use crate::system::instructions::{branch, ctrl_ext, dp, format_instruction, ls, lsm};
 use crate::{bitutil::get_bits, system::cpu::CPU};
 
-macro_rules! add_dp_patterns {
-    ($lut:expr, $($opcode:expr => ($handler:expr, $decoder:expr)),* $(,)?) => {
-        $(
-            $lut.add_pattern(&format!("001{}x xxxx", $opcode), dp_handler!($handler), dp_dec!($decoder));
-            $lut.add_pattern(&format!("000{}x xxx0", $opcode), dp_handler!($handler), dp_dec!($decoder));
-            $lut.add_pattern(&format!("000{}x 0xx1", $opcode), dp_handler!($handler), dp_dec!($decoder));
-        )*
-    };
-}
-
 macro_rules! dp_handler {
     ($dp_handler:expr) => {
         |cpu: &mut CPU, instruction: u32| dp::handler(cpu, instruction, $dp_handler)
     };
 }
 
-macro_rules! dp_dec {
-    ($dp_decoder:expr) => {
-        |instruction: u32| dp::dec(instruction, $dp_decoder)
+macro_rules! add_dp_patterns {
+    ($lut:expr, $($opcode:expr => $handler:expr),* $(,)?) => {
+        $(
+            $lut.add_pattern(&format!("001{}x xxxx", $opcode), dp_handler!($handler), dp::dec);
+            $lut.add_pattern(&format!("000{}x xxx0", $opcode), dp_handler!($handler), dp::dec);
+            $lut.add_pattern(&format!("000{}x 0xx1", $opcode), dp_handler!($handler), dp::dec);
+        )*
     };
 }
 
@@ -78,10 +72,22 @@ impl InstructionLut {
         // data processing
         add_dp_patterns!(
             self,
-            "0000" => (dp::and, dp::and_dec),
-            "0010" => (dp::sub, dp::sub_dec),
-            "0100" => (dp::add, dp::add_dec),
-            "1101" => (dp::mov, dp::mov_dec),
+            "0000" => dp::and,
+            "0001" => dp::eor,
+            "0010" => dp::sub,
+            "0011" => dp::rsb,
+            "0100" => dp::add,
+            "0101" => dp::adc,
+            "0110" => dp::sbc,
+            "0111" => dp::rsc,
+            "1000" => dp::tst,
+            "1001" => dp::teq,
+            "1010" => dp::cmp,
+            "1011" => dp::cmn,
+            "1100" => dp::orr,
+            "1101" => dp::mov,
+            "1110" => dp::bic,
+            "1111" => dp::mvn,
         );
         self.add_pattern("101xxxxx xxxx", branch::b, branch::b_dec);
         // extensions

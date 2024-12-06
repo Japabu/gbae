@@ -1,10 +1,9 @@
 use crate::{
-    bitutil::{self, arithmetic_shift_right, get_bit, get_bits},
+    bitutil::{self, arithmetic_shift_right, get_bit, get_bits, sub_with_flags},
     system::{cpu::CPU, instructions::set_nz_flags},
 };
 
 type DpHandlerFn = fn(&mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool);
-type DpDecFn = fn(instruction: u32, s: bool, n: usize, d: usize, so: String) -> String;
 
 pub fn handler(cpu: &mut CPU, instruction: u32, dp_handler: DpHandlerFn) {
     // set flags bit
@@ -77,7 +76,7 @@ pub fn handler(cpu: &mut CPU, instruction: u32, dp_handler: DpHandlerFn) {
     dp_handler(cpu, s, n, d, so, sco);
 }
 
-pub fn dec(instruction: u32, dp_decoder: DpDecFn) -> String {
+pub fn dec(instruction: u32) -> String {
     // set flags bit
     let s = get_bit(instruction, 20);
 
@@ -94,7 +93,12 @@ pub fn dec(instruction: u32, dp_decoder: DpDecFn) -> String {
         op2_shift_dec(instruction)
     };
 
-    dp_decoder(instruction, s, n, d, so)
+    let opcode = get_bits(instruction, 21, 4);
+    match opcode {
+        0b1000..=0b1011 => dec_2(instruction, n, so),
+        0b1101 | 0b1111 => dec_1(instruction, s, d, so),
+        _ => dec_3(instruction, s, n, d, so),
+    }
 }
 
 fn op2_imm(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
@@ -194,17 +198,11 @@ pub fn and(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
     }
 }
 
-pub fn and_dec(instruction: u32, s: bool, n: usize, d: usize, so: String) -> String {
-    format!(
-        "AND{}{} r{}, {}",
-        super::get_condition_code(instruction),
-        if s { "S" } else { "" },
-        d,
-        so
-    )
+pub fn eor(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
+    todo!();
 }
 
-pub fn sub(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
+pub fn sub(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
     let (result, borrow, overflow) = bitutil::sub_with_flags(cpu.get_r(n), so);
     cpu.set_r(d, result);
 
@@ -215,14 +213,8 @@ pub fn sub(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
     }
 }
 
-pub fn sub_dec(instruction: u32, s: bool, n: usize, d: usize, so: String) -> String {
-    format!(
-        "SUB{}{} r{}, {}",
-        super::get_condition_code(instruction),
-        if s { "S" } else { "" },
-        d,
-        so
-    )
+pub fn rsb(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
+    todo!();
 }
 
 pub fn add(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
@@ -236,14 +228,39 @@ pub fn add(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
     }
 }
 
-pub fn add_dec(instruction: u32, s: bool, n: usize, d: usize, so: String) -> String {
-    format!(
-        "ADD{}{} r{}, {}",
-        super::get_condition_code(instruction),
-        if s { "S" } else { "" },
-        d,
-        so
-    )
+pub fn adc(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
+    todo!();
+}
+
+pub fn sbc(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
+    todo!();
+}
+
+pub fn rsc(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
+    todo!();
+}
+
+pub fn tst(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
+    todo!();
+}
+
+pub fn teq(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
+    todo!();
+}
+
+pub fn cmp(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
+    let (alu_out, borrow, overflow) = sub_with_flags(cpu.get_r(n), so);
+    set_nz_flags(cpu, alu_out);
+    cpu.set_carry_flag(!borrow);
+    cpu.set_overflow_flag(overflow);
+}
+
+pub fn cmn(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, _sco: bool) {
+    todo!();
+}
+
+pub fn orr(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
+    todo!();
 }
 
 pub fn mov(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
@@ -256,12 +273,57 @@ pub fn mov(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
     }
 }
 
-pub fn mov_dec(instruction: u32, s: bool, _n: usize, d: usize, so: String) -> String {
+pub fn bic(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
+    todo!();
+}
+
+pub fn mvn(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
+    debug_assert_eq!(n, 0);
+
+    cpu.set_r(d, !so);
+    if s {
+        set_nz_flags(cpu, cpu.get_r(d));
+        cpu.set_carry_flag(sco);
+    }
+}
+
+fn dec_1(instruction: u32, s: bool, d: usize, so: String) -> String {
     format!(
-        "MOV{}{} r{}, {}",
+        "{}{}{} r{}, {}",
+        opcode_mnemonic(instruction),
         super::get_condition_code(instruction),
         if s { "S" } else { "" },
         d,
         so
     )
+}
+
+fn dec_2(instruction: u32, n: usize, so: String) -> String {
+    format!(
+        "{}{} r{}, {}",
+        opcode_mnemonic(instruction),
+        super::get_condition_code(instruction),
+        n,
+        so
+    )
+}
+
+fn dec_3(instruction: u32, s: bool, n: usize, d: usize, so: String) -> String {
+    format!(
+        "{}{}{} r{}, r{}, {}",
+        opcode_mnemonic(instruction),
+        super::get_condition_code(instruction),
+        if s { "S" } else { "" },
+        d,
+        n,
+        so
+    )
+}
+
+fn opcode_mnemonic(instruction: u32) -> String {
+    ([
+        "AND", "EOR", "SUB", "RSB", "ADD", "ADC", "SBC", "RSC", "TST", "TEQ", "CMP", "CMN", "ORR",
+        "MOV", "BIC", "MVN",
+    ][get_bits(instruction, 21, 4) as usize])
+        .to_string()
 }

@@ -105,5 +105,14 @@ pub fn ldm(cpu: &mut CPU, instruction: u32, start_address: u32, end_address: u32
 }
 
 pub fn stm(cpu: &mut CPU, instruction: u32, start_address: u32, end_address: u32) {
-    todo!("stm");
+    assert_eq!(get_bit(instruction, 22), false);
+
+    let mut address = start_address as usize;
+    for i in 0..16 {
+        if get_bit(instruction, i) {
+            cpu.mem.write_u32(address, cpu.get_r(i as usize));
+            address += 4;
+        }
+    }
+    assert_eq!(end_address as usize, address - 4);
 }

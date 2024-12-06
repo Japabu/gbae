@@ -24,15 +24,15 @@ fn main() {
     println!("GBA Debugger. Type 'h' for help.");
 
     loop {
-        if !debugger.running || debugger.should_break(&cpu) {
-            // Print current instruction before executing it
-            let instruction = cpu.peek_next_instruction();
-            println!(
-                "Next instruction at 0x{:08X}: {}",
-                cpu.get_r(15),
-                format_instruction(instruction)
-            );
+        // Print current instruction before executing it
+        let instruction = cpu.peek_next_instruction();
+        println!(
+            "Next instruction at 0x{:08X}: {}",
+            cpu.get_r(15),
+            format_instruction(instruction)
+        );
 
+        if !debugger.running || debugger.should_break(&cpu) {
             debugger.running = false;
             print!("> ");
             stdout().flush().unwrap();

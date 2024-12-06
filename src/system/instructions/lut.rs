@@ -4,24 +4,22 @@ use crate::{bitutil::get_bits, system::cpu::CPU};
 macro_rules! add_dp_patterns {
     ($lut:expr, $($opcode:expr => ($handler:expr, $decoder:expr)),* $(,)?) => {
         $(
-            $lut.add_pattern(&format!("001{}xxxxx", $opcode), dp_handler!(dp::op2_imm, $handler), dp_dec!(dp::op2_imm_dec, $decoder));
-            $lut.add_pattern(&format!("000{}xxxx0", $opcode), dp_handler!(dp::op2_imm_shift, $handler), dp_dec!(dp::op2_imm_shift_dec, $decoder));
-            $lut.add_pattern(&format!("000{}xxxx1", $opcode), dp_handler!(dp::op2_reg_shift, $handler), dp_dec!(dp::op2_reg_shift_dec, $decoder));
+            $lut.add_pattern(&format!("001{}x xxxx", $opcode), dp_handler!($handler), dp_dec!($decoder));
+            $lut.add_pattern(&format!("000{}x xxx0", $opcode), dp_handler!($handler), dp_dec!($decoder));
+            $lut.add_pattern(&format!("000{}x 0xx1", $opcode), dp_handler!($handler), dp_dec!($decoder));
         )*
     };
 }
 
 macro_rules! dp_handler {
-    ($operand2_evluator:expr, $dp_handler:expr) => {
-        |cpu: &mut CPU, instruction: u32| {
-            dp::handler(cpu, instruction, $operand2_evluator, $dp_handler)
-        }
+    ($dp_handler:expr) => {
+        |cpu: &mut CPU, instruction: u32| dp::handler(cpu, instruction, $dp_handler)
     };
 }
 
 macro_rules! dp_dec {
-    ($operand2_dec:expr, $dp_decoder:expr) => {
-        |instruction: u32| dp::dec(instruction, $operand2_dec, $dp_decoder)
+    ($dp_decoder:expr) => {
+        |instruction: u32| dp::dec(instruction, $dp_decoder)
     };
 }
 

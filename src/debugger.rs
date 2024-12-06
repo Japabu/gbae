@@ -19,10 +19,6 @@ impl Debugger {
         self.breakpoints.push(address);
     }
 
-    pub fn remove_breakpoint(&mut self, address: u32) {
-        self.breakpoints.retain(|&x| x != address);
-    }
-
     pub fn should_break(&self, cpu: &CPU) -> bool {
         self.step_mode || self.breakpoints.contains(&cpu.get_r(15))
     }

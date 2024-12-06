@@ -1,5 +1,4 @@
-use crate::system::cpu;
-use crate::system::instructions::{branch, ctrl_ext, dp, format_instruction, ls};
+use crate::system::instructions::{branch, ctrl_ext, dp, format_instruction, ls, lsm};
 use crate::{bitutil::get_bits, system::cpu::CPU};
 
 macro_rules! add_dp_patterns {
@@ -23,20 +22,6 @@ macro_rules! dp_handler {
 macro_rules! dp_dec {
     ($operand2_dec:expr, $dp_decoder:expr) => {
         |instruction: u32| dp::dec(instruction, $operand2_dec, $dp_decoder)
-    };
-}
-
-macro_rules! ls_handler {
-    ($adress_evaluator:expr, $ls_handler:expr) => {
-        |cpu: &mut CPU, instruction: u32| {
-            ls::handler(cpu, instruction, $adress_evaluator, $ls_handler)
-        }
-    };
-}
-
-macro_rules! ls_dec {
-    ($adress_dec:expr, $ls_decoder:expr) => {
-        |instruction: u32| ls::dec(instruction, $adress_dec, $ls_decoder)
     };
 }
 
@@ -105,26 +90,10 @@ impl InstructionLut {
         self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, ctrl_ext::msr_reg_dec);
         self.add_pattern("00010010 0001", branch::bx, branch::bx_dec);
         // load store
-        self.add_pattern(
-            "010xxxx1 xxxx",
-            ls_handler!(ls::addr_imm, ls::ldr),
-            ls_dec!(ls::addr_imm_dec, ls::ldr_dec),
-        );
-        self.add_pattern(
-            "010xxxx0 xxxx",
-            ls_handler!(ls::addr_imm, ls::str),
-            ls_dec!(ls::addr_imm_dec, ls::str_dec),
-        );
-        self.add_pattern(
-            "011xxxx1 xxxx",
-            ls_handler!(ls::addr_reg, ls::ldr),
-            ls_dec!(ls::addr_reg_dec, ls::ldr_dec),
-        );
-        self.add_pattern(
-            "011xxxx0 xxxx",
-            ls_handler!(ls::addr_reg, ls::str),
-            ls_dec!(ls::addr_reg_dec, ls::str_dec),
-        );
+        self.add_pattern("010xxxxx xxxx", ls::handler, ls::dec);
+        self.add_pattern("011xxxxx xxx0", ls::handler, ls::dec);
+        // load store multiple
+        self.add_pattern("100xxxxx xxxx", lsm::handler, lsm::dec);
     }
 
     fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: DecoderFn) {

@@ -55,7 +55,7 @@ pub fn add_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
 }
 
 /// Subtracts two 32-bit unsigned integers and returns the result along with borrow and overflow flags.
-/// 
+///
 /// # Arguments
 ///
 /// * `a` - The first operand.
@@ -184,7 +184,10 @@ mod tests {
 
         // Test overflow flag (signed overflow)
         // Positive - Negative = Negative (overflow)
-        assert_eq!(sub_with_flags(0x7FFFFFFF, 0x80000000), (0xFFFFFFFF, true, true));
+        assert_eq!(
+            sub_with_flags(0x7FFFFFFF, 0x80000000),
+            (0xFFFFFFFF, true, true)
+        );
 
         // Negative - Positive = Positive (overflow)
         assert_eq!(sub_with_flags(0x80000000, 1), (0x7FFFFFFF, false, true));

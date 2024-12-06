@@ -142,7 +142,6 @@ impl CPU {
         self.advance_pc();
 
         if !instructions::evaluate_condition(&self, instruction) {
-            //println!("Skipping: {}", format_instruction(instruction));
             return;
         }
 
@@ -150,8 +149,6 @@ impl CPU {
         self.advance_pc();
         let pc_old = self.r[15];
 
-        //self.print_registers();
-        //println!("Executing: {}", format_instruction(instruction));
         InstructionLut::get_handler(instruction)(self, instruction);
 
         // If there was no branch set pc to the next instruction
@@ -284,7 +281,7 @@ impl CPU {
     }
 
     pub fn print_status(&self) {
-        print!(
+        println!(
             "CPSR: 0x{:08X}{} MODE: {}",
             self.cpsr,
             if self.current_mode_has_spsr() {

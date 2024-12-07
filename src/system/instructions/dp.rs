@@ -26,8 +26,8 @@ pub fn handler(cpu: &mut CPU, instruction: u32, dp_handler: DpHandlerFn) {
         let m = get_bits(instruction, 0, 4) as usize;
         let r_m = cpu.get_r(m);
         let r_m_31 = get_bit(r_m, 31);
-        let is_reg = get_bit(instruction, 4);
-        let shift_amount = if is_reg {
+        let is_reg_shift = get_bit(instruction, 4);
+        let shift_amount = if is_reg_shift {
             cpu.get_r(get_bits(instruction, 8, 4) as usize) & 0xFF // r_s
         } else {
             get_bits(instruction, 7, 5)
@@ -39,13 +39,17 @@ pub fn handler(cpu: &mut CPU, instruction: u32, dp_handler: DpHandlerFn) {
             0b01 => op2_shift_right(
                 r_m,
                 shift_amount,
-                if is_reg { r_m } else { 0 },
-                if is_reg { cpu.get_carry_flag() } else { r_m_31 },
+                if is_reg_shift { r_m } else { 0 },
+                if is_reg_shift {
+                    cpu.get_carry_flag()
+                } else {
+                    r_m_31
+                },
             ),
             0b10 => op2_arith_shift_right(
                 r_m,
                 shift_amount,
-                if is_reg {
+                if is_reg_shift {
                     r_m
                 } else {
                     if r_m_31 {
@@ -54,9 +58,13 @@ pub fn handler(cpu: &mut CPU, instruction: u32, dp_handler: DpHandlerFn) {
                         0
                     }
                 },
-                if is_reg { cpu.get_carry_flag() } else { r_m_31 },
+                if is_reg_shift {
+                    cpu.get_carry_flag()
+                } else {
+                    r_m_31
+                },
             ),
-            0b11 if !is_reg && shift_amount == 0 => {
+            0b11 if !is_reg_shift && shift_amount == 0 => {
                 op2_rotate_right_extend(r_m, cpu.get_carry_flag())
             }
             0b11 => op2_rotate_right(
@@ -165,17 +173,17 @@ fn op2_dec(instruction: u32) -> String {
         return format!("#{:#08x}", shifter_operand);
     }
 
-    let is_reg = get_bit(instruction, 4);
+    let is_reg_shift = get_bit(instruction, 4);
     let shift_type = match get_bits(instruction, 5, 2) {
         0b00 => "LSL",
         0b01 => "LSR",
         0b10 => "ASR",
-        0b11 if !is_reg && get_bits(instruction, 7, 5) == 0 => "RRX",
+        0b11 if !is_reg_shift && get_bits(instruction, 7, 5) == 0 => "RRX",
         0b11 => "ROR",
         _ => unreachable!(),
     };
 
-    if is_reg {
+    if is_reg_shift {
         format!("r{}, {} r{}", m, shift_type, get_bits(instruction, 8, 4))
     } else {
         let imm_5 = get_bits(instruction, 7, 5);

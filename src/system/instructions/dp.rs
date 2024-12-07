@@ -3,108 +3,38 @@ use crate::{
     system::{cpu::CPU, instructions::set_nz_flags},
 };
 
+use super::get_condition_code;
+
 type DpHandlerFn = fn(&mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool);
 
 pub fn handler(cpu: &mut CPU, instruction: u32, dp_handler: DpHandlerFn) {
-    // set flags bit
-    let s = get_bit(instruction, 20);
-
-    // operand 1 register
-    let n = get_bits(instruction, 16, 4) as usize;
-
-    // destination register
-    let d = get_bits(instruction, 12, 4) as usize;
+    // Decode instruction components
+    let s = get_bit(instruction, 20); // Set flags bit
+    let n = get_bits(instruction, 16, 4) as usize; // Operand 1 register
+    let d = get_bits(instruction, 12, 4) as usize; // Destination register
 
     if d == 15 {
-        panic!("dp instructions with destination register 15 not implemented");
+        panic!("DP instructions with destination register 15 are not implemented");
     }
 
-    let is_imm = get_bit(instruction, 25);
-    let (so, sco) = if is_imm {
-        op2_imm(cpu, instruction)
-    } else {
-        let m = get_bits(instruction, 0, 4) as usize;
-        let r_m = cpu.get_r(m);
-        let r_m_31 = get_bit(r_m, 31);
-        let is_reg_shift = get_bit(instruction, 4);
-        let shift_amount = if is_reg_shift {
-            cpu.get_r(get_bits(instruction, 8, 4) as usize) & 0xFF // r_s
-        } else {
-            get_bits(instruction, 7, 5)
-        };
+    // Decode shifter operand
+    let (so, sco) = eval_so(cpu, instruction);
 
-        let shift_type = get_bits(instruction, 5, 2);
-        match shift_type {
-            0b00 => op2_shift_left(r_m, shift_amount, r_m, cpu.get_carry_flag()),
-            0b01 => op2_shift_right(
-                r_m,
-                shift_amount,
-                if is_reg_shift { r_m } else { 0 },
-                if is_reg_shift {
-                    cpu.get_carry_flag()
-                } else {
-                    r_m_31
-                },
-            ),
-            0b10 => op2_arith_shift_right(
-                r_m,
-                shift_amount,
-                if is_reg_shift {
-                    r_m
-                } else {
-                    if r_m_31 {
-                        0xFFFFFFFF
-                    } else {
-                        0
-                    }
-                },
-                if is_reg_shift {
-                    cpu.get_carry_flag()
-                } else {
-                    r_m_31
-                },
-            ),
-            0b11 if !is_reg_shift && shift_amount == 0 => {
-                op2_rotate_right_extend(r_m, cpu.get_carry_flag())
-            }
-            0b11 => op2_rotate_right(
-                r_m,
-                get_bits(shift_amount, 0, 5),
-                r_m,
-                if shift_amount == 0 {
-                    cpu.get_carry_flag()
-                } else {
-                    r_m_31
-                },
-            ),
-            _ => unreachable!(),
-        }
-    };
-
+    // Call the data-processing handler
     dp_handler(cpu, s, n, d, so, sco);
 }
 
-pub fn dec(instruction: u32) -> String {
-    // set flags bit
-    let s = get_bit(instruction, 20);
-
-    // operand 1 register
-    let n = get_bits(instruction, 16, 4) as usize;
-
-    // destination register
-    let d = get_bits(instruction, 12, 4) as usize;
-
-    let so = op2_dec(instruction);
-
-    let opcode = get_bits(instruction, 21, 4);
-    match opcode {
-        0b1000..=0b1011 => dec_2(instruction, n, so),
-        0b1101 | 0b1111 => dec_1(instruction, s, d, so),
-        _ => dec_3(instruction, s, n, d, so),
+fn eval_so(cpu: &CPU, instruction: u32) -> (u32, bool) {
+    if get_bit(instruction, 25) {
+        // Immediate operand
+        eval_immediate_so(cpu, instruction)
+    } else {
+        // Register operand with potential shift
+        eval_register_so(cpu, instruction)
     }
 }
 
-fn op2_imm(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
+fn eval_immediate_so(cpu: &CPU, instruction: u32) -> (u32, bool) {
     let immed_8 = get_bits(instruction, 0, 8);
     let rotate_imm = get_bits(instruction, 8, 4);
     let shifter_operand = immed_8.rotate_right(2 * rotate_imm);
@@ -117,53 +47,107 @@ fn op2_imm(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
     (shifter_operand, carry)
 }
 
-fn op2_shift_left(r_m: u32, shift_amount: u32, z_so: u32, z_sco: bool) -> (u32, bool) {
+fn eval_register_so(cpu: &CPU, instruction: u32) -> (u32, bool) {
+    let m = get_bits(instruction, 0, 4) as usize;
+    let r_m = cpu.get_r(m);
+    let is_reg_shift = get_bit(instruction, 4);
+
+    let shift_amount = if is_reg_shift {
+        cpu.get_r(get_bits(instruction, 8, 4) as usize) & 0xFF // Shift by least significant byte of Rs
+    } else {
+        get_bits(instruction, 7, 5) // Shift by immediate (0-31)
+    };
+
+    let shift_type = get_bits(instruction, 5, 2);
+    eval_shift(cpu.get_carry_flag(), r_m, shift_amount, shift_type, is_reg_shift)
+}
+
+fn eval_shift(carry_flag: bool, r_m: u32, shift_amount: u32, shift_type: u32, is_reg_shift: bool) -> (u32, bool) {
+    let r_m_31 = get_bit(r_m, 31);
+
+    match shift_type {
+        0b00 => eval_shift_left(r_m, shift_amount, r_m, carry_flag),
+        0b01 => eval_shift_right(r_m, shift_amount, if is_reg_shift { r_m } else { 0 }, if is_reg_shift { carry_flag } else { r_m_31 }),
+        0b10 => eval_arith_shift_right(
+            r_m,
+            r_m_31,
+            shift_amount,
+            if is_reg_shift {
+                r_m
+            } else if r_m_31 {
+                0xFFFFFFFF
+            } else {
+                0
+            },
+            if is_reg_shift { carry_flag } else { r_m_31 },
+        ),
+        0b11 if !is_reg_shift && shift_amount == 0 => eval_rotate_right_extend(r_m, carry_flag),
+        0b11 => eval_rotate_right(r_m, get_bits(shift_amount, 0, 5), r_m, if shift_amount == 0 { carry_flag } else { r_m_31 }),
+        _ => unreachable!(),
+    }
+}
+
+fn eval_shift_left(r_m: u32, shift_amount: u32, zero_so: u32, zero_sco: bool) -> (u32, bool) {
     match shift_amount {
-        0 => (z_so, z_sco),
+        0 => (zero_so, zero_sco),
         ..32 => (r_m << shift_amount, get_bit(r_m, 32 - shift_amount)),
         32 => (0, get_bit(r_m, 0)),
         _ => (0, false),
     }
 }
 
-fn op2_shift_right(r_m: u32, shift_amount: u32, z_so: u32, z_sco: bool) -> (u32, bool) {
+fn eval_shift_right(r_m: u32, shift_amount: u32, zero_so: u32, zero_sco: bool) -> (u32, bool) {
     match shift_amount {
-        0 => (z_so, z_sco),
+        0 => (zero_so, zero_sco),
         ..32 => (r_m >> shift_amount, get_bit(r_m, shift_amount - 1)),
         32 => (0, get_bit(r_m, 31)),
         _ => (0, false),
     }
 }
 
-fn op2_arith_shift_right(r_m: u32, shift_amount: u32, z_so: u32, z_sco: bool) -> (u32, bool) {
+fn eval_arith_shift_right(r_m: u32, r_m_31: bool, shift_amount: u32, zero_so: u32, zero_sco: bool) -> (u32, bool) {
     match shift_amount {
-        0 => (z_so, z_sco),
-        ..32 => (
-            arithmetic_shift_right(r_m, shift_amount),
-            get_bit(r_m, shift_amount - 1),
-        ),
-        _ => (
-            if get_bit(r_m, 31) { 0xFFFFFFFF } else { 0 },
-            get_bit(r_m, 31),
-        ),
+        0 => (zero_so, zero_sco),
+        ..32 => (arithmetic_shift_right(r_m, shift_amount), get_bit(r_m, shift_amount - 1)),
+        _ => (if r_m_31 { 0xFFFFFFFF } else { 0 }, r_m_31),
     }
 }
 
-fn op2_rotate_right(r_m: u32, shift_amount: u32, z_so: u32, z_sco: bool) -> (u32, bool) {
+fn eval_rotate_right(r_m: u32, shift_amount: u32, zero_so: u32, zero_sco: bool) -> (u32, bool) {
     match shift_amount {
-        0 => (z_so, z_sco),
-        _ => (
-            r_m.rotate_right(shift_amount),
-            get_bit(r_m, shift_amount - 1),
-        ),
+        0 => (zero_so, zero_sco),
+        _ => (r_m.rotate_right(shift_amount), get_bit(r_m, shift_amount - 1)),
     }
 }
 
-fn op2_rotate_right_extend(r_m: u32, carry_flag: bool) -> (u32, bool) {
+fn eval_rotate_right_extend(r_m: u32, carry_flag: bool) -> (u32, bool) {
     (((carry_flag as u32) << 31) | (r_m >> 1), get_bit(r_m, 0))
 }
 
-fn op2_dec(instruction: u32) -> String {
+pub fn dec(instruction: u32) -> String {
+    // set flags bit
+    let s = get_bit(instruction, 20);
+
+    // operand 1 register
+    let n = get_bits(instruction, 16, 4);
+
+    // destination register
+    let d = get_bits(instruction, 12, 4);
+
+    // decode shifter operand
+    let so = dec_so(instruction);
+
+    let opcode = get_bits(instruction, 21, 4);
+    let opcode_str = get_opcode_mnemonic(opcode);
+    let condition_str = get_condition_code(instruction);
+    match opcode {
+        0b1000..=0b1011 => format_instruction(opcode_str, condition_str, false, Some(n), None, &so),
+        0b1101 | 0b1111 => format_instruction(opcode_str, condition_str, s, None, Some(d), &so),
+        _ => format_instruction(opcode_str, condition_str, s, Some(n), Some(d), &so),
+    }
+}
+
+fn dec_so(instruction: u32) -> String {
     let m = get_bits(instruction, 0, 4);
     let is_imm = get_bit(instruction, 25);
     if is_imm {
@@ -193,6 +177,18 @@ fn op2_dec(instruction: u32) -> String {
             format!("r{}, {} #{}", m, shift_type, imm_5)
         }
     }
+}
+
+fn format_instruction(opcode: &str, condition: &str, s: bool, n: Option<u32>, d: Option<u32>, so: &str) -> String {
+    let s_flag = if s { "S" } else { "" };
+    let d_reg = if let Some(d) = d { format!(", r{}", d) } else { "".to_string() };
+    let n_reg = if let Some(n) = n { format!(", r{}", n) } else { "".to_string() };
+
+    format!("{}{}{}{}{}, {}", opcode, condition, s_flag, d_reg, n_reg, so)
+}
+
+fn get_opcode_mnemonic(opcode: u32) -> &'static str {
+    ["AND", "EOR", "SUB", "RSB", "ADD", "ADC", "SBC", "RSC", "TST", "TEQ", "CMP", "CMN", "ORR", "MOV", "BIC", "MVN"][opcode as usize]
 }
 
 pub fn and(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
@@ -291,45 +287,4 @@ pub fn mvn(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {
         set_nz_flags(cpu, cpu.get_r(d));
         cpu.set_carry_flag(sco);
     }
-}
-
-fn dec_1(instruction: u32, s: bool, d: usize, so: String) -> String {
-    format!(
-        "{}{}{} r{}, {}",
-        opcode_mnemonic(instruction),
-        super::get_condition_code(instruction),
-        if s { "S" } else { "" },
-        d,
-        so
-    )
-}
-
-fn dec_2(instruction: u32, n: usize, so: String) -> String {
-    format!(
-        "{}{} r{}, {}",
-        opcode_mnemonic(instruction),
-        super::get_condition_code(instruction),
-        n,
-        so
-    )
-}
-
-fn dec_3(instruction: u32, s: bool, n: usize, d: usize, so: String) -> String {
-    format!(
-        "{}{}{} r{}, r{}, {}",
-        opcode_mnemonic(instruction),
-        super::get_condition_code(instruction),
-        if s { "S" } else { "" },
-        d,
-        n,
-        so
-    )
-}
-
-fn opcode_mnemonic(instruction: u32) -> String {
-    ([
-        "AND", "EOR", "SUB", "RSB", "ADD", "ADC", "SBC", "RSC", "TST", "TEQ", "CMP", "CMN", "ORR",
-        "MOV", "BIC", "MVN",
-    ][get_bits(instruction, 21, 4) as usize])
-        .to_string()
 }

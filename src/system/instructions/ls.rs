@@ -119,7 +119,19 @@ pub fn addr_reg_dec(instruction: u32) -> String {
         0b11 => "ROR",
         _ => unreachable!(),
     };
-    format!("[r{}, {}r{}, {}]", n, if u { "+" } else { "-" }, m, shift)
+
+    if shift_imm == 0 {
+        format!("[r{}, {}r{}]", n, if u { "+" } else { "-" }, m)
+    } else {
+        format!(
+            "[r{}, {}r{}, {} #{}]",
+            n,
+            if u { "+" } else { "-" },
+            m,
+            shift,
+            shift_imm
+        )
+    }
 }
 
 pub fn ldr(cpu: &mut CPU, d: usize, address: u32) {

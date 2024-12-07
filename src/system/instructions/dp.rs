@@ -86,12 +86,7 @@ pub fn dec(instruction: u32) -> String {
     // destination register
     let d = get_bits(instruction, 12, 4) as usize;
 
-    let is_imm = get_bit(instruction, 25);
-    let so = if is_imm {
-        op2_imm_dec(instruction)
-    } else {
-        op2_shift_dec(instruction)
-    };
+    let so = op2_dec(instruction);
 
     let opcode = get_bits(instruction, 21, 4);
     match opcode {
@@ -112,13 +107,6 @@ fn op2_imm(cpu: &mut CPU, instruction: u32) -> (u32, bool) {
         carry = get_bit(shifter_operand, 31)
     };
     (shifter_operand, carry)
-}
-
-fn op2_imm_dec(instruction: u32) -> String {
-    let immed_8 = get_bits(instruction, 0, 8);
-    let rotate_imm = get_bits(instruction, 8, 4);
-    let shifter_operand = immed_8.rotate_right(2 * rotate_imm);
-    format!("#{:08x}", shifter_operand)
 }
 
 fn op2_shift_left(r_m: u32, shift_amount: u32, z_so: u32, z_sco: bool) -> (u32, bool) {
@@ -167,10 +155,17 @@ fn op2_rotate_right_extend(r_m: u32, carry_flag: bool) -> (u32, bool) {
     (((carry_flag as u32) << 31) | (r_m >> 1), get_bit(r_m, 0))
 }
 
-fn op2_shift_dec(instruction: u32) -> String {
+fn op2_dec(instruction: u32) -> String {
     let m = get_bits(instruction, 0, 4);
-    let is_reg = get_bit(instruction, 25);
+    let is_imm = get_bit(instruction, 25);
+    if is_imm {
+        let immed_8 = get_bits(instruction, 0, 8);
+        let rotate_imm = get_bits(instruction, 8, 4);
+        let shifter_operand = immed_8.rotate_right(2 * rotate_imm);
+        return format!("#{:#08x}", shifter_operand);
+    }
 
+    let is_reg = get_bit(instruction, 4);
     let shift_type = match get_bits(instruction, 5, 2) {
         0b00 => "LSL",
         0b01 => "LSR",
@@ -180,13 +175,16 @@ fn op2_shift_dec(instruction: u32) -> String {
         _ => unreachable!(),
     };
 
-    let shift_amount = if is_reg {
-        format!("r{}", get_bits(instruction, 8, 4))
+    if is_reg {
+        format!("r{}, {} r{}", m, shift_type, get_bits(instruction, 8, 4))
     } else {
-        format!("#{}", get_bits(instruction, 7, 5))
-    };
-
-    format!("r{}, {} {}", m, shift_type, shift_amount)
+        let imm_5 = get_bits(instruction, 7, 5);
+        if imm_5 == 0 {
+            format!("r{}", m)
+        } else {
+            format!("r{}, {} #{}", m, shift_type, imm_5)
+        }
+    }
 }
 
 pub fn and(cpu: &mut CPU, s: bool, n: usize, d: usize, so: u32, sco: bool) {

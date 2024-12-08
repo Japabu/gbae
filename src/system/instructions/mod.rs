@@ -10,11 +10,6 @@ mod ls;
 mod lsm;
 pub mod lut;
 
-fn set_nz_flags(cpu: &mut CPU, value: u32) {
-    cpu.set_negative_flag(get_bit(value, 31));
-    cpu.set_zero_flag(value == 0);
-}
-
 pub fn format_instruction(instruction: u32) -> String {
     format!(
         "{} ({:08x})\n\
@@ -78,7 +73,7 @@ impl Condition {
         }
     }
 
-    pub fn evaluate(&self, cpu: &CPU) -> bool {
+    pub fn check(&self, cpu: &CPU) -> bool {
         match self {
             Condition::EQ => cpu.get_zero_flag(),
             Condition::NE => !cpu.get_zero_flag(),

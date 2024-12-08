@@ -1,4 +1,4 @@
-#![feature(const_format_args)]
+#![feature(type_alias_impl_trait)]
 
 mod bitutil;
 mod cartridge;

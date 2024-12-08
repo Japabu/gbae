@@ -26,28 +26,52 @@ Unused Memory Area
   1000_0000-FFFF_FFFF   Not used (upper 4bits of address bus unused)
 */
 
-const MEMORY_SIZE: usize = 0x1000_0000;
+macro_rules! gen_memory {
+    ($($start:literal..=$end:literal => ($region:ident, $writable:expr)),* $(,)?) => {
+        pub struct Memory {
+            $(
+                $region: Vec<u8>,
+            )*
+        }
 
-pub struct Memory {
-    data: Vec<u8>,
+        impl Memory {
+            pub fn read_u8(&self, address: usize) -> u8 {
+                match address {
+                    $($start..=$end => self.$region[address - $start],)*
+                    _ => panic!("Read from unmapped address: {:#08X}", address),
+                }
+            }
+
+            pub fn write_u8(&mut self, address: usize, value: u8) {
+                match address {
+                    $(
+                        $start..=$end => {
+                            if $writable { self.$region[address - $start] = value }
+                            else { panic!("Write to read-only address: {:#08X}", address) }
+                        }
+                    ,)*
+                    _ => panic!("Write to unmapped address: {:#08X}", address),
+                }
+            }
+        }
+    };
+}
+
+gen_memory! {
+    0x0000_0000..=0x0000_3FFF => (bios, false),
+    0x0200_0000..=0x0203_FFFF => (wram1, true),
+    0x0300_0000..=0x0300_7FFF => (wram2, true),
+    0x0800_0000..=0x09FF_FFFF => (game_pak, false),
 }
 
 impl Memory {
-    pub fn new(bios: Vec<u8>, cartridge: Vec<u8>) -> Self {
-        let mut mem = Self {
-            data: vec![0; MEMORY_SIZE],
-        };
-
-        mem.write(0x00000000, &bios);
-        mem.write(0x08000000, &cartridge);
-        mem.write(0x0A000000, &cartridge);
-        mem.write(0x0C000000, &cartridge);
-
-        mem
-    }
-
-    pub fn read_u8(&self, address: usize) -> u8 {
-        self.data[address]
+    pub fn new(bios: Vec<u8>, game_pak: Vec<u8>) -> Self {
+        Self {
+            bios,
+            game_pak,
+            wram1: vec![0; 0x4_0000],
+            wram2: vec![0; 0x800],
+        }
     }
 
     pub fn read_u16(&self, address: usize) -> u16 {
@@ -60,10 +84,6 @@ impl Memory {
         let low = self.read_u16(address) as u32;
         let high = self.read_u16(address + 2) as u32;
         (high << 16) | low
-    }
-
-    pub fn write_u8(&mut self, address: usize, value: u8) {
-        self.data[address] = value;
     }
 
     pub fn write_u16(&mut self, address: usize, value: u16) {

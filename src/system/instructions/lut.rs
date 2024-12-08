@@ -1,38 +1,23 @@
-use crate::system::instructions::{branch, ctrl_ext, dp, format_instruction, ls, lsm};
+use std::fmt::Display;
+
+use crate::system::instructions::{branch, ctrl_ext, data_processing, format_instruction, ls, lsm};
 use crate::{bitutil::get_bits, system::cpu::CPU};
 
-macro_rules! dp_handler {
-    ($dp_handler:expr) => {
-        |cpu: &mut CPU, instruction: u32| dp::handler(cpu, instruction, $dp_handler)
-    };
-}
-
-macro_rules! add_dp_patterns {
-    ($lut:expr, $($opcode:expr => $handler:expr),* $(,)?) => {
-        $(
-            $lut.add_pattern(&format!("001{}x xxxx", $opcode), dp_handler!($handler), dp::dec);
-            $lut.add_pattern(&format!("000{}x xxx0", $opcode), dp_handler!($handler), dp::dec);
-            $lut.add_pattern(&format!("000{}x 0xx1", $opcode), dp_handler!($handler), dp::dec);
-        )*
-    };
-}
-
-type InstructionHandlerFn = fn(&mut CPU, instruction: u32);
-type DecoderFn = fn(u32) -> String;
+use super::DecodedInstruction;
 
 const LUT_SIZE: usize = 1 << 12;
 
 static mut INSTRUCTION_LUT: Option<InstructionLut> = None;
 
+type DecoderFn = fn(u32) -> Box<dyn DecodedInstruction>;
+
 pub struct InstructionLut {
-    handlers: [InstructionHandlerFn; LUT_SIZE],
     decoders: [DecoderFn; LUT_SIZE],
 }
 
 impl InstructionLut {
     pub fn initialize() {
         let mut lut = Self {
-            handlers: [Self::unknown_instruction_handler; LUT_SIZE],
             decoders: [Self::unknown_instruction_decoder; LUT_SIZE],
         };
         lut.setup_patterns();
@@ -41,17 +26,7 @@ impl InstructionLut {
         }
     }
 
-    pub fn get_handler(instruction: u32) -> InstructionHandlerFn {
-        unsafe {
-            if let Some(ref lut) = INSTRUCTION_LUT {
-                lut.handlers[Self::index(instruction)]
-            } else {
-                panic!("Instruction LUT not initialized!");
-            }
-        }
-    }
-
-    pub fn get_decoder(instruction: u32) -> String {
+    pub fn decode(instruction: u32) -> Box<dyn DecodedInstruction> {
         unsafe {
             if let Some(ref lut) = INSTRUCTION_LUT {
                 (lut.decoders[Self::index(instruction)])(instruction)
@@ -70,37 +45,22 @@ impl InstructionLut {
 
     fn setup_patterns(&mut self) {
         // data processing
-        add_dp_patterns!(
-            self,
-            "0000" => dp::and,
-            "0001" => dp::eor,
-            "0010" => dp::sub,
-            "0011" => dp::rsb,
-            "0100" => dp::add,
-            "0101" => dp::adc,
-            "0110" => dp::sbc,
-            "0111" => dp::rsc,
-            "1000" => dp::tst,
-            "1001" => dp::teq,
-            "1010" => dp::cmp,
-            "1011" => dp::cmn,
-            "1100" => dp::orr,
-            "1101" => dp::mov,
-            "1110" => dp::bic,
-            "1111" => dp::mvn,
-        );
-        self.add_pattern("101xxxxx xxxx", branch::b, branch::b_dec);
+        self.add_pattern("001xxxxx xxxx", data_processing::decode_arm);
+        self.add_pattern("000xxxxx xxx0", data_processing::decode_arm);
+        self.add_pattern("000xxxxx 0xx1", data_processing::decode_arm);
+        // branch
+        //self.add_pattern("101xxxxx xxxx", branch::decode);
         // extensions
-        self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, ctrl_ext::msr_reg_dec);
-        self.add_pattern("00010010 0001", branch::bx, branch::bx_dec);
-        // load store
-        self.add_pattern("010xxxxx xxxx", ls::handler, ls::dec);
-        self.add_pattern("011xxxxx xxx0", ls::handler, ls::dec);
-        // load store multiple
-        self.add_pattern("100xxxxx xxxx", lsm::handler, lsm::dec);
+        // self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, ctrl_ext::msr_reg_dec);
+        // self.add_pattern("00010010 0001", branch::bx, branch::bx_dec);
+        // // load store
+        // self.add_pattern("010xxxxx xxxx", ls::handler, ls::dec);
+        // self.add_pattern("011xxxxx xxx0", ls::handler, ls::dec);
+        // // load store multiple
+        // self.add_pattern("100xxxxx xxxx", lsm::handler, lsm::dec);
     }
 
-    fn add_pattern(&mut self, pattern: &str, handler: InstructionHandlerFn, decoder: DecoderFn) {
+    fn add_pattern(&mut self, pattern: &str, decoder: DecoderFn) {
         let pattern = pattern.to_string().replace(" ", "");
         assert_eq!(pattern.len(), 12, "Pattern must be 12 bits long");
 
@@ -130,21 +90,25 @@ impl InstructionLut {
                     index &= !(1 << pos);
                 }
             }
-            self.handlers[index] = handler;
             self.decoders[index] = decoder;
         }
     }
 
-    fn unknown_instruction_handler(cpu: &mut CPU, instruction: u32) {
-        cpu.print_registers();
-        cpu.print_status();
-        panic!(
-            "Encountered an unknown instruction: {}",
-            format_instruction(instruction)
-        );
+    fn unknown_instruction_decoder(instruction: u32) -> Box<dyn DecodedInstruction> {
+        Box::new(UnknownInstruction(instruction))
     }
+}
 
-    fn unknown_instruction_decoder(_instruction: u32) -> String {
-        "???".to_string()
+struct UnknownInstruction(u32);
+
+impl Display for UnknownInstruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unknown instruction: {:#08X}", self.0)
+    }
+}
+
+impl DecodedInstruction for UnknownInstruction {
+    fn execute(&self, cpu: &mut CPU) {
+        todo!()
     }
 }

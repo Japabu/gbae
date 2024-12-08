@@ -1,3 +1,5 @@
+#![feature(const_format_args)]
+
 mod bitutil;
 mod cartridge;
 mod debugger;
@@ -26,11 +28,7 @@ fn main() {
     loop {
         // Print current instruction before executing it
         let instruction = cpu.peek_next_instruction();
-        println!(
-            "Next instruction at 0x{:08X}: {}",
-            cpu.get_r(15),
-            format_instruction(instruction)
-        );
+        println!("Next instruction at 0x{:08X}: {}", cpu.get_r(15), format_instruction(instruction));
 
         if !debugger.running || debugger.should_break(&cpu) {
             debugger.running = false;

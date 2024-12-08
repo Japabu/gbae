@@ -3,3 +3,5 @@ rom.gba
 .vscode
 .aider*
 .env
+*.log
+*.txt

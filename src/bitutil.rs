@@ -1,20 +1,20 @@
-pub fn get_bits(data: u32, i: u32, len: u32) -> u32 {
+pub const fn get_bits(data: u32, i: u32, len: u32) -> u32 {
     let mask = (1u32 << len) - 1;
     let shifted_mask = mask << i;
     (data & shifted_mask) >> i
 }
 
-pub fn set_bits(data: u32, i: u32, len: u32, value: u32) -> u32 {
+pub const fn set_bits(data: u32, i: u32, len: u32, value: u32) -> u32 {
     let mask = ((1u32 << len) - 1) << i;
     (data & !mask) | ((value << i) & mask)
 }
 
-pub fn get_bit(data: u32, i: u32) -> bool {
+pub const fn get_bit(data: u32, i: u32) -> bool {
     let mask = 1 << i;
     (data & mask) > 0
 }
 
-pub fn set_bit(data: u32, i: u32, v: bool) -> u32 {
+pub const fn set_bit(data: u32, i: u32, v: bool) -> u32 {
     let mask = 1 << i;
     if v {
         data | mask
@@ -23,12 +23,12 @@ pub fn set_bit(data: u32, i: u32, v: bool) -> u32 {
     }
 }
 
-pub fn sign_extend(data: u32, data_len: u32) -> u32 {
+pub const fn sign_extend(data: u32, data_len: u32) -> u32 {
     let shift = 32 - data_len;
     (((data << shift) as i32) >> shift) as u32
 }
 
-pub fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
+pub const fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
     ((data as i32) >> shift) as u32
 }
 
@@ -45,7 +45,7 @@ pub fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
 /// * The 32-bit result of the addition.
 /// * A boolean value indicating whether a carry occurred.
 /// * A boolean value indicating whether an overflow occurred.
-pub fn add_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
+pub const fn add_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
     let (result, carry) = a.overflowing_add(b);
     let sign_op1 = get_bit(a, 31);
     let sign_op2 = get_bit(b, 31);
@@ -67,7 +67,7 @@ pub fn add_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
 /// * The 32-bit result of the subtraction.
 /// * A boolean value indicating whether a borrow occurred.
 /// * A boolean value indicating whether an overflow occurred.
-pub fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
+pub const fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
     let (result, borrow) = a.overflowing_sub(b);
     let sign_a = get_bit(a, 31);
     let sign_b = get_bit(b, 31);
@@ -184,10 +184,7 @@ mod tests {
 
         // Test overflow flag (signed overflow)
         // Positive - Negative = Negative (overflow)
-        assert_eq!(
-            sub_with_flags(0x7FFFFFFF, 0x80000000),
-            (0xFFFFFFFF, true, true)
-        );
+        assert_eq!(sub_with_flags(0x7FFFFFFF, 0x80000000), (0xFFFFFFFF, true, true));
 
         // Negative - Positive = Positive (overflow)
         assert_eq!(sub_with_flags(0x80000000, 1), (0x7FFFFFFF, false, true));

@@ -49,10 +49,11 @@ impl InstructionLut {
         self.add_pattern("000xxxxx xxx0", data_processing::decode_arm);
         self.add_pattern("000xxxxx 0xx1", data_processing::decode_arm);
         // branch
-        //self.add_pattern("101xxxxx xxxx", branch::decode);
+        self.add_pattern("1010xxxx xxxx", branch::decode_b_arm);
+        self.add_pattern("1011xxxx xxxx", branch::decode_bl_arm);
         // extensions
         // self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, ctrl_ext::msr_reg_dec);
-        // self.add_pattern("00010010 0001", branch::bx, branch::bx_dec);
+        self.add_pattern("00010010 0001", branch::decode_bx_arm);
         // // load store
         // self.add_pattern("010xxxxx xxxx", ls::handler, ls::dec);
         // self.add_pattern("011xxxxx xxx0", ls::handler, ls::dec);

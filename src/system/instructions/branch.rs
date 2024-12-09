@@ -1,42 +1,78 @@
+use std::fmt::Display;
+
 use crate::{
     bitutil::{get_bit, get_bits, sign_extend},
-    system::{cpu::CPU, instructions::get_condition_code},
+    system::cpu::CPU,
 };
 
-pub fn b(cpu: &mut CPU, instruction: u32) {
-    let link = get_bit(instruction, 24);
+use super::{Condition, DecodedInstruction};
+
+struct Branch {
+    cond: Condition,
+    opcode: Opcode,
+}
+
+enum Opcode {
+    B { offset: u32 },
+    BL { offset: u32 },
+    BX { m: u8 },
+}
+
+pub fn decode_b_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
     let signed_immed_24 = get_bits(instruction, 0, 24);
     let offset = sign_extend(signed_immed_24, 24) << 2;
-    if link {
-        cpu.set_r(14, cpu.next_instruction_address_from_execution_stage());
-    }
-    cpu.set_r(15, cpu.get_r(15).wrapping_add(offset));
+    Box::new(Branch {
+        cond: Condition::decode_arm(instruction),
+        opcode: Opcode::B { offset },
+    })
 }
 
-pub fn b_dec(instruction: u32) -> String {
-    let l = get_bit(instruction, 24);
+pub fn decode_bl_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
     let signed_immed_24 = get_bits(instruction, 0, 24);
-    let offset = (sign_extend(signed_immed_24, 24) << 2) + 8;
-
-    format!(
-        "B{}{} #{:+#x}",
-        if l { "L" } else { "" },
-        get_condition_code(instruction),
-        offset
-    )
+    let offset = sign_extend(signed_immed_24, 24) << 2;
+    Box::new(Branch {
+        cond: Condition::decode_arm(instruction),
+        opcode: Opcode::BL { offset },
+    })
 }
 
-pub fn bx(cpu: &mut CPU, instruction: u32) {
-    assert_eq!(get_bits(instruction, 8, 12), 0b1111_1111_1111);
-
-    let m = get_bits(instruction, 0, 4) as usize;
-    let r_m = cpu.get_r(m);
-
-    cpu.set_thumb_state(get_bit(r_m, 0));
-    cpu.set_r(15, r_m & 0xFFFFFFFE);
+pub fn decode_bx_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
+    let m = get_bits(instruction, 0, 4) as u8;
+    Box::new(Branch {
+        cond: Condition::decode_arm(instruction),
+        opcode: Opcode::BX { m },
+    })
 }
 
-pub fn bx_dec(instruction: u32) -> String {
-    let m = get_bits(instruction, 0, 4) as usize;
-    format!("BX{} r{}", get_condition_code(instruction), m)
+impl Display for Branch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Opcode::*;
+
+        match self.opcode {
+            B { offset } => write!(f, "B{} #{:#X}", self.cond, offset),
+            BL { offset } => write!(f, "BL{} #{:#X}", self.cond, offset),
+            BX { m } => write!(f, "BX{} R{}", self.cond, m),
+        }
+    }
+}
+
+impl DecodedInstruction for Branch {
+    fn execute(&self, cpu: &mut CPU) {
+        if !self.cond.check(cpu) {
+            return;
+        }
+
+        match self.opcode {
+            Opcode::B { offset } => cpu.set_r(15, cpu.get_r(15).wrapping_add(offset)),
+            Opcode::BL { offset } => {
+                cpu.set_r(14, cpu.next_instruction_address_from_execution_stage());
+                cpu.set_r(15, cpu.get_r(15).wrapping_add(offset));
+            }
+            Opcode::BX { m } => {
+                let r_m = cpu.get_r(m as usize);
+                cpu.set_thumb_state(get_bit(r_m, 0));
+                cpu.set_r(15, r_m & 0xFFFFFFFE);
+            }
+        }
+    }
 }

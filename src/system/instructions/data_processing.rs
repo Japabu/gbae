@@ -1,8 +1,7 @@
-use core::panic;
 use std::fmt::Display;
 
 use crate::{
-    bitutil::{self, arithmetic_shift_right, get_bit, get_bits, sub_with_flags},
+    bitutil::{self, arithmetic_shift_right, get_bit, get_bits},
     system::cpu::CPU,
 };
 
@@ -120,7 +119,7 @@ impl DecodedInstruction for DataProcessing {
             }
             MOV => shifter_operand,
             MVN => !shifter_operand,
-            _ => todo!(),
+            _ => todo!("opcode: {:?}", self.opcode),
         };
 
         cpu.set_r(self.d as usize, result);

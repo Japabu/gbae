@@ -7,6 +7,19 @@ use crate::{
 
 use super::{Condition, DecodedInstruction};
 
+pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
+    let d = get_bits(instruction, 12, 4) as u8;
+    let b = get_bit(instruction, 22);
+
+    Box::new(LoadStore {
+        cond: Condition::decode_arm(instruction),
+        opcode: Opcode::decode_arm(instruction),
+        b,
+        d,
+        adressing_mode: AddressingMode::decode_arm(instruction),
+    })
+}
+
 struct LoadStore {
     cond: Condition,
     opcode: Opcode,
@@ -53,19 +66,6 @@ enum IndexingMode {
     Offset,
     PreIndexed,
     PostIndexed { t: bool },
-}
-
-pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
-    let d = get_bits(instruction, 12, 4) as u8;
-    let b = get_bit(instruction, 22);
-
-    Box::new(LoadStore {
-        cond: Condition::decode_arm(instruction),
-        opcode: Opcode::decode_arm(instruction),
-        b,
-        d,
-        adressing_mode: AddressingMode::decode_arm(instruction),
-    })
 }
 
 impl Opcode {

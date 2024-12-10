@@ -2,7 +2,7 @@ use core::panic;
 
 use crate::{
     bitutil::{get_bit, get_bits},
-    system::{cpu::CPU, instructions::get_condition_code},
+    system::cpu::CPU,
 };
 
 // Masks for processor ARM7TDMI

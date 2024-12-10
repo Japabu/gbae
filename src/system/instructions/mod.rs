@@ -6,8 +6,8 @@ use crate::bitutil::{get_bit, get_bits};
 mod branch;
 mod ctrl_ext;
 mod data_processing;
-mod ls;
-mod lsm;
+mod load_store;
+mod load_store_multiple;
 pub mod lut;
 
 pub fn format_instruction(instruction: u32) -> String {

@@ -2,15 +2,15 @@ use crate::bitutil::{get_bit, get_bits, set_bit, set_bits};
 
 use super::{instructions::lut::InstructionLut, memory::Memory};
 
-pub const MODE_USR: u32 = 0b10000;
-pub const MODE_FIQ: u32 = 0b10001;
-pub const MODE_IRQ: u32 = 0b10010;
-pub const MODE_SVC: u32 = 0b10011;
-pub const MODE_ABT: u32 = 0b10111;
-pub const MODE_UND: u32 = 0b11011;
-pub const MODE_SYS: u32 = 0b11111;
+pub const MODE_USR: u8 = 0b10000;
+pub const MODE_FIQ: u8 = 0b10001;
+pub const MODE_IRQ: u8 = 0b10010;
+pub const MODE_SVC: u8 = 0b10011;
+pub const MODE_ABT: u8 = 0b10111;
+pub const MODE_UND: u8 = 0b11011;
+pub const MODE_SYS: u8 = 0b11111;
 
-pub fn format_mode(mode: u32) -> &'static str {
+pub fn format_mode(mode: u8) -> &'static str {
     match mode {
         MODE_USR => "USR",
         MODE_FIQ => "FIQ",
@@ -43,8 +43,8 @@ pub struct CPU {
 }
 
 impl CPU {
-    pub fn get_r(&self, r: u8) -> u32 {
-        let banked_registers: &[u32] = match self.get_mode() {
+    pub fn get_r_in_mode(&self, r: u8, mode: u8) -> u32 {
+        let banked_registers: &[u32] = match mode {
             MODE_USR | MODE_SYS => &[],
             MODE_SVC => &self.r_svc,
             MODE_ABT => &self.r_abt,
@@ -62,8 +62,12 @@ impl CPU {
         }
     }
 
-    pub fn set_r(&mut self, r: u8, value: u32) {
-        let banked_registers: &mut [u32] = match self.get_mode() {
+    pub fn get_r(&self, r: u8) -> u32 {
+        self.get_r_in_mode(r, self.get_mode())
+    }
+
+    pub fn set_r_in_mode(&mut self, r: u8, mode: u8, value: u32) {
+        let banked_registers: &mut [u32] = match mode {
             MODE_USR | MODE_SYS => &mut [],
             MODE_SVC => &mut self.r_svc,
             MODE_ABT => &mut self.r_abt,
@@ -79,6 +83,10 @@ impl CPU {
         } else {
             self.r[r as usize] = value;
         }
+    }
+
+    pub fn set_r(&mut self, r: u8, value: u32) {
+        self.set_r_in_mode(r, self.get_mode(), value)
     }
 
     pub fn get_spsr(&self) -> u32 {
@@ -241,11 +249,11 @@ impl CPU {
         self.cpsr = set_bit(self.cpsr, 5, v);
     }
 
-    pub fn get_mode(&self) -> u32 {
-        get_bits(self.cpsr, 0, 5)
+    pub fn get_mode(&self) -> u8 {
+        get_bits(self.cpsr, 0, 5) as u8
     }
-    pub fn set_mode(&mut self, v: u32) {
-        self.cpsr = set_bits(self.cpsr, 0, 5, v);
+    pub fn set_mode(&mut self, v: u8) {
+        self.cpsr = set_bits(self.cpsr, 0, 5, v as u32);
     }
     pub fn current_mode_has_spsr(&self) -> bool {
         self.get_mode() != MODE_USR && self.get_mode() != MODE_SYS
@@ -255,7 +263,7 @@ impl CPU {
     }
 
     pub fn print_registers(&self) {
-        for i in (0..16).step_by(4) {
+        for i in (0..16u8).step_by(4) {
             println!(
                 "r{}: {:#x}  r{}: {:#x}  r{}: {:#x}  r{}: {:#x}",
                 i,

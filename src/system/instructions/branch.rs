@@ -49,8 +49,8 @@ impl Display for Branch {
         use Opcode::*;
 
         match self.opcode {
-            B { offset } => write!(f, "B{} #{:#X}", self.cond, offset),
-            BL { offset } => write!(f, "BL{} #{:#X}", self.cond, offset),
+            B { offset } => write!(f, "B{} #{:#X}", self.cond, offset + 8),
+            BL { offset } => write!(f, "BL{} #{:#X}", self.cond, offset + 8),
             BX { m } => write!(f, "BX{} R{}", self.cond, m),
         }
     }

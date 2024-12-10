@@ -265,7 +265,7 @@ impl CPU {
     pub fn print_registers(&self) {
         for i in (0..16u8).step_by(4) {
             println!(
-                "r{}: {:#x}  r{}: {:#x}  r{}: {:#x}  r{}: {:#x}",
+                "r{}: {:#X}  r{}: {:#X}  r{}: {:#X}  r{}: {:#X}",
                 i,
                 self.get_r(i),
                 i + 1,

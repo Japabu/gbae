@@ -95,7 +95,7 @@ impl Display for Msr {
             if get_bit(field_mask, 2) { "s" } else { "-" },
             if get_bit(field_mask, 3) { "f" } else { "-" },
             match self.mode {
-                MsrOperand::Immediate(imm) => format!("#{}", imm),
+                MsrOperand::Immediate(imm) => format!("#{:#X}", imm),
                 MsrOperand::Register(m) => format!("R{}", m),
             }
         )

@@ -268,14 +268,14 @@ impl Display for ScaledRegister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ScaledRegisterMode::*;
 
-        write!(f, "R{}, ", self.m);
+        write!(f, "R{}, ", self.m)?;
 
         match self.mode {
             Register => Ok(()),
-            LogicalShiftLeft { shift_imm } => write!(f, "LSL #{}", shift_imm),
-            LogicalShiftRight { shift_imm } => write!(f, "LSR #{}", shift_imm),
-            ArithmeticShiftRight { shift_imm } => write!(f, "ASR #{}", shift_imm),
-            RotateRight { shift_imm } => write!(f, "ROR #{}", shift_imm),
+            LogicalShiftLeft { shift_imm } => write!(f, "LSL #{:#X}", shift_imm),
+            LogicalShiftRight { shift_imm } => write!(f, "LSR #{:#X}", shift_imm),
+            ArithmeticShiftRight { shift_imm } => write!(f, "ASR #{:#X}", shift_imm),
+            RotateRight { shift_imm } => write!(f, "ROR #{:#X}", shift_imm),
             RotateRightWithExtend => write!(f, "RRX"),
         }
     }

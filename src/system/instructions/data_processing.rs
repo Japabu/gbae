@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    bitutil::{self, arithmetic_shift_right, get_bit, get_bits},
+    bitutil::{self, arithmetic_shift_right, get_bit, get_bits, rotate_right_with_extend},
     system::cpu::CPU,
 };
 
@@ -93,7 +93,7 @@ impl DecodedInstruction for DataProcessing {
             todo!("set_flags and d == 15");
         }
 
-        let r_n = cpu.get_r(self.n as usize);
+        let r_n = cpu.get_r(self.n);
         let (shifter_operand, mut carry) = self.shifter_operand.eval(cpu);
 
         let result = match self.opcode {
@@ -122,7 +122,7 @@ impl DecodedInstruction for DataProcessing {
             _ => todo!("opcode: {:?}", self.opcode),
         };
 
-        cpu.set_r(self.d as usize, result);
+        cpu.set_r(self.d, result);
         if self.set_flags {
             cpu.set_negative_flag(get_bit(result, 31));
             cpu.set_zero_flag(result == 0);
@@ -223,21 +223,21 @@ impl ShifterOperand {
                 let carry = if rotate_imm == 0 { cpu.get_carry_flag() } else { get_bit(shifter_operand, 31) };
                 (shifter_operand, carry)
             }
-            ShifterOperand::Register { m } => (cpu.get_r(m as usize), cpu.get_carry_flag()),
+            ShifterOperand::Register { m } => (cpu.get_r(m), cpu.get_carry_flag()),
             ShifterOperand::LogicalShiftLeftImmediate { m, shift_imm } => {
                 if shift_imm == 0 {
                     panic!("Should be ShifterOperand::Register");
                 }
-                let r_m = cpu.get_r(m as usize);
-                (r_m << shift_imm, get_bit(r_m, 32 - shift_imm as u32))
+                let r_m = cpu.get_r(m);
+                (r_m << shift_imm, get_bit(r_m, 32 - shift_imm))
             }
             ShifterOperand::LogicalShiftLeftRegister { m, s } => {
-                let r_m = cpu.get_r(m as usize);
-                let r_s_lsb = cpu.get_r(s as usize) & 0xFF;
+                let r_m = cpu.get_r(m);
+                let r_s_lsb = cpu.get_r(s) as u8;
                 if r_s_lsb == 0 {
                     (r_m, cpu.get_carry_flag())
                 } else if r_s_lsb < 32 {
-                    (r_m << r_s_lsb, get_bit(r_m, 32 - r_s_lsb as u32))
+                    (r_m << r_s_lsb, get_bit(r_m, 32 - r_s_lsb))
                 } else if r_s_lsb == 32 {
                     (0, get_bit(r_m, 0))
                 } else {
@@ -245,20 +245,20 @@ impl ShifterOperand {
                 }
             }
             ShifterOperand::LogicalShiftRightImmediate { m, shift_imm } => {
-                let r_m = cpu.get_r(m as usize);
+                let r_m = cpu.get_r(m);
                 if shift_imm == 0 {
                     (0, get_bit(r_m, 31))
                 } else {
-                    (r_m >> shift_imm, get_bit(r_m, shift_imm as u32 - 1))
+                    (r_m >> shift_imm, get_bit(r_m, shift_imm - 1))
                 }
             }
             ShifterOperand::LogicalShiftRightRegister { m, s } => {
-                let r_m = cpu.get_r(m as usize);
-                let r_s_lsb = cpu.get_r(s as usize) & 0xFF;
+                let r_m = cpu.get_r(m);
+                let r_s_lsb = cpu.get_r(s) as u8;
                 if r_s_lsb == 0 {
                     (r_m, cpu.get_carry_flag())
                 } else if r_s_lsb < 32 {
-                    (r_m >> r_s_lsb, get_bit(r_m, r_s_lsb as u32 - 1))
+                    (r_m >> r_s_lsb, get_bit(r_m, r_s_lsb - 1))
                 } else if r_s_lsb == 32 {
                     (0, get_bit(r_m, 31))
                 } else {
@@ -266,7 +266,7 @@ impl ShifterOperand {
                 }
             }
             ShifterOperand::ArithmeticShiftRightImmediate { m, shift_imm } => {
-                let r_m = cpu.get_r(m as usize);
+                let r_m = cpu.get_r(m);
                 let r_m_31 = get_bit(r_m, 31);
                 if shift_imm == 0 {
                     if !r_m_31 {
@@ -275,16 +275,16 @@ impl ShifterOperand {
                         (0xFFFFFFFF, r_m_31)
                     }
                 } else {
-                    (arithmetic_shift_right(r_m, shift_imm as u32), get_bit(r_m, shift_imm as u32 - 1))
+                    (arithmetic_shift_right(r_m, shift_imm), get_bit(r_m, shift_imm - 1))
                 }
             }
             ShifterOperand::ArithmeticShiftRightRegister { m, s } => {
-                let r_m = cpu.get_r(m as usize);
-                let r_s_lsb = cpu.get_r(s as usize) & 0xFF;
+                let r_m = cpu.get_r(m);
+                let r_s_lsb = cpu.get_r(s) as u8;
                 if r_s_lsb == 0 {
                     (r_m, cpu.get_carry_flag())
                 } else if r_s_lsb < 32 {
-                    (arithmetic_shift_right(r_m, r_s_lsb as u32), get_bit(r_m, r_s_lsb as u32 - 1))
+                    (arithmetic_shift_right(r_m, r_s_lsb), get_bit(r_m, r_s_lsb - 1))
                 } else {
                     let r_m_31 = get_bit(r_m, 31);
                     if !r_m_31 {
@@ -298,24 +298,24 @@ impl ShifterOperand {
                 if shift_imm == 0 {
                     panic!("Should be ShifterOperand::RotateRightWithExtend");
                 }
-                let r_m = cpu.get_r(m as usize);
-                (r_m.rotate_right(shift_imm as u32), get_bit(r_m, shift_imm as u32 - 1))
+                let r_m = cpu.get_r(m);
+                (r_m.rotate_right(shift_imm as u32), get_bit(r_m, shift_imm - 1))
             }
             ShifterOperand::RotateRightRegister { m, s } => {
-                let r_m = cpu.get_r(m as usize);
-                let r_s_lsb = cpu.get_r(s as usize) & 0xFF;
-                let r_s_4_0 = r_s_lsb & 0b11111;
+                let r_m = cpu.get_r(m);
+                let r_s_lsb = cpu.get_r(s) & 0xFF;
+                let r_s_4_0 = r_s_lsb as u8 & 0b11111;
                 if r_s_lsb == 0 {
                     (r_m, cpu.get_carry_flag())
                 } else if r_s_4_0 == 0 {
                     (r_m, get_bit(r_m, 31))
                 } else {
-                    (r_m.rotate_right(r_s_4_0 as u32), get_bit(r_m, r_s_4_0 as u32 - 1))
+                    (r_m.rotate_right(r_s_4_0 as u32), get_bit(r_m, r_s_4_0 - 1))
                 }
             }
             ShifterOperand::RotateRightWithExtend { m } => {
-                let r_m = cpu.get_r(m as usize);
-                ((cpu.get_carry_flag() as u32) << 31 | (r_m >> 1), get_bit(r_m, 0))
+                let r_m = cpu.get_r(m);
+                (rotate_right_with_extend(cpu.get_carry_flag(), r_m), get_bit(r_m, 0))
             }
         }
     }

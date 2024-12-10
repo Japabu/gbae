@@ -1,143 +1,282 @@
+use std::fmt::Display;
+
 use crate::{
-    bitutil::{arithmetic_shift_right, get_bit, get_bits},
-    system::{cpu::CPU, instructions::get_condition_code},
+    bitutil::{arithmetic_shift_right, get_bit, get_bits, rotate_right_with_extend},
+    system::cpu::CPU,
 };
 
-pub fn handler(cpu: &mut CPU, instruction: u32) {
-    let d = get_bits(instruction, 12, 4) as usize;
+use super::{Condition, DecodedInstruction};
 
-    if d == 15 {
-        panic!("ldr with destination register 15 not implemented");
-    }
-
-    let is_imm = !get_bit(instruction, 25);
-    let address = if is_imm {
-        addr_imm(cpu, instruction)
-    } else {
-        addr_reg(cpu, instruction)
-    };
-
-    let is_load = get_bit(instruction, 20);
-    if is_load {
-        ldr(cpu, d, address);
-    } else {
-        str(cpu, d, address);
-    }
+struct LoadStore {
+    cond: Condition,
+    opcode: Opcode,
+    b: bool,
+    d: u8,
+    adressing_mode: AddressingMode,
 }
 
-pub fn dec(instruction: u32) -> String {
-    let d = get_bits(instruction, 12, 4) as usize;
+#[derive(Debug)]
+enum Opcode {
+    LDR,
+    STR,
+}
 
-    let is_imm = !get_bit(instruction, 25);
-    let address = if is_imm {
-        addr_imm_dec(instruction)
-    } else {
-        addr_reg_dec(instruction)
-    };
+struct AddressingMode {
+    u: bool,
+    n: u8,
+    mode: AddressingModeType,
+    indexing_mode: IndexingMode,
+}
 
-    let is_load = get_bit(instruction, 20);
-    format!(
-        "{}{}{} r{}, {}",
-        if is_load { "LDR" } else { "STR" },
-        if get_bit(instruction, 22) { "B" } else { "" },
-        get_condition_code(instruction),
+enum AddressingModeType {
+    Immediate { offset: u16 },
+    ScaledRegister(ScaledRegister),
+}
+
+#[derive(Clone, Copy)]
+struct ScaledRegister {
+    m: u8,
+    mode: ScaledRegisterMode,
+}
+
+#[derive(Clone, Copy)]
+enum ScaledRegisterMode {
+    Register,
+    LogicalShiftLeft { shift_imm: u8 },
+    LogicalShiftRight { shift_imm: u8 },
+    ArithmeticShiftRight { shift_imm: u8 },
+    RotateRight { shift_imm: u8 },
+    RotateRightWithExtend,
+}
+
+enum IndexingMode {
+    Offset,
+    PreIndexed,
+    PostIndexed { t: bool },
+}
+
+pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
+    let d = get_bits(instruction, 12, 4) as u8;
+    let b = get_bit(instruction, 22);
+
+    Box::new(LoadStore {
+        cond: Condition::decode_arm(instruction),
+        opcode: Opcode::decode_arm(instruction),
+        b,
         d,
-        address
-    )
+        adressing_mode: AddressingMode::decode_arm(instruction),
+    })
 }
 
-fn addr_imm(cpu: &mut CPU, instruction: u32) -> u32 {
-    let p = get_bit(instruction, 24);
-    let u = get_bit(instruction, 23);
-    let w = get_bit(instruction, 21);
-    let offset_12 = get_bits(instruction, 0, 12);
-    let n = get_bits(instruction, 16, 4) as usize;
+impl Opcode {
+    fn decode_arm(instruction: u32) -> Opcode {
+        use Opcode::*;
 
-    assert_eq!(p, true);
-    assert_eq!(w, false);
-
-    let r_n = cpu.get_r(n);
-
-    if u {
-        r_n.wrapping_add(offset_12)
-    } else {
-        r_n.wrapping_sub(offset_12)
+        let l = get_bit(instruction, 20);
+        match l {
+            true => LDR,
+            false => STR,
+        }
     }
 }
 
-fn addr_imm_dec(instruction: u32) -> String {
-    let u = get_bit(instruction, 23);
-    let n = get_bits(instruction, 16, 4) as usize;
-    let offset_12 = get_bits(instruction, 0, 12);
-    format!("[r{}, #{}{:#x}]", n, if u { "+" } else { "-" }, offset_12)
-}
+impl DecodedInstruction for LoadStore {
+    fn execute(&self, cpu: &mut CPU) {
+        if self.d == 15 {
+            todo!("d == 15");
+        }
 
-fn addr_reg(cpu: &mut CPU, instruction: u32) -> u32 {
-    let p = get_bit(instruction, 24);
-    let u = get_bit(instruction, 23);
-    let w = get_bit(instruction, 21);
-    let n = get_bits(instruction, 16, 4) as usize;
-    let m = get_bits(instruction, 0, 4) as usize;
+        if !self.cond.check(cpu) {
+            return;
+        }
 
-    assert_eq!(p, true);
-    assert_eq!(w, false);
-    assert_eq!(get_bit(instruction, 4), false);
+        let address = self.adressing_mode.execute(cpu);
 
-    let r_n = cpu.get_r(n);
-    let r_m = cpu.get_r(m);
-
-    let shift_imm = get_bits(instruction, 7, 5);
-    let index = match get_bits(instruction, 5, 2) {
-        0b00 => r_m << shift_imm,
-        0b01 if shift_imm == 0 => 0,
-        0b01 => r_m >> shift_imm,
-        0b10 if shift_imm == 0 && get_bit(r_m, 31) => 0xFFFFFFFF,
-        0b10 if shift_imm == 0 => 0,
-        0b10 => arithmetic_shift_right(r_m, shift_imm),
-        0b11 if shift_imm == 0 => (cpu.get_carry_flag() as u32) << 31 | r_m >> 1,
-        0b11 => r_m.rotate_right(shift_imm),
-        _ => unreachable!(),
-    };
-
-    if u {
-        r_n.wrapping_add(index)
-    } else {
-        r_n.wrapping_sub(index)
+        match self.opcode {
+            Opcode::LDR => {
+                let data = match self.b {
+                    false => cpu.mem.read_u32(address).rotate_right(8 * get_bits(address, 0, 2)),
+                    true => cpu.mem.read_u8(address) as u32,
+                };
+                cpu.set_r(self.d, data);
+            }
+            Opcode::STR => match self.b {
+                false => cpu.mem.write_u32(address, cpu.get_r(self.d)),
+                true => cpu.mem.write_u8(address, cpu.get_r(self.d) as u8),
+            },
+        }
     }
 }
 
-pub fn addr_reg_dec(instruction: u32) -> String {
-    let u = get_bit(instruction, 23);
-    let n = get_bits(instruction, 16, 4) as usize;
-    let m = get_bits(instruction, 0, 4) as usize;
-    let shift_imm = get_bits(instruction, 7, 5);
-    let shift = match get_bits(instruction, 5, 2) {
-        0b00 => "LSL",
-        0b01 => "LSR",
-        0b10 => "ASR",
-        0b11 if shift_imm == 0 => "RRX",
-        0b11 => "ROR",
-        _ => unreachable!(),
-    };
+impl AddressingMode {
+    fn decode_arm(instruction: u32) -> AddressingMode {
+        let u = get_bit(instruction, 23);
+        let n = get_bits(instruction, 16, 4) as u8;
 
-    if shift_imm == 0 {
-        format!("[r{}, {}r{}]", n, if u { "+" } else { "-" }, m)
-    } else {
-        format!(
-            "[r{}, {}r{}, {} #{}]",
+        AddressingMode {
+            u,
             n,
-            if u { "+" } else { "-" },
-            m,
-            shift,
-            shift_imm
+            mode: {
+                let is_immediate = get_bit(instruction, 25);
+                match is_immediate {
+                    true => AddressingModeType::Immediate {
+                        offset: get_bits(instruction, 0, 12) as u16,
+                    },
+                    false => AddressingModeType::ScaledRegister(ScaledRegister::decode_arm(instruction)),
+                }
+            },
+            indexing_mode: {
+                let p = get_bit(instruction, 24);
+                let w = get_bit(instruction, 21);
+                match (p, w) {
+                    (false, t) => IndexingMode::PostIndexed { t },
+                    (true, false) => IndexingMode::Offset,
+                    (true, true) => IndexingMode::PreIndexed,
+                }
+            },
+        }
+    }
+
+    fn execute(&self, cpu: &mut CPU) -> u32 {
+        let offset = match self.mode {
+            AddressingModeType::Immediate { offset } => offset as u32,
+            AddressingModeType::ScaledRegister(scaled_register) => scaled_register.calc_address(cpu),
+        };
+
+        let r_n = cpu.get_r(self.n);
+        let r_n_offset = match self.u {
+            false => r_n - offset,
+            true => r_n + offset,
+        };
+
+        match self.indexing_mode {
+            IndexingMode::Offset => r_n_offset,
+            IndexingMode::PreIndexed => {
+                cpu.set_r(self.n, r_n_offset);
+                r_n_offset
+            }
+            IndexingMode::PostIndexed { .. } => {
+                cpu.set_r(self.n, r_n_offset);
+                r_n
+            }
+        }
+    }
+}
+
+impl AddressingModeType {
+    fn decode_arm(instruction: u32) -> AddressingModeType {
+        let is_imm = get_bit(instruction, 25);
+        if is_imm {
+            AddressingModeType::Immediate {
+                offset: get_bits(instruction, 0, 12) as u16,
+            }
+        } else {
+            AddressingModeType::ScaledRegister(ScaledRegister::decode_arm(instruction))
+        }
+    }
+}
+
+impl ScaledRegister {
+    fn decode_arm(instruction: u32) -> ScaledRegister {
+        ScaledRegister {
+            m: get_bits(instruction, 0, 4) as u8,
+            mode: {
+                use ScaledRegisterMode::*;
+                let shift = get_bits(instruction, 5, 2) as u8;
+                let shift_imm = get_bits(instruction, 7, 5) as u8;
+                match shift {
+                    0b00 if shift_imm == 0 => Register,
+                    0b00 => LogicalShiftLeft { shift_imm },
+                    0b01 => LogicalShiftRight { shift_imm },
+                    0b10 => ArithmeticShiftRight { shift_imm },
+                    0b11 if shift_imm == 0 => RotateRightWithExtend,
+                    0b11 => RotateRight { shift_imm },
+                    _ => unreachable!(),
+                }
+            },
+        }
+    }
+
+    fn calc_address(&self, cpu: &CPU) -> u32 {
+        use ScaledRegisterMode::*;
+        let r_m = cpu.get_r(self.m);
+        match self.mode {
+            Register => r_m,
+            LogicalShiftLeft { shift_imm } => r_m << shift_imm,
+            LogicalShiftRight { shift_imm } => {
+                if shift_imm == 0 {
+                    0
+                } else {
+                    r_m >> shift_imm
+                }
+            }
+            ArithmeticShiftRight { shift_imm } => {
+                if shift_imm == 0 {
+                    if get_bit(r_m, 31) {
+                        0xFFFFFFFF
+                    } else {
+                        0
+                    }
+                } else {
+                    arithmetic_shift_right(r_m, shift_imm)
+                }
+            }
+            RotateRight { shift_imm } => r_m.rotate_right(shift_imm.into()),
+            RotateRightWithExtend => rotate_right_with_extend(cpu.get_carry_flag(), r_m),
+        }
+    }
+}
+
+impl Display for LoadStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let t = match self.adressing_mode.indexing_mode {
+            IndexingMode::PostIndexed { t } => t,
+            _ => false,
+        };
+
+        write!(
+            f,
+            "{:?}{}{}{} R{}, {}",
+            self.opcode,
+            self.cond,
+            if self.b { "B" } else { "" },
+            if t { "T" } else { "" },
+            self.d,
+            self.adressing_mode
         )
     }
 }
 
-pub fn ldr(cpu: &mut CPU, d: usize, address: u32) {
-    cpu.set_r(d, cpu.mem.read_u32(address as usize));
+impl Display for AddressingMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sign = if self.u { "+" } else { "-" };
+        let rhs = match &self.mode {
+            AddressingModeType::Immediate { offset } => format!("#{}{:#X}", sign, offset),
+            AddressingModeType::ScaledRegister(scaled_register) => format!("{}{}", sign, scaled_register),
+        };
+
+        let n = self.n;
+        match self.indexing_mode {
+            IndexingMode::Offset => write!(f, "[R{}, {}]", n, rhs),
+            IndexingMode::PreIndexed => write!(f, "[R{}], {}]!", n, rhs),
+            IndexingMode::PostIndexed { .. } => write!(f, "[R{}], {}", rhs, n),
+        }
+    }
 }
 
-pub fn str(cpu: &mut CPU, d: usize, address: u32) {
-    cpu.mem.write_u32(address as usize, cpu.get_r(d));
+impl Display for ScaledRegister {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use ScaledRegisterMode::*;
+
+        write!(f, "R{}, ", self.m);
+
+        match self.mode {
+            Register => Ok(()),
+            LogicalShiftLeft { shift_imm } => write!(f, "LSL #{}", shift_imm),
+            LogicalShiftRight { shift_imm } => write!(f, "LSR #{}", shift_imm),
+            ArithmeticShiftRight { shift_imm } => write!(f, "ASR #{}", shift_imm),
+            RotateRight { shift_imm } => write!(f, "ROR #{}", shift_imm),
+            RotateRightWithExtend => write!(f, "RRX"),
+        }
+    }
 }

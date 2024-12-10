@@ -14,7 +14,7 @@ const STATE_MASK: u32 = 0x00000020;
 pub fn msr_reg(cpu: &mut CPU, instruction: u32) {
     debug_assert_eq!(get_bits(instruction, 8, 4), 0b0000);
 
-    let m = get_bits(instruction, 0, 4) as usize;
+    let m = get_bits(instruction, 0, 4) as u8;
     let r_m = cpu.get_r(m);
 
     msr(cpu, instruction, r_m);

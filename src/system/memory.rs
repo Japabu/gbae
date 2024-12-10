@@ -35,18 +35,18 @@ macro_rules! gen_memory {
         }
 
         impl Memory {
-            pub fn read_u8(&self, address: usize) -> u8 {
+            pub fn read_u8(&self, address: u32) -> u8 {
                 match address {
-                    $($start..=$end => self.$region[address - $start],)*
+                    $($start..=$end => self.$region[(address - $start) as usize],)*
                     _ => panic!("Read from unmapped address: {:#08X}", address),
                 }
             }
 
-            pub fn write_u8(&mut self, address: usize, value: u8) {
+            pub fn write_u8(&mut self, address: u32, value: u8) {
                 match address {
                     $(
                         $start..=$end => {
-                            if $writable { self.$region[address - $start] = value }
+                            if $writable { self.$region[(address - $start) as usize] = value }
                             else { panic!("Write to read-only address: {:#08X}", address) }
                         }
                     ,)*
@@ -74,31 +74,25 @@ impl Memory {
         }
     }
 
-    pub fn read_u16(&self, address: usize) -> u16 {
+    pub fn read_u16(&self, address: u32) -> u16 {
         let low = self.read_u8(address) as u16;
         let high = self.read_u8(address + 1) as u16;
         (high << 8) | low
     }
 
-    pub fn read_u32(&self, address: usize) -> u32 {
+    pub fn read_u32(&self, address: u32) -> u32 {
         let low = self.read_u16(address) as u32;
         let high = self.read_u16(address + 2) as u32;
         (high << 16) | low
     }
 
-    pub fn write_u16(&mut self, address: usize, value: u16) {
+    pub fn write_u16(&mut self, address: u32, value: u16) {
         self.write_u8(address, value as u8);
         self.write_u8(address + 1, (value >> 8) as u8);
     }
 
-    pub fn write_u32(&mut self, address: usize, value: u32) {
+    pub fn write_u32(&mut self, address: u32, value: u32) {
         self.write_u16(address, value as u16);
         self.write_u16(address + 2, (value >> 16) as u16);
-    }
-
-    fn write(&mut self, address: usize, data: &[u8]) {
-        for (i, byte) in data.iter().enumerate() {
-            self.write_u8(address + i, *byte);
-        }
     }
 }

@@ -1,20 +1,20 @@
-pub const fn get_bits(data: u32, i: u32, len: u32) -> u32 {
+pub const fn get_bits(data: u32, i: u8, len: u8) -> u32 {
     let mask = (1u32 << len) - 1;
     let shifted_mask = mask << i;
     (data & shifted_mask) >> i
 }
 
-pub const fn set_bits(data: u32, i: u32, len: u32, value: u32) -> u32 {
+pub const fn set_bits(data: u32, i: u8, len: u8, value: u32) -> u32 {
     let mask = ((1u32 << len) - 1) << i;
     (data & !mask) | ((value << i) & mask)
 }
 
-pub const fn get_bit(data: u32, i: u32) -> bool {
+pub const fn get_bit(data: u32, i: u8) -> bool {
     let mask = 1 << i;
     (data & mask) > 0
 }
 
-pub const fn set_bit(data: u32, i: u32, v: bool) -> u32 {
+pub const fn set_bit(data: u32, i: u8, v: bool) -> u32 {
     let mask = 1 << i;
     if v {
         data | mask
@@ -23,13 +23,17 @@ pub const fn set_bit(data: u32, i: u32, v: bool) -> u32 {
     }
 }
 
-pub const fn sign_extend(data: u32, data_len: u32) -> u32 {
+pub const fn sign_extend(data: u32, data_len: u8) -> u32 {
     let shift = 32 - data_len;
     (((data << shift) as i32) >> shift) as u32
 }
 
-pub const fn arithmetic_shift_right(data: u32, shift: u32) -> u32 {
+pub const fn arithmetic_shift_right(data: u32, shift: u8) -> u32 {
     ((data as i32) >> shift) as u32
+}
+
+pub const fn rotate_right_with_extend(c_flag: bool, data: u32) -> u32 {
+    (c_flag as u32) << 31 | (data >> 1)
 }
 
 /// Adds two 32-bit unsigned integers and returns the result along with carry and overflow flags.

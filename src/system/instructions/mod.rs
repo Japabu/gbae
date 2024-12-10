@@ -119,7 +119,3 @@ impl Display for Condition {
 pub trait DecodedInstruction: Display {
     fn execute(&self, cpu: &mut CPU);
 }
-
-pub fn get_condition_code(instruction: u32) -> &'static str {
-    todo!()
-}

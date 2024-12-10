@@ -69,7 +69,7 @@ impl DecodedInstruction for Branch {
                 cpu.set_r(15, cpu.get_r(15).wrapping_add(offset));
             }
             Opcode::BX { m } => {
-                let r_m = cpu.get_r(m as usize);
+                let r_m = cpu.get_r(m);
                 cpu.set_thumb_state(get_bit(r_m, 0));
                 cpu.set_r(15, r_m & 0xFFFFFFFE);
             }

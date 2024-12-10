@@ -1,9 +1,6 @@
 use crate::bitutil::{get_bit, get_bits, set_bit, set_bits};
 
-use super::{
-    instructions::{lut::InstructionLut, DecodedInstruction},
-    memory::Memory,
-};
+use super::{instructions::lut::InstructionLut, memory::Memory};
 
 pub const MODE_USR: u32 = 0b10000;
 pub const MODE_FIQ: u32 = 0b10001;
@@ -46,7 +43,7 @@ pub struct CPU {
 }
 
 impl CPU {
-    pub fn get_r(&self, r: usize) -> u32 {
+    pub fn get_r(&self, r: u8) -> u32 {
         let banked_registers: &[u32] = match self.get_mode() {
             MODE_USR | MODE_SYS => &[],
             MODE_SVC => &self.r_svc,
@@ -57,15 +54,15 @@ impl CPU {
             _ => panic!("Invalid mode"),
         };
 
-        let banked_start = 15 - banked_registers.len();
+        let banked_start = 15 - banked_registers.len() as u8;
         if r >= banked_start && r < 15 {
-            banked_registers[r - banked_start]
+            banked_registers[(r - banked_start) as usize]
         } else {
-            self.r[r]
+            self.r[r as usize]
         }
     }
 
-    pub fn set_r(&mut self, r: usize, value: u32) {
+    pub fn set_r(&mut self, r: u8, value: u32) {
         let banked_registers: &mut [u32] = match self.get_mode() {
             MODE_USR | MODE_SYS => &mut [],
             MODE_SVC => &mut self.r_svc,
@@ -76,11 +73,11 @@ impl CPU {
             _ => panic!("Invalid mode"),
         };
 
-        let banked_start = 15 - banked_registers.len();
+        let banked_start = 15 - banked_registers.len() as u8;
         if r >= banked_start && r < 15 {
-            banked_registers[r - banked_start] = value;
+            banked_registers[(r - banked_start) as usize] = value;
         } else {
-            self.r[r] = value;
+            self.r[r as usize] = value;
         }
     }
 
@@ -152,7 +149,7 @@ impl CPU {
     }
 
     pub fn peek_next_instruction(&self) -> u32 {
-        let pc = self.r[15] as usize;
+        let pc = self.r[15];
         if self.get_thumb_state() {
             self.mem.read_u16(pc) as u32
         } else {
@@ -169,8 +166,7 @@ impl CPU {
     }
 
     fn fetch(&mut self) -> u32 {
-        let pc = self.r[15] as usize;
-        //println!("Fetching @ {:#x}", pc);
+        let pc = self.r[15];
         if self.get_thumb_state() {
             self.mem.read_u16(pc) as u32
         } else {

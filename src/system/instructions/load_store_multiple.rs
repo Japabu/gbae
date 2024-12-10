@@ -7,6 +7,7 @@ use crate::{
 
 use super::{Condition, DecodedInstruction};
 
+#[derive(Debug)]
 struct LoadStoreMultiple {
     cond: Condition,
     opcode: Opcode,
@@ -20,6 +21,7 @@ enum Opcode {
     STM,
 }
 
+#[derive(Debug)]
 struct AddressingMode {
     n: u8,
     w: bool,
@@ -27,6 +29,7 @@ struct AddressingMode {
     typ: AddressingModeType,
 }
 
+#[derive(Debug)]
 enum AddressingModeType {
     DecrementAfter,
     IncrementAfter,

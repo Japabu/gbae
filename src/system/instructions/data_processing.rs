@@ -18,6 +18,7 @@ pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     })
 }
 
+#[derive(Debug)]
 struct DataProcessing {
     opcode: Opcode,
     cond: Condition,
@@ -47,6 +48,7 @@ enum Opcode {
     MVN,
 }
 
+#[derive(Debug)]
 enum ShifterOperand {
     Immediate { immed_8: u8, rotate_imm: u8 },
     Register { m: u8 },
@@ -343,10 +345,10 @@ mod tests {
     fn test_add() {
         let instruction = 0xe0859185;
         let inst = decode_arm(instruction);
-        assert_eq!("ADD R9, R5, R5, LSL #3", format!("{}", inst));
+        assert_eq!("ADD R9, R5, R5, LSL #0x3", format!("{}", inst));
 
         let instruction = 0xe2821f82;
         let inst = decode_arm(instruction);
-        assert_eq!("ADD R1, R2, #520", format!("{}", inst));
+        assert_eq!("ADD R1, R2, #0x208", format!("{}", inst));
     }
 }

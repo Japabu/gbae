@@ -7,7 +7,7 @@ use crate::{
 
 use super::{Condition, DecodedInstruction};
 
-pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
+pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     let d = get_bits(instruction, 12, 4) as u8;
     let b = get_bit(instruction, 22);
 
@@ -20,6 +20,7 @@ pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
     })
 }
 
+#[derive(Debug)]
 struct LoadStore {
     cond: Condition,
     opcode: Opcode,
@@ -34,6 +35,7 @@ enum Opcode {
     STR,
 }
 
+#[derive(Debug)]
 struct AddressingMode {
     u: bool,
     n: u8,
@@ -41,18 +43,19 @@ struct AddressingMode {
     indexing_mode: IndexingMode,
 }
 
+#[derive(Debug)]
 enum AddressingModeType {
-    Immediate { offset: u16 },
+    Immediate(u16),
     ScaledRegister(ScaledRegister),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct ScaledRegister {
     m: u8,
     mode: ScaledRegisterMode,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum ScaledRegisterMode {
     Register,
     LogicalShiftLeft { shift_imm: u8 },
@@ -62,6 +65,7 @@ enum ScaledRegisterMode {
     RotateRightWithExtend,
 }
 
+#[derive(Debug)]
 enum IndexingMode {
     Offset,
     PreIndexed,
@@ -117,12 +121,10 @@ impl AddressingMode {
             u,
             n,
             mode: {
-                let is_immediate = get_bit(instruction, 25);
-                match is_immediate {
-                    true => AddressingModeType::Immediate {
-                        offset: get_bits(instruction, 0, 12) as u16,
-                    },
-                    false => AddressingModeType::ScaledRegister(ScaledRegister::decode_arm(instruction)),
+                let is_scaled_register = get_bit(instruction, 25);
+                match is_scaled_register {
+                    false => AddressingModeType::Immediate(get_bits(instruction, 0, 12) as u16),
+                    true => AddressingModeType::ScaledRegister(ScaledRegister::decode_arm(instruction)),
                 }
             },
             indexing_mode: {
@@ -139,7 +141,7 @@ impl AddressingMode {
 
     fn execute(&self, cpu: &mut CPU) -> u32 {
         let offset = match self.mode {
-            AddressingModeType::Immediate { offset } => offset as u32,
+            AddressingModeType::Immediate(imm) => imm as u32,
             AddressingModeType::ScaledRegister(scaled_register) => scaled_register.calc_address(cpu),
         };
 
@@ -159,19 +161,6 @@ impl AddressingMode {
                 cpu.set_r(self.n, r_n_offset);
                 r_n
             }
-        }
-    }
-}
-
-impl AddressingModeType {
-    fn decode_arm(instruction: u32) -> AddressingModeType {
-        let is_imm = get_bit(instruction, 25);
-        if is_imm {
-            AddressingModeType::Immediate {
-                offset: get_bits(instruction, 0, 12) as u16,
-            }
-        } else {
-            AddressingModeType::ScaledRegister(ScaledRegister::decode_arm(instruction))
         }
     }
 }
@@ -251,7 +240,7 @@ impl Display for AddressingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let sign = if self.u { "+" } else { "-" };
         let rhs = match &self.mode {
-            AddressingModeType::Immediate { offset } => format!("#{}{:#X}", sign, offset),
+            AddressingModeType::Immediate(imm) => format!("#{}{:#X}", sign, imm),
             AddressingModeType::ScaledRegister(scaled_register) => format!("{}{}", sign, scaled_register),
         };
 
@@ -278,5 +267,16 @@ impl Display for ScaledRegister {
             RotateRight { shift_imm } => write!(f, "ROR #{:#X}", shift_imm),
             RotateRightWithExtend => write!(f, "RRX"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strb() {
+        let strb = decode_arm(0xe5c33208);
+        assert_eq!(format!("{}", strb), "STRB R3, [R3, #+0x208]");
     }
 }

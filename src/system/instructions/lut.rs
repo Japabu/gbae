@@ -100,6 +100,7 @@ impl InstructionLut {
     }
 }
 
+#[derive(Debug)]
 struct UnknownInstruction(u32);
 
 impl Display for UnknownInstruction {

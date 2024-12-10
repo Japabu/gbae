@@ -7,11 +7,13 @@ use crate::{
 
 use super::{Condition, DecodedInstruction};
 
+#[derive(Debug)]
 struct Branch {
     cond: Condition,
     opcode: Opcode,
 }
 
+#[derive(Debug)]
 enum Opcode {
     B { offset: u32 },
     BL { offset: u32 },

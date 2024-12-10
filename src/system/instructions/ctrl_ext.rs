@@ -14,6 +14,7 @@ const USER_MASK: u32 = 0xF0000000;
 const PRIV_MASK: u32 = 0x0000000F;
 const STATE_MASK: u32 = 0x00000020;
 
+#[derive(Debug)]
 struct Msr {
     cond: Condition,
     mode: MsrOperand,
@@ -21,6 +22,7 @@ struct Msr {
     r: bool,
 }
 
+#[derive(Debug)]
 enum MsrOperand {
     Immediate(u32),
     Register(u8),
@@ -90,10 +92,10 @@ impl Display for Msr {
             "MSR{} {}_{}{}{}{}, {}",
             self.cond,
             if self.r { "SPSR" } else { "CPSR" },
-            if get_bit(field_mask, 0) { "c" } else { "-" },
-            if get_bit(field_mask, 1) { "x" } else { "-" },
-            if get_bit(field_mask, 2) { "s" } else { "-" },
-            if get_bit(field_mask, 3) { "f" } else { "-" },
+            if get_bit(field_mask, 0) { "c" } else { "" },
+            if get_bit(field_mask, 1) { "x" } else { "" },
+            if get_bit(field_mask, 2) { "s" } else { "" },
+            if get_bit(field_mask, 3) { "f" } else { "" },
             match self.mode {
                 MsrOperand::Immediate(imm) => format!("#{:#X}", imm),
                 MsrOperand::Register(m) => format!("R{}", m),

@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 use super::cpu::CPU;
 use crate::bitutil::{get_bit, get_bits};
@@ -32,6 +32,7 @@ pub fn format_instruction(instruction: u32) -> String {
     )
 }
 
+#[derive(Debug)]
 pub enum Condition {
     EQ, // Equal
     NE, // Not Equal
@@ -97,25 +98,12 @@ impl Condition {
 impl Display for Condition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Condition::EQ => write!(f, "EQ"),
-            Condition::NE => write!(f, "NE"),
-            Condition::CS => write!(f, "CS"),
-            Condition::CC => write!(f, "CC"),
-            Condition::MI => write!(f, "MI"),
-            Condition::PL => write!(f, "PL"),
-            Condition::VS => write!(f, "VS"),
-            Condition::VC => write!(f, "VC"),
-            Condition::HI => write!(f, "HI"),
-            Condition::LS => write!(f, "LS"),
-            Condition::GE => write!(f, "GE"),
-            Condition::LT => write!(f, "LT"),
-            Condition::GT => write!(f, "GT"),
-            Condition::LE => write!(f, "LE"),
             Condition::AL => Ok(()),
+            _ => write!(f, "{:?}", self),
         }
     }
 }
 
-pub trait DecodedInstruction: Display {
+pub trait DecodedInstruction: Display + Debug {
     fn execute(&self, cpu: &mut CPU);
 }

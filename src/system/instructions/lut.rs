@@ -3,7 +3,7 @@ use std::fmt::Display;
 use crate::system::instructions::{branch, data_processing, load_store};
 use crate::{bitutil::get_bits, system::cpu::CPU};
 
-use super::{load_store_multiple, DecodedInstruction};
+use super::{ctrl_ext, load_store_multiple, DecodedInstruction};
 
 const LUT_SIZE: usize = 1 << 12;
 
@@ -52,7 +52,7 @@ impl InstructionLut {
         self.add_pattern("1010xxxx xxxx", branch::decode_b_arm);
         self.add_pattern("1011xxxx xxxx", branch::decode_bl_arm);
         // extensions
-        // self.add_pattern("00010x10 0000", ctrl_ext::msr_reg, ctrl_ext::msr_reg_dec);
+        self.add_pattern("00010x10 0000", ctrl_ext::decode_msr_arm);
         self.add_pattern("00010010 0001", branch::decode_bx_arm);
         // // load store
         self.add_pattern("010xxxxx xxxx", load_store::decode_arm);
@@ -109,7 +109,7 @@ impl Display for UnknownInstruction {
 }
 
 impl DecodedInstruction for UnknownInstruction {
-    fn execute(&self, cpu: &mut CPU) {
-        todo!()
+    fn execute(&self, _cpu: &mut CPU) {
+        panic!("Tried to execute unknown instruction: {:#08X}", self.0);
     }
 }

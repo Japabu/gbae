@@ -9,7 +9,6 @@ use super::{Condition, DecodedInstruction};
 
 #[derive(Debug)]
 struct LoadStoreMultiple {
-    cond: Condition,
     opcode: Opcode,
     addressing_mode: AddressingMode,
     s: bool,
@@ -46,7 +45,6 @@ pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
     let pu = get_bits(instruction, 23, 2) as u8;
 
     Box::new(LoadStoreMultiple {
-        cond: Condition::decode_arm(instruction),
         opcode: match l {
             true => Opcode::LDM,
             false => Opcode::STM,
@@ -69,10 +67,6 @@ pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
 
 impl DecodedInstruction for LoadStoreMultiple {
     fn execute(&self, cpu: &mut CPU) {
-        if !self.cond.check(cpu) {
-            return;
-        }
-
         let registers = self.addressing_mode.registers as u32;
         let (start_address, end_address) = self.addressing_mode.execute(cpu);
 
@@ -101,12 +95,10 @@ impl DecodedInstruction for LoadStoreMultiple {
         }
         assert_eq!(end_address, address - 4);
     }
-}
 
-impl Display for LoadStoreMultiple {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn disassemble(&self, cond: Condition) -> String {
         // {LDM|STM}{<cond>}<addressing_mode>{^}
-        write!(f, "{:?}{}{}{}", self.opcode, self.cond, self.addressing_mode, if self.s { "^" } else { "" },)
+        format!("{:?}{}{}{}", self.opcode, cond, self.addressing_mode, if self.s { "^" } else { "" },)
     }
 }
 

@@ -28,6 +28,8 @@ fn main() {
     loop {
         // Print current instruction before executing it
         let instruction = cpu.peek_next_instruction();
+        cpu.print_registers();
+        cpu.print_status();
         println!("Next instruction at 0x{:08X}: {}", cpu.get_r(15), format_instruction(instruction));
 
         if !debugger.running || debugger.should_break(&cpu) {

@@ -12,7 +12,6 @@ pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     let b = get_bit(instruction, 22);
 
     Box::new(LoadStore {
-        cond: Condition::decode_arm(instruction),
         opcode: Opcode::decode_arm(instruction),
         b,
         d,
@@ -22,7 +21,6 @@ pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
 
 #[derive(Debug)]
 struct LoadStore {
-    cond: Condition,
     opcode: Opcode,
     b: bool,
     d: u8,
@@ -90,10 +88,6 @@ impl DecodedInstruction for LoadStore {
             todo!("d == 15");
         }
 
-        if !self.cond.check(cpu) {
-            return;
-        }
-
         let address = self.adressing_mode.execute(cpu);
 
         match self.opcode {
@@ -109,6 +103,23 @@ impl DecodedInstruction for LoadStore {
                 true => cpu.mem.write_u8(address, cpu.get_r(self.d) as u8),
             },
         }
+    }
+
+    fn disassemble(&self, cond: Condition) -> String {
+        let t = match self.adressing_mode.indexing_mode {
+            IndexingMode::PostIndexed { t } => t,
+            _ => false,
+        };
+
+        format!(
+            "{:?}{}{}{} R{}, {}",
+            self.opcode,
+            cond,
+            if self.b { "B" } else { "" },
+            if t { "T" } else { "" },
+            self.d,
+            self.adressing_mode
+        )
     }
 }
 
@@ -216,26 +227,6 @@ impl ScaledRegister {
     }
 }
 
-impl Display for LoadStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let t = match self.adressing_mode.indexing_mode {
-            IndexingMode::PostIndexed { t } => t,
-            _ => false,
-        };
-
-        write!(
-            f,
-            "{:?}{}{}{} R{}, {}",
-            self.opcode,
-            self.cond,
-            if self.b { "B" } else { "" },
-            if t { "T" } else { "" },
-            self.d,
-            self.adressing_mode
-        )
-    }
-}
-
 impl Display for AddressingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let sign = if self.u { "+" } else { "-" };
@@ -277,6 +268,6 @@ mod tests {
     #[test]
     fn test_strb() {
         let strb = decode_arm(0xe5c33208);
-        assert_eq!(format!("{}", strb), "STRB R3, [R3, #+0x208]");
+        assert_eq!(format!("{}", strb.disassemble(Condition::EQ)), "STREQB R3, [R3, #+0x208]");
     }
 }

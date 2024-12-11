@@ -1,6 +1,9 @@
 use crate::bitutil::{get_bit, get_bits, set_bit, set_bits};
 
-use super::{instructions::lut::InstructionLut, memory::Memory};
+use super::{
+    instructions::{lut::InstructionLut, Condition},
+    memory::Memory,
+};
 
 pub const MODE_USR: u8 = 0b10000;
 pub const MODE_FIQ: u8 = 0b10001;
@@ -89,6 +92,10 @@ impl CPU {
         self.set_r_in_mode(r, self.get_mode(), value)
     }
 
+    pub fn get_cpsr(&self) -> u32 {
+        self.cpsr
+    }
+
     pub fn get_spsr(&self) -> u32 {
         match self.get_mode() {
             MODE_SVC => self.spsr_svc,
@@ -141,11 +148,18 @@ impl CPU {
         }
 
         let instruction = self.fetch();
-        let decoded_instruction = InstructionLut::decode(instruction);
+        let cond = Condition::decode_arm(instruction);
+
+        self.advance_pc();
+
+        if !cond.check(self) {
+            return;
+        }
 
         // Advance pc two instructions because thats where it should be in the execution stage
         self.advance_pc();
-        self.advance_pc();
+
+        let decoded_instruction = InstructionLut::decode(instruction);
 
         let pc_old = self.r[15];
         decoded_instruction.execute(self);

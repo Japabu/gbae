@@ -15,7 +15,7 @@ pub fn format_instruction(instruction: u32) -> String {
         "{} ({:08x})\n\
             Bit Index:   27 26 25 24 23 22 21 20   07 06 05 04\n\
             Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<4} {:<2} {:<2} {:<2} {:<2}",
-        lut::InstructionLut::decode(instruction),
+        lut::InstructionLut::decode(instruction).disassemble(Condition::decode_arm(instruction)),
         instruction,
         get_bit(instruction, 27) as u32,
         get_bit(instruction, 26) as u32,
@@ -104,6 +104,7 @@ impl Display for Condition {
     }
 }
 
-pub trait DecodedInstruction: Display + Debug {
+pub trait DecodedInstruction: Debug {
     fn execute(&self, cpu: &mut CPU);
+    fn disassemble(&self, cond: Condition) -> String;
 }

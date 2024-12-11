@@ -1,9 +1,7 @@
-use std::fmt::Display;
-
 use crate::system::instructions::{branch, data_processing, load_store};
 use crate::{bitutil::get_bits, system::cpu::CPU};
 
-use super::{ctrl_ext, load_store_multiple, DecodedInstruction};
+use super::{ctrl_ext, load_store_multiple, Condition, DecodedInstruction};
 
 const LUT_SIZE: usize = 1 << 12;
 
@@ -48,7 +46,8 @@ impl InstructionLut {
         self.add_pattern("000xxxxx xxx0", data_processing::decode_arm);
         // misc
         self.add_pattern("00010xx0 xxx0", Self::unknown_instruction_decoder);
-        self.add_pattern("00010x10 0000", ctrl_ext::decode_msr_arm);
+        self.add_pattern("00010x00 0000", ctrl_ext::mrs::decode_arm);
+        self.add_pattern("00010x10 0000", ctrl_ext::msr::decode_arm);
         // data processing register shift
         self.add_pattern("000xxxxx 0xx1", data_processing::decode_arm);
         // misc
@@ -127,14 +126,12 @@ impl InstructionLut {
 #[derive(Debug)]
 struct UnknownInstruction(u32);
 
-impl Display for UnknownInstruction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Unknown instruction: {:#08X}", self.0)
-    }
-}
-
 impl DecodedInstruction for UnknownInstruction {
     fn execute(&self, _cpu: &mut CPU) {
         panic!("Tried to execute unknown instruction: {:#08X}", self.0);
+    }
+
+    fn disassemble(&self, _cond: Condition) -> String {
+        format!("Unknown instruction: {:#08X}", self.0)
     }
 }

@@ -10,7 +10,6 @@ use super::{Condition, DecodedInstruction};
 pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     Box::new(DataProcessing {
         opcode: Opcode::decode_arm(instruction),
-        cond: Condition::decode_arm(instruction),
         set_flags: get_bit(instruction, 20),
         d: get_bits(instruction, 12, 4) as u8,
         n: get_bits(instruction, 16, 4) as u8,
@@ -21,7 +20,6 @@ pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
 #[derive(Debug)]
 struct DataProcessing {
     opcode: Opcode,
-    cond: Condition,
     set_flags: bool,
     d: u8,
     n: u8,
@@ -63,33 +61,9 @@ enum ShifterOperand {
     RotateRightWithExtend { m: u8 },
 }
 
-impl Display for DataProcessing {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use Opcode::*;
-        let has_d = !matches!(self.opcode, CMP | CMN | TST | TEQ);
-        let has_n = !matches!(self.opcode, MOV | MVN);
-
-        // <opcode>{<cond>}{S} <Rd>, <Rn>, <shifter_operand>
-        write!(
-            f,
-            "{:?}{}{} {}{}{}",
-            self.opcode,
-            self.cond,
-            if has_d && self.set_flags { "S" } else { "" },
-            if has_d { format!("R{}, ", self.d) } else { "".into() },
-            if has_n { format!("R{}, ", self.n) } else { "".into() },
-            self.shifter_operand
-        )
-    }
-}
-
 impl DecodedInstruction for DataProcessing {
     fn execute(&self, cpu: &mut CPU) {
         use Opcode::*;
-
-        if !self.cond.check(cpu) {
-            return;
-        }
 
         if self.set_flags && self.d == 15 {
             todo!("set_flags and d == 15");
@@ -137,6 +111,23 @@ impl DecodedInstruction for DataProcessing {
             cpu.set_zero_flag(result == 0);
             cpu.set_carry_flag(carry);
         }
+    }
+
+    fn disassemble(&self, cond: Condition) -> String {
+        use Opcode::*;
+        let has_d = !matches!(self.opcode, CMP | CMN | TST | TEQ);
+        let has_n = !matches!(self.opcode, MOV | MVN);
+
+        // <opcode>{<cond>}{S} <Rd>, <Rn>, <shifter_operand>
+        format!(
+            "{:?}{}{} {}{}{}",
+            self.opcode,
+            cond,
+            if has_d && self.set_flags { "S" } else { "" },
+            if has_d { format!("R{}, ", self.d) } else { "".into() },
+            if has_n { format!("R{}, ", self.n) } else { "".into() },
+            self.shifter_operand
+        )
     }
 }
 
@@ -338,24 +329,24 @@ mod tests {
     fn test_mov() {
         let instruction = 0xe1a01000;
         let inst = decode_arm(instruction);
-        assert_eq!("MOV R1, R0", format!("{}", inst));
+        assert_eq!("MOV R1, R0", format!("{}", inst.disassemble(Condition::AL)));
     }
 
     #[test]
     fn test_cmp() {
         let instruction = 0xe1500000;
         let inst = decode_arm(instruction);
-        assert_eq!("CMP R0, R0", format!("{}", inst));
+        assert_eq!("CMPEQ R0, R0", format!("{}", inst.disassemble(Condition::EQ)));
     }
 
     #[test]
     fn test_add() {
         let instruction = 0xe0859185;
         let inst = decode_arm(instruction);
-        assert_eq!("ADD R9, R5, R5, LSL #0x3", format!("{}", inst));
+        assert_eq!("ADD R9, R5, R5, LSL #0x3", format!("{}", inst.disassemble(Condition::AL)));
 
         let instruction = 0xe2821f82;
         let inst = decode_arm(instruction);
-        assert_eq!("ADD R1, R2, #0x208", format!("{}", inst));
+        assert_eq!("ADD R1, R2, #0x208", format!("{}", inst.disassemble(Condition::AL)));
     }
 }

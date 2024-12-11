@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    bitutil::{self, arithmetic_shift_right, get_bit, get_bits16, get_bits32, rotate_right_with_extend},
+    bitutil::{self, arithmetic_shift_right, get_bit, get_bit16, get_bits16, get_bits32, rotate_right_with_extend},
     system::cpu::CPU,
 };
 
@@ -17,7 +17,32 @@ pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     })
 }
 
-pub fn decode_thumb_3(instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_add_sub_register_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+    Box::new(DataProcessing {
+        opcode: if get_bit16(instruction, 9) { Opcode::SUB } else { Opcode::ADD },
+        set_flags: true,
+        d: get_bits16(instruction, 0, 3) as u8,
+        n: get_bits16(instruction, 3, 3) as u8,
+        shifter_operand: ShifterOperand::Register {
+            m: get_bits16(instruction, 6, 3) as u8,
+        },
+    })
+}
+
+pub fn decode_add_sub_immediate_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+    Box::new(DataProcessing {
+        opcode: if get_bit16(instruction, 9) { Opcode::SUB } else { Opcode::ADD },
+        set_flags: true,
+        d: get_bits16(instruction, 0, 3) as u8,
+        n: get_bits16(instruction, 3, 3) as u8,
+        shifter_operand: ShifterOperand::Immediate {
+            immed_8: get_bits16(instruction, 6, 3) as u8,
+            rotate_imm: 0,
+        },
+    })
+}
+
+pub fn decode_add_sub_compare_move_immediate_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
     use Opcode::*;
     Box::new({
         let d_n = get_bits16(instruction, 8, 3) as u8;

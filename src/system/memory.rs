@@ -27,7 +27,7 @@ Unused Memory Area
 */
 
 macro_rules! gen_memory {
-    ($($start:literal..=$end:literal => ($region:ident, $writable:expr)),* $(,)?) => {
+    ($($start:literal..=$end:literal => ($region:ident, $len:expr, $writable:expr)),* $(,)?) => {
         pub struct Memory {
             $(
                 $region: Vec<u8>,
@@ -37,7 +37,12 @@ macro_rules! gen_memory {
         impl Memory {
             pub fn read_u8(&self, address: u32) -> u8 {
                 match address {
-                    $($start..=$end => self.$region[(address - $start) as usize],)*
+                    $(
+                        $start..=$end => {
+                            let index = (address - $start) % $len;
+                            self.$region[index as usize]
+                        }
+                    )*
                     _ => panic!("Read from unmapped address: {:#08X}", address),
                 }
             }
@@ -46,7 +51,8 @@ macro_rules! gen_memory {
                 match address {
                     $(
                         $start..=$end => {
-                            if $writable { self.$region[(address - $start) as usize] = value }
+                            let index = (address - $start) % $len;
+                            if $writable { self.$region[index as usize] = value }
                             else { panic!("Write to read-only address: {:#08X}", address) }
                         }
                     ,)*
@@ -57,21 +63,27 @@ macro_rules! gen_memory {
     };
 }
 
+const BIOS_LEN: u32 = 0x4_000;
+const WRAM1_LEN: u32 = 0x40_000;
+const WRAM2_LEN: u32 = 0x800;
+const IO_REGISTERS_LEN: u32 = 0x3FF;
+const GAME_PAK_ROM_LEN: u32 = 0x2_000_000;
+
 gen_memory! {
-    0x00_000_000..=0x00_003_FFF => (bios, false),
-    0x02_000_000..=0x02_03F_FFF => (wram1, true),
-    0x03_000_000..=0x03_007_FFF => (wram2, true),
-    0x04_000_000..=0x04_000_3FE => (io_registers, true),
-    0x08_000_000..=0x09_FFF_FFF => (game_pak, false),
+    0x00_000_000..=0x00_003_FFF => (bios, BIOS_LEN, false),
+    0x02_000_000..=0x02_FFF_FFF => (wram1, WRAM1_LEN, true),
+    0x03_000_000..=0x03_FFF_FFF => (wram2, WRAM2_LEN, true),
+    0x04_000_000..=0x04_000_3FE => (io_registers, IO_REGISTERS_LEN, true),
+    0x08_000_000..=0x09_FFF_FFF => (game_pak, GAME_PAK_ROM_LEN, false),
 }
 
 impl Memory {
     pub fn new(bios: Vec<u8>, game_pak: Vec<u8>) -> Self {
         Self {
             bios,
-            wram1: vec![0; 0x40_000],
-            wram2: vec![0; 0x800],
-            io_registers: vec![0; 0x3FF],
+            wram1: vec![0; WRAM1_LEN as usize],
+            wram2: vec![0; WRAM2_LEN as usize],
+            io_registers: vec![0; IO_REGISTERS_LEN as usize],
             game_pak,
         }
     }

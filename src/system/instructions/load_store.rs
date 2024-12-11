@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    bitutil::{arithmetic_shift_right, get_bit, get_bits16, get_bits32, rotate_right_with_extend, sign_extend32},
+    bitutil::{arithmetic_shift_right, get_bit, get_bit16, get_bits16, get_bits32, rotate_right_with_extend, sign_extend32},
     system::cpu::CPU,
 };
 
@@ -46,7 +46,7 @@ pub fn decode_extra_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     })
 }
 
-pub fn decode_thumb_load_from_literal_pool(instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_load_from_literal_pool_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
     Box::new(LoadStore {
         opcode: Opcode::LDR,
         length: Length::Word,
@@ -61,8 +61,23 @@ pub fn decode_thumb_load_from_literal_pool(instruction: u16) -> Box<dyn DecodedI
     })
 }
 
-pub fn decode_thumb_load_store_register_offset(instruction: u16) -> Box<dyn DecodedInstruction> {
-    todo!()
+pub fn decode_load_store_register_offset_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+    let is_load = get_bit16(instruction, 11);
+
+    Box::new(LoadStore {
+        opcode: if is_load { Opcode::LDR } else { Opcode::STR },
+        length: Length::Word,
+        sign_extend: false,
+        d: get_bits16(instruction, 0, 3) as u8,
+        adressing_mode: AddressingMode {
+            u: true,
+            n: get_bits16(instruction, 3, 3) as u8,
+            mode: AddressingModeType::Register {
+                m: get_bits16(instruction, 6, 3) as u8,
+            },
+            indexing_mode: IndexingMode::Offset,
+        },
+    })
 }
 
 #[derive(Debug)]
@@ -99,23 +114,12 @@ struct AddressingMode {
 #[derive(Debug)]
 enum AddressingModeType {
     Immediate(u16),
-    ScaledRegister(ScaledRegister),
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ScaledRegister {
-    m: u8,
-    mode: ScaledRegisterMode,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ScaledRegisterMode {
-    Register,
-    LogicalShiftLeft { shift_imm: u8 },
-    LogicalShiftRight { shift_imm: u8 },
-    ArithmeticShiftRight { shift_imm: u8 },
-    RotateRight { shift_imm: u8 },
-    RotateRightWithExtend,
+    Register { m: u8 },
+    LogicalShiftLeft { m: u8, shift_imm: u8 },
+    LogicalShiftRight { m: u8, shift_imm: u8 },
+    ArithmeticShiftRight { m: u8, shift_imm: u8 },
+    RotateRight { m: u8, shift_imm: u8 },
+    RotateRightWithExtend { m: u8 },
 }
 
 #[derive(Debug)]
@@ -190,10 +194,24 @@ impl AddressingMode {
             u,
             n,
             mode: {
+                use AddressingModeType::*;
                 let is_scaled_register = get_bit(instruction, 25);
                 match is_scaled_register {
-                    false => AddressingModeType::Immediate(get_bits32(instruction, 0, 12) as u16),
-                    true => AddressingModeType::ScaledRegister(ScaledRegister::decode_arm(instruction)),
+                    false => Immediate(get_bits32(instruction, 0, 12) as u16),
+                    true => {
+                        let m = get_bits32(instruction, 0, 4) as u8;
+                        let shift = get_bits32(instruction, 5, 2) as u8;
+                        let shift_imm = get_bits32(instruction, 7, 5) as u8;
+                        match shift {
+                            0b00 if shift_imm == 0 => Register { m },
+                            0b00 => LogicalShiftLeft { m, shift_imm },
+                            0b01 => LogicalShiftRight { m, shift_imm },
+                            0b10 => ArithmeticShiftRight { m, shift_imm },
+                            0b11 if shift_imm == 0 => RotateRightWithExtend { m },
+                            0b11 => RotateRight { m, shift_imm },
+                            _ => unreachable!(),
+                        }
+                    }
                 }
             },
             indexing_mode: {
@@ -219,10 +237,9 @@ impl AddressingMode {
                 let is_immediate = get_bit(instruction, 22);
                 match is_immediate {
                     true => AddressingModeType::Immediate((get_bits32(instruction, 8, 4) as u16) << 4 | get_bits32(instruction, 0, 4) as u16),
-                    false => AddressingModeType::ScaledRegister(ScaledRegister {
+                    false => AddressingModeType::Register {
                         m: get_bits32(instruction, 0, 4) as u8,
-                        mode: ScaledRegisterMode::Register,
-                    }),
+                    },
                 }
             },
             indexing_mode: {
@@ -238,9 +255,31 @@ impl AddressingMode {
     }
 
     fn execute(&self, cpu: &mut CPU) -> u32 {
+        use AddressingModeType::*;
         let offset = match self.mode {
-            AddressingModeType::Immediate(imm) => imm as u32,
-            AddressingModeType::ScaledRegister(scaled_register) => scaled_register.calc_address(cpu),
+            Immediate(imm) => imm as u32,
+            Register { m } => cpu.get_r(m),
+            LogicalShiftLeft { m, shift_imm } => cpu.get_r(m) << shift_imm,
+            LogicalShiftRight { m, shift_imm } => {
+                if shift_imm == 0 {
+                    0
+                } else {
+                    cpu.get_r(m) >> shift_imm
+                }
+            }
+            ArithmeticShiftRight { m, shift_imm } => {
+                if shift_imm == 0 {
+                    if get_bit(cpu.get_r(m), 31) {
+                        0xFFFFFFFF
+                    } else {
+                        0
+                    }
+                } else {
+                    arithmetic_shift_right(cpu.get_r(m), shift_imm)
+                }
+            }
+            RotateRight { m, shift_imm } => cpu.get_r(m).rotate_right(shift_imm.into()),
+            RotateRightWithExtend { m } => rotate_right_with_extend(cpu.get_carry_flag(), cpu.get_r(m)),
         };
 
         // If n == 15, we need to mask the bottom two bits of the PC for Thumb mode
@@ -264,63 +303,17 @@ impl AddressingMode {
     }
 }
 
-impl ScaledRegister {
-    fn decode_arm(instruction: u32) -> ScaledRegister {
-        ScaledRegister {
-            m: get_bits32(instruction, 0, 4) as u8,
-            mode: {
-                use ScaledRegisterMode::*;
-                let shift = get_bits32(instruction, 5, 2) as u8;
-                let shift_imm = get_bits32(instruction, 7, 5) as u8;
-                match shift {
-                    0b00 if shift_imm == 0 => Register,
-                    0b00 => LogicalShiftLeft { shift_imm },
-                    0b01 => LogicalShiftRight { shift_imm },
-                    0b10 => ArithmeticShiftRight { shift_imm },
-                    0b11 if shift_imm == 0 => RotateRightWithExtend,
-                    0b11 => RotateRight { shift_imm },
-                    _ => unreachable!(),
-                }
-            },
-        }
-    }
-
-    fn calc_address(&self, cpu: &CPU) -> u32 {
-        use ScaledRegisterMode::*;
-        let r_m = cpu.get_r(self.m);
-        match self.mode {
-            Register => r_m,
-            LogicalShiftLeft { shift_imm } => r_m << shift_imm,
-            LogicalShiftRight { shift_imm } => {
-                if shift_imm == 0 {
-                    0
-                } else {
-                    r_m >> shift_imm
-                }
-            }
-            ArithmeticShiftRight { shift_imm } => {
-                if shift_imm == 0 {
-                    if get_bit(r_m, 31) {
-                        0xFFFFFFFF
-                    } else {
-                        0
-                    }
-                } else {
-                    arithmetic_shift_right(r_m, shift_imm)
-                }
-            }
-            RotateRight { shift_imm } => r_m.rotate_right(shift_imm.into()),
-            RotateRightWithExtend => rotate_right_with_extend(cpu.get_carry_flag(), r_m),
-        }
-    }
-}
-
 impl Display for AddressingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let sign = if self.u { "+" } else { "-" };
-        let rhs = match &self.mode {
-            AddressingModeType::Immediate(imm) => format!("#{}{:#X}", sign, imm),
-            AddressingModeType::ScaledRegister(scaled_register) => format!("{}{}", sign, scaled_register),
+        use AddressingModeType::*;
+        let rhs = match self.mode {
+            Immediate(imm) => format!("#{}{:#X}", if self.u { "+" } else { "-" }, imm),
+            Register { m } => format!("R{}", m),
+            LogicalShiftLeft { m, shift_imm } => format!("R{}, LSL #{:#X}", m, shift_imm),
+            LogicalShiftRight { m, shift_imm } => format!("R{}, LSR #{:#X}", m, shift_imm),
+            ArithmeticShiftRight { m, shift_imm } => format!("R{}, ASR #{:#X}", m, shift_imm),
+            RotateRight { m, shift_imm } => format!("R{}, ROR #{:#X}", m, shift_imm),
+            RotateRightWithExtend { m } => format!("R{}, RRX", m),
         };
 
         let n = self.n;
@@ -328,23 +321,6 @@ impl Display for AddressingMode {
             IndexingMode::Offset => write!(f, "[R{}, {}]", n, rhs),
             IndexingMode::PreIndexed => write!(f, "[R{}, {}]!", n, rhs),
             IndexingMode::PostIndexed { .. } => write!(f, "[R{}], {}", rhs, n),
-        }
-    }
-}
-
-impl Display for ScaledRegister {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use ScaledRegisterMode::*;
-
-        write!(f, "R{}", self.m)?;
-
-        match self.mode {
-            Register => Ok(()),
-            LogicalShiftLeft { shift_imm } => write!(f, ", LSL #{:#X}", shift_imm),
-            LogicalShiftRight { shift_imm } => write!(f, ", LSR #{:#X}", shift_imm),
-            ArithmeticShiftRight { shift_imm } => write!(f, ", ASR #{:#X}", shift_imm),
-            RotateRight { shift_imm } => write!(f, ", ROR #{:#X}", shift_imm),
-            RotateRightWithExtend => write!(f, ", RRX"),
         }
     }
 }

@@ -79,7 +79,7 @@ impl InstructionLut {
         self.add_pattern("00010xx0 xxx1", Arm(UnknownInstruction::decode_arm));
         self.add_pattern("00010010 0001", Arm(branch::decode_bx_arm));
         // multiplies, extra load/stores
-        self.add_pattern("000xxxxx 1xx1", Arm(UnknownInstruction::decode_arm));
+        self.add_pattern("000xxxxx 1xx1", Arm(load_store::decode_extra_arm));
         // data processing immediate
         self.add_pattern("001xxxxx xxxx", Arm(data_processing::decode_arm));
         // undefined
@@ -112,11 +112,11 @@ impl InstructionLut {
         // shift by immediate
         self.add_pattern("000 xx x xx", Thumb(UnknownInstruction::decode_thumb));
         // add/subtract register
-        self.add_pattern("000 11 0 xx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("000 11 0 xx", Thumb(data_processing::decode_add_sub_register_thumb));
         // add/subtract immediate
-        self.add_pattern("000 11 1 xx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("000 11 1 xx", Thumb(data_processing::decode_add_sub_immediate_thumb));
         // add/subtract/compare/move immediate
-        self.add_pattern("001 xxxxx", Thumb(data_processing::decode_thumb_3));
+        self.add_pattern("001 xxxxx", Thumb(data_processing::decode_add_sub_compare_move_immediate_thumb));
         // data processing register
         self.add_pattern("010000 xx", Thumb(UnknownInstruction::decode_thumb));
         // special data processing
@@ -124,9 +124,9 @@ impl InstructionLut {
         // branch/exchange
         self.add_pattern("010001 11", Thumb(UnknownInstruction::decode_thumb));
         // load from literal pool
-        self.add_pattern("01001x xx", Thumb(load_store::decode_thumb_load_from_literal_pool));
+        self.add_pattern("01001x xx", Thumb(load_store::decode_load_from_literal_pool_thumb));
         // load/store register offset
-        self.add_pattern("0101 xxxx", Thumb(load_store::decode_thumb_load_store_register_offset));
+        self.add_pattern("0101 xxxx", Thumb(load_store::decode_load_store_register_offset_thumb));
         // load/store word/byte immediate offset
         self.add_pattern("011x xxxx", Thumb(UnknownInstruction::decode_thumb));
         // load/store halfword immediate offset

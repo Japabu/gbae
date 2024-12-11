@@ -3,20 +3,29 @@ use crate::{bitutil::get_bits, system::cpu::CPU};
 
 use super::{ctrl_ext, load_store_multiple, Condition, DecodedInstruction};
 
-const LUT_SIZE: usize = 1 << 12;
+const LUT_ARM_SIZE: usize = 1 << 12;
+const LUT_THUMB_SIZE: usize = 1 << 8;
 
 static mut INSTRUCTION_LUT: Option<InstructionLut> = None;
 
-type DecoderFn = fn(u32) -> Box<dyn DecodedInstruction>;
+type DecoderArmFn = fn(u32) -> Box<dyn DecodedInstruction>;
+type DecoderThumbFn = fn(u16) -> Box<dyn DecodedInstruction>;
+
+enum DecoderFn {
+    Arm(DecoderArmFn),
+    Thumb(DecoderThumbFn),
+}
 
 pub struct InstructionLut {
-    decoders: [DecoderFn; LUT_SIZE],
+    decoders_arm: [DecoderArmFn; LUT_ARM_SIZE],
+    decoders_thumb: [DecoderThumbFn; LUT_THUMB_SIZE],
 }
 
 impl InstructionLut {
     pub fn initialize() {
         let mut lut = Self {
-            decoders: [Self::unknown_instruction_decoder; LUT_SIZE],
+            decoders_arm: [UnknownInstruction::decode_arm; LUT_ARM_SIZE],
+            decoders_thumb: [UnknownInstruction::decode_thumb; LUT_THUMB_SIZE],
         };
         lut.setup_patterns();
         unsafe {
@@ -24,69 +33,90 @@ impl InstructionLut {
         }
     }
 
-    pub fn decode(instruction: u32) -> Box<dyn DecodedInstruction> {
+    pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
         unsafe {
             if let Some(ref lut) = INSTRUCTION_LUT {
-                (lut.decoders[Self::index(instruction)])(instruction)
+                (lut.decoders_arm[Self::index_arm(instruction)])(instruction)
             } else {
                 panic!("Instruction LUT not initialized!");
             }
         }
     }
 
-    fn index(instruction: u32) -> usize {
+    pub fn decode_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+        unsafe {
+            if let Some(ref lut) = INSTRUCTION_LUT {
+                (lut.decoders_thumb[Self::index_thumb(instruction)])(instruction)
+            } else {
+                panic!("Instruction LUT not initialized!");
+            }
+        }
+    }
+
+    fn index_arm(instruction: u32) -> usize {
         // Bits 4-7 and 20-27 can be used to differentiate instructions and then index into the table
         let upper = get_bits(instruction, 20, 8);
         let lower = get_bits(instruction, 4, 4);
         ((upper << 4) | lower) as usize
     }
 
+    fn index_thumb(instruction: u16) -> usize {
+        (instruction >> 8) as usize
+    }
+
     fn setup_patterns(&mut self) {
+        use DecoderFn::*;
         // data processing immediate shift
-        self.add_pattern("000xxxxx xxx0", data_processing::decode_arm);
+        self.add_pattern("000xxxxx xxx0", Arm(data_processing::decode_arm));
         // misc
-        self.add_pattern("00010xx0 xxx0", Self::unknown_instruction_decoder);
-        self.add_pattern("00010x00 0000", ctrl_ext::mrs::decode_arm);
-        self.add_pattern("00010x10 0000", ctrl_ext::msr::decode_arm);
+        self.add_pattern("00010xx0 xxx0", Arm(UnknownInstruction::decode_arm));
+        self.add_pattern("00010x00 0000", Arm(ctrl_ext::mrs::decode_arm));
+        self.add_pattern("00010x10 0000", Arm(ctrl_ext::msr::decode_arm));
         // data processing register shift
-        self.add_pattern("000xxxxx 0xx1", data_processing::decode_arm);
+        self.add_pattern("000xxxxx 0xx1", Arm(data_processing::decode_arm));
         // misc
-        self.add_pattern("00010xx0 xxx1", Self::unknown_instruction_decoder);
-        self.add_pattern("00010010 0001", branch::decode_bx_arm);
+        self.add_pattern("00010xx0 xxx1", Arm(UnknownInstruction::decode_arm));
+        self.add_pattern("00010010 0001", Arm(branch::decode_bx_arm));
         // multiplies, extra load/stores
-        self.add_pattern("000xxxxx 1xx1", Self::unknown_instruction_decoder);
+        self.add_pattern("000xxxxx 1xx1", Arm(UnknownInstruction::decode_arm));
         // data processing immediate
-        self.add_pattern("001xxxxx xxxx", data_processing::decode_arm);
+        self.add_pattern("001xxxxx xxxx", Arm(data_processing::decode_arm));
         // undefined
-        self.add_pattern("00110x00 1xx1", Self::unknown_instruction_decoder);
+        self.add_pattern("00110x00 1xx1", Arm(UnknownInstruction::decode_arm));
         // move immediate to status register
-        self.add_pattern("00110x10 xxxx", Self::unknown_instruction_decoder);
+        self.add_pattern("00110x10 xxxx", Arm(UnknownInstruction::decode_arm));
         // load/store immediate offset
-        self.add_pattern("010xxxxx xxxx", load_store::decode_arm);
+        self.add_pattern("010xxxxx xxxx", Arm(load_store::decode_arm));
         // load/store register offset
-        self.add_pattern("011xxxxx xxx0", load_store::decode_arm);
+        self.add_pattern("011xxxxx xxx0", Arm(load_store::decode_arm));
         // media instructions
-        self.add_pattern("011xxxxx xxx1", load_store::decode_arm);
+        self.add_pattern("011xxxxx xxx1", Arm(load_store::decode_arm));
         // undefined
-        self.add_pattern("01111111 1111", Self::unknown_instruction_decoder);
+        self.add_pattern("01111111 1111", Arm(UnknownInstruction::decode_arm));
         // load store multiple
-        self.add_pattern("100xxxxx xxxx", load_store_multiple::decode_arm);
+        self.add_pattern("100xxxxx xxxx", Arm(load_store_multiple::decode_arm));
         // branch
-        self.add_pattern("1010xxxx xxxx", branch::decode_b_arm);
-        self.add_pattern("1011xxxx xxxx", branch::decode_bl_arm);
+        self.add_pattern("1010xxxx xxxx", Arm(branch::decode_b_arm));
+        self.add_pattern("1011xxxx xxxx", Arm(branch::decode_bl_arm));
         // coprocessor load/store and double register transfers
-        self.add_pattern("110xxxxx xxxx", Self::unknown_instruction_decoder);
+        self.add_pattern("110xxxxx xxxx", Arm(UnknownInstruction::decode_arm));
         // coprocessor data processing
-        self.add_pattern("1110xxxx xxx0", Self::unknown_instruction_decoder);
+        self.add_pattern("1110xxxx xxx0", Arm(UnknownInstruction::decode_arm));
         // coprocessor register transfers
-        self.add_pattern("1110xxxx xxx1", Self::unknown_instruction_decoder);
+        self.add_pattern("1110xxxx xxx1", Arm(UnknownInstruction::decode_arm));
         // software interrupt
-        self.add_pattern("1111xxxx xxxx", Self::unknown_instruction_decoder);
+        self.add_pattern("1111xxxx xxxx", Arm(UnknownInstruction::decode_arm));
     }
 
     fn add_pattern(&mut self, pattern: &str, decoder: DecoderFn) {
+        use DecoderFn::*;
+
         let pattern = pattern.to_string().replace(" ", "");
-        assert_eq!(pattern.len(), 12, "Pattern must be 12 bits long");
+
+        match decoder {
+            Arm(_) => assert_eq!(pattern.len(), 12, "Pattern must be 12 bits long"),
+            Thumb(_) => assert_eq!(pattern.len(), 8, "Pattern must be 8 bits long"),
+        };
 
         // Determine which bits are fixed and which are wildcards
         let mut base_index = 0usize;
@@ -114,24 +144,40 @@ impl InstructionLut {
                     index &= !(1 << pos);
                 }
             }
-            self.decoders[index] = decoder;
-        }
-    }
 
-    fn unknown_instruction_decoder(instruction: u32) -> Box<dyn DecodedInstruction> {
-        Box::new(UnknownInstruction(instruction))
+            match decoder {
+                Arm(decoder) => self.decoders_arm[index] = decoder,
+                Thumb(decoder) => self.decoders_thumb[index] = decoder,
+            };
+        }
     }
 }
 
 #[derive(Debug)]
-struct UnknownInstruction(u32);
-
+enum UnknownInstruction {
+    Arm(u32),
+    Thumb(u16),
+}
+impl UnknownInstruction {
+    fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
+        Box::new(UnknownInstruction::Arm(instruction))
+    }
+    fn decode_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+        Box::new(UnknownInstruction::Thumb(instruction))
+    }
+}
 impl DecodedInstruction for UnknownInstruction {
     fn execute(&self, _cpu: &mut CPU) {
-        panic!("Tried to execute unknown instruction: {:#08X}", self.0);
+        match self {
+            UnknownInstruction::Arm(instruction) => panic!("Tried to execute unknown arm instruction: {:#08X}", instruction),
+            UnknownInstruction::Thumb(instruction) => panic!("Tried to execute unknown thumb instruction: {:#04X}", instruction),
+        }
     }
 
     fn disassemble(&self, _cond: Condition) -> String {
-        format!("Unknown instruction: {:#08X}", self.0)
+        match self {
+            UnknownInstruction::Arm(instruction) => format!("???: {:#08X}", instruction),
+            UnknownInstruction::Thumb(instruction) => format!("???: {:#04X}", instruction),
+        }
     }
 }

@@ -1,4 +1,7 @@
-use crate::bitutil::{get_bit, get_bits, set_bit, set_bits};
+use crate::{
+    bitutil::{get_bit, get_bits, set_bit, set_bits},
+    system::instructions::{self, format_instruction_arm, format_instruction_thumb},
+};
 
 use super::{
     instructions::{lut::InstructionLut, Condition},
@@ -143,39 +146,32 @@ impl CPU {
     }
 
     pub fn cycle(&mut self) {
-        if self.get_thumb_state() {
-            panic!("Thumb mode not implemented");
-        }
+        // Fetch and decode
+        let decoded_instruction = if self.get_thumb_state() {
+            let instruction = self.fetch_thumb();
+            self.r[15] += self.instruction_size_in_bytes();
 
-        let instruction = self.fetch();
-        let cond = Condition::decode_arm(instruction);
+            InstructionLut::decode_thumb(instruction)
+        } else {
+            let instruction = self.fetch_arm();
+            self.r[15] += self.instruction_size_in_bytes();
 
-        self.advance_pc();
+            let cond = Condition::decode_arm(instruction);
+            if !cond.check(self) {
+                return;
+            }
+            InstructionLut::decode_arm(instruction)
+        };
+        self.r[15] += self.instruction_size_in_bytes();
 
-        if !cond.check(self) {
-            return;
-        }
-
-        // Advance pc two instructions because thats where it should be in the execution stage
-        self.advance_pc();
-
-        let decoded_instruction = InstructionLut::decode(instruction);
-
-        let pc_old = self.r[15];
+        // Execute
+        // Pc should be two instructions ahead of currently executed instruction
+        let pc_before = self.r[15];
         decoded_instruction.execute(self);
 
-        // If there was no branch set pc to the next instruction
-        if pc_old == self.r[15] {
-            self.retreat_pc();
-        }
-    }
-
-    pub fn peek_next_instruction(&self) -> u32 {
-        let pc = self.r[15];
-        if self.get_thumb_state() {
-            self.mem.read_u16(pc) as u32
-        } else {
-            self.mem.read_u32(pc)
+        // If there was no branch (i.e. pc didn't change) set pc to the next instruction
+        if pc_before == self.r[15] {
+            self.r[15] -= self.instruction_size_in_bytes();
         }
     }
 
@@ -187,13 +183,12 @@ impl CPU {
         self.r[15] = 0x00000000;
     }
 
-    fn fetch(&mut self) -> u32 {
-        let pc = self.r[15];
-        if self.get_thumb_state() {
-            self.mem.read_u16(pc) as u32
-        } else {
-            self.mem.read_u32(pc)
-        }
+    fn fetch_arm(&self) -> u32 {
+        self.mem.read_u32(self.r[15])
+    }
+
+    fn fetch_thumb(&self) -> u16 {
+        self.mem.read_u16(self.r[15])
     }
 
     fn instruction_size_in_bytes(&self) -> u32 {
@@ -202,13 +197,6 @@ impl CPU {
         } else {
             4
         }
-    }
-
-    fn advance_pc(&mut self) {
-        self.r[15] += self.instruction_size_in_bytes()
-    }
-    fn retreat_pc(&mut self) {
-        self.r[15] -= self.instruction_size_in_bytes()
     }
 
     pub fn next_instruction_address_from_execution_stage(&self) -> u32 {
@@ -294,14 +282,23 @@ impl CPU {
 
     pub fn print_status(&self) {
         println!(
-            "CPSR: 0x{:08X}{} MODE: {}",
+            "CPSR: 0x{:08X}{}, MODE: {}, THUMB: {}",
             self.cpsr,
             if self.current_mode_has_spsr() {
                 format!(" SPSR: 0x{:08X}", self.get_spsr())
             } else {
                 String::new()
             },
-            format_mode(self.get_mode())
+            format_mode(self.get_mode()),
+            self.get_thumb_state(),
         );
+    }
+
+    pub fn print_next_instruction(&self) {
+        if self.get_thumb_state() {
+            println!("Next thumb instruction at 0x{:08X}: {}", self.get_r(15), format_instruction_thumb(self.fetch_thumb()));
+        } else {
+            println!("Next arm instruction at 0x{:08X}: {}", self.get_r(15), format_instruction_arm(self.fetch_arm()));
+        }
     }
 }

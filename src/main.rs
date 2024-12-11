@@ -11,7 +11,7 @@ use std::{
     fs,
     io::{stdin, stdout, Write},
 };
-use system::{cpu::CPU, instructions::format_instruction, memory::Memory};
+use system::{cpu::CPU, memory::Memory};
 
 fn main() {
     let bios = fs::read("gba_bios.bin").expect("Failed to read bios");
@@ -27,10 +27,9 @@ fn main() {
 
     loop {
         // Print current instruction before executing it
-        let instruction = cpu.peek_next_instruction();
         cpu.print_registers();
         cpu.print_status();
-        println!("Next instruction at 0x{:08X}: {}", cpu.get_r(15), format_instruction(instruction));
+        cpu.print_next_instruction();
 
         if !debugger.running || debugger.should_break(&cpu) {
             debugger.running = false;

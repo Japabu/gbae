@@ -10,12 +10,12 @@ mod load_store;
 mod load_store_multiple;
 pub mod lut;
 
-pub fn format_instruction(instruction: u32) -> String {
+pub fn format_instruction_arm(instruction: u32) -> String {
     format!(
         "{} ({:08x})\n\
             Bit Index:   27 26 25 24 23 22 21 20   07 06 05 04\n\
             Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<4} {:<2} {:<2} {:<2} {:<2}",
-        lut::InstructionLut::decode(instruction).disassemble(Condition::decode_arm(instruction)),
+        lut::InstructionLut::decode_arm(instruction).disassemble(Condition::decode_arm(instruction)),
         instruction,
         get_bit(instruction, 27) as u32,
         get_bit(instruction, 26) as u32,
@@ -29,6 +29,24 @@ pub fn format_instruction(instruction: u32) -> String {
         get_bit(instruction, 6) as u32,
         get_bit(instruction, 5) as u32,
         get_bit(instruction, 4) as u32,
+    )
+}
+
+pub fn format_instruction_thumb(instruction: u16) -> String {
+    format!(
+        "{} ({:04x})\n\
+            Bit Index:   15 14 13 12 11 10 09 08\n\
+            Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2}",
+        lut::InstructionLut::decode_thumb(instruction).disassemble(Condition::AL),
+        instruction,
+        get_bit(instruction as u32, 15) as u32,
+        get_bit(instruction as u32, 14) as u32,
+        get_bit(instruction as u32, 13) as u32,
+        get_bit(instruction as u32, 12) as u32,
+        get_bit(instruction as u32, 11) as u32,
+        get_bit(instruction as u32, 10) as u32,
+        get_bit(instruction as u32, 9) as u32,
+        get_bit(instruction as u32, 8) as u32,
     )
 }
 

@@ -1,29 +1,29 @@
 /*
 GBA Memory Map
 General Internal Memory
-  0000_0000-0000_3FFF   BIOS - System ROM         (16 KBytes)
-  0000_4000-01FF_FFFF   Not used
-  0200_0000-0203_FFFF   WRAM - On-board Work RAM  (256 KBytes) 2 Wait
-  0204_0000-02FF_FFFF   Not used
-  0300_0000-0300_7FFF   WRAM - On-chip Work RAM   (32 KBytes)
-  0300_8000-03FF_FFFF   Not used
-  0400_0000-0400_03FE   I/O Registers
-  0400_0400-04FF_FFFF   Not used
+  00_000_000-00_003_FFF   BIOS - System ROM         (16 KBytes)
+  00_004_000-01_FFF_FFF   Not used
+  02_000_000-02_03F_FFF   WRAM - On-board Work RAM  (256 KBytes) 2 Wait
+  02_040_000-02_FFF_FFF   Not used
+  03_000_000-03_007_FFF   WRAM - On-chip Work RAM   (32 KBytes)
+  03_008_000-03_FFF_FFF   Not used
+  04_000_000-04_000_3FE   I/O Registers
+  04_000_400-04_FFF_FFF   Not used
 Internal Display Memory
-  0500_0000-0500_03FF   BG/OBJ Palette RAM        (1 Kbyte)
-  0500_0400-05FF_FFFF   Not used
-  0600_0000-0601_7FFF   VRAM - Video RAM          (96 KBytes)
-  0601_8000-06FF_FFFF   Not used
-  0700_0000-0700_03FF   OAM - OBJ Attributes      (1 Kbyte)
-  0700_0400-07FF_FFFF   Not used
+  05_000_000-05_000_3FF   BG/OBJ Palette RAM        (1 Kbyte)
+  05_000_400-05_FFF_FFF   Not used
+  06_000_000-06_017_FFF   VRAM - Video RAM          (96 KBytes)
+  06_018_000-06_FFF_FFF   Not used
+  07_000_000-07_000_3FF   OAM - OBJ Attributes      (1 Kbyte)
+  07_000_400-07_FFF_FFF   Not used
 External Memory (Game Pak)
-  0800_0000-09FF_FFFF   Game Pak ROM/FlashROM (max 32MB) - Wait State 0
-  0A00_0000-0BFF_FFFF   Game Pak ROM/FlashROM (max 32MB) - Wait State 1
-  0C00_0000-0DFF_FFFF   Game Pak ROM/FlashROM (max 32MB) - Wait State 2
-  0E00_0000-0E00_FFFF   Game Pak SRAM    (max 64 KBytes) - 8bit Bus width
-  0E01_0000-0FFF_FFFF   Not used
+  08_000_000-09_FFF_FFF   Game Pak ROM/FlashROM (max 32MB) - Wait State 0
+  0A_000_000-0B_FFF_FFF   Game Pak ROM/FlashROM (max 32MB) - Wait State 1
+  0C_000_000-0D_FFF_FFF   Game Pak ROM/FlashROM (max 32MB) - Wait State 2
+  0E_000_000-0E_00F_FFF   Game Pak SRAM    (max 64 KBytes) - 8bit Bus width
+  0E_010_000-0F_FFF_FFF   Not used
 Unused Memory Area
-  1000_0000-FFFF_FFFF   Not used (upper 4bits of address bus unused)
+  10_000_000-FF_FFF_FFF   Not used (upper 4bits of address bus unused)
 */
 
 macro_rules! gen_memory {
@@ -58,19 +58,21 @@ macro_rules! gen_memory {
 }
 
 gen_memory! {
-    0x0000_0000..=0x0000_3FFF => (bios, false),
-    0x0200_0000..=0x0203_FFFF => (wram1, true),
-    0x0300_0000..=0x0300_7FFF => (wram2, true),
-    0x0800_0000..=0x09FF_FFFF => (game_pak, false),
+    0x00_000_000..=0x00_003_FFF => (bios, false),
+    0x02_000_000..=0x02_03F_FFF => (wram1, true),
+    0x03_000_000..=0x03_007_FFF => (wram2, true),
+    0x04_000_000..=0x04_000_3FE => (io_registers, true),
+    0x08_000_000..=0x09_FFF_FFF => (game_pak, false),
 }
 
 impl Memory {
     pub fn new(bios: Vec<u8>, game_pak: Vec<u8>) -> Self {
         Self {
             bios,
-            game_pak,
-            wram1: vec![0; 0x4_0000],
+            wram1: vec![0; 0x40_000],
             wram2: vec![0; 0x800],
+            io_registers: vec![0; 0x3FF],
+            game_pak,
         }
     }
 

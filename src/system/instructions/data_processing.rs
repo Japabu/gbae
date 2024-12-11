@@ -107,12 +107,19 @@ impl DecodedInstruction for DataProcessing {
                 cpu.set_overflow_flag(overflow);
                 result
             }
+            RSB => {
+                let (result, borrow, overflow) = bitutil::sub_with_flags(shifter_operand, r_n);
+                carry = !borrow;
+                cpu.set_overflow_flag(overflow);
+                result
+            }
             ADD => {
                 let (result, add_carry, overflow) = bitutil::add_with_flags(r_n, shifter_operand);
                 carry = add_carry;
                 cpu.set_overflow_flag(overflow);
                 result
             }
+            TEQ => r_n ^ shifter_operand,
             CMP => {
                 let (result, borrow, overflow) = bitutil::sub_with_flags(r_n, shifter_operand);
                 carry = !borrow;

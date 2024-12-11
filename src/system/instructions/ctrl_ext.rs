@@ -3,7 +3,7 @@ use std::fmt::Display;
 
 use crate::{
     bitutil::{get_bit, get_bits},
-    system::cpu::CPU,
+    system::cpu::{format_mode, CPU},
 };
 
 use super::{Condition, DecodedInstruction};
@@ -61,6 +61,8 @@ impl DecodedInstruction for Msr {
             }
         }
 
+        println!("Current mode: {}", format_mode(cpu.get_mode()));
+
         if !self.r {
             if cpu.in_a_privileged_mode() {
                 if operand & STATE_MASK != 0 {
@@ -80,6 +82,8 @@ impl DecodedInstruction for Msr {
                 panic!("Tried to set SPSR in user or system mode");
             }
         }
+
+        println!("Current mode: {}", format_mode(cpu.get_mode()));
     }
 }
 

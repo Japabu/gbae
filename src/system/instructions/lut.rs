@@ -44,21 +44,45 @@ impl InstructionLut {
     }
 
     fn setup_patterns(&mut self) {
-        // data processing
-        self.add_pattern("001xxxxx xxxx", data_processing::decode_arm);
+        // data processing immediate shift
         self.add_pattern("000xxxxx xxx0", data_processing::decode_arm);
+        // misc
+        self.add_pattern("00010xx0 xxx0", Self::unknown_instruction_decoder);
+        self.add_pattern("00010x10 0000", ctrl_ext::decode_msr_arm);
+        // data processing register shift
         self.add_pattern("000xxxxx 0xx1", data_processing::decode_arm);
+        // misc
+        self.add_pattern("00010xx0 xxx1", Self::unknown_instruction_decoder);
+        self.add_pattern("00010010 0001", branch::decode_bx_arm);
+        // multiplies, extra load/stores
+        self.add_pattern("000xxxxx 1xx1", Self::unknown_instruction_decoder);
+        // data processing immediate
+        self.add_pattern("001xxxxx xxxx", data_processing::decode_arm);
+        // undefined
+        self.add_pattern("00110x00 1xx1", Self::unknown_instruction_decoder);
+        // move immediate to status register
+        self.add_pattern("00110x10 xxxx", Self::unknown_instruction_decoder);
+        // load/store immediate offset
+        self.add_pattern("010xxxxx xxxx", load_store::decode_arm);
+        // load/store register offset
+        self.add_pattern("011xxxxx xxx0", load_store::decode_arm);
+        // media instructions
+        self.add_pattern("011xxxxx xxx1", load_store::decode_arm);
+        // undefined
+        self.add_pattern("01111111 1111", Self::unknown_instruction_decoder);
+        // load store multiple
+        self.add_pattern("100xxxxx xxxx", load_store_multiple::decode_arm);
         // branch
         self.add_pattern("1010xxxx xxxx", branch::decode_b_arm);
         self.add_pattern("1011xxxx xxxx", branch::decode_bl_arm);
-        // extensions
-        self.add_pattern("00010x10 0000", ctrl_ext::decode_msr_arm);
-        self.add_pattern("00010010 0001", branch::decode_bx_arm);
-        // // load store
-        self.add_pattern("010xxxxx xxxx", load_store::decode_arm);
-        self.add_pattern("011xxxxx xxx0", load_store::decode_arm);
-        // // load store multiple
-        self.add_pattern("100xxxxx xxxx", load_store_multiple::decode_arm);
+        // coprocessor load/store and double register transfers
+        self.add_pattern("110xxxxx xxxx", Self::unknown_instruction_decoder);
+        // coprocessor data processing
+        self.add_pattern("1110xxxx xxx0", Self::unknown_instruction_decoder);
+        // coprocessor register transfers
+        self.add_pattern("1110xxxx xxx1", Self::unknown_instruction_decoder);
+        // software interrupt
+        self.add_pattern("1111xxxx xxxx", Self::unknown_instruction_decoder);
     }
 
     fn add_pattern(&mut self, pattern: &str, decoder: DecoderFn) {

@@ -1,7 +1,8 @@
 /target
-rom.gba
+*.gba
 .vscode
 .aider*
 .env
 *.log
 *.txt
+*.bin

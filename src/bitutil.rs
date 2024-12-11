@@ -11,7 +11,7 @@ pub const fn set_bits(data: u32, i: u8, len: u8, value: u32) -> u32 {
 
 pub const fn get_bit(data: u32, i: u8) -> bool {
     let mask = 1 << i;
-    (data & mask) > 0
+    (data & mask) != 0
 }
 
 pub const fn set_bit(data: u32, i: u8, v: bool) -> u32 {

@@ -147,8 +147,8 @@ impl AddressingMode {
 
         let r_n = cpu.get_r(self.n);
         let r_n_offset = match self.u {
-            false => r_n - offset,
-            true => r_n + offset,
+            false => r_n.wrapping_sub(offset),
+            true => r_n.wrapping_add(offset),
         };
 
         match self.indexing_mode {
@@ -257,15 +257,15 @@ impl Display for ScaledRegister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ScaledRegisterMode::*;
 
-        write!(f, "R{}, ", self.m)?;
+        write!(f, "R{}", self.m)?;
 
         match self.mode {
             Register => Ok(()),
-            LogicalShiftLeft { shift_imm } => write!(f, "LSL #{:#X}", shift_imm),
-            LogicalShiftRight { shift_imm } => write!(f, "LSR #{:#X}", shift_imm),
-            ArithmeticShiftRight { shift_imm } => write!(f, "ASR #{:#X}", shift_imm),
-            RotateRight { shift_imm } => write!(f, "ROR #{:#X}", shift_imm),
-            RotateRightWithExtend => write!(f, "RRX"),
+            LogicalShiftLeft { shift_imm } => write!(f, ", LSL #{:#X}", shift_imm),
+            LogicalShiftRight { shift_imm } => write!(f, ", LSR #{:#X}", shift_imm),
+            ArithmeticShiftRight { shift_imm } => write!(f, ", ASR #{:#X}", shift_imm),
+            RotateRight { shift_imm } => write!(f, ", ROR #{:#X}", shift_imm),
+            RotateRightWithExtend => write!(f, ", RRX"),
         }
     }
 }

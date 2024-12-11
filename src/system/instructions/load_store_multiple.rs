@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    bitutil::{get_bit, get_bits},
+    bitutil::{get_bit, get_bits32},
     system::cpu::{self, CPU},
 };
 
@@ -37,12 +37,12 @@ enum AddressingModeType {
 }
 
 pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
-    let registers = get_bits(instruction, 0, 16) as u16;
-    let n = get_bits(instruction, 16, 4) as u8;
+    let registers = get_bits32(instruction, 0, 16) as u16;
+    let n = get_bits32(instruction, 16, 4) as u8;
     let l = get_bit(instruction, 20);
     let w = get_bit(instruction, 21);
     let s = get_bit(instruction, 22);
-    let pu = get_bits(instruction, 23, 2) as u8;
+    let pu = get_bits32(instruction, 23, 2) as u8;
 
     Box::new(LoadStoreMultiple {
         opcode: match l {

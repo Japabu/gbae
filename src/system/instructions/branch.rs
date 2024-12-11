@@ -1,5 +1,5 @@
 use crate::{
-    bitutil::{get_bit, get_bits, sign_extend},
+    bitutil::{get_bit, get_bits32, sign_extend32},
     system::cpu::CPU,
 };
 
@@ -13,19 +13,19 @@ enum Opcode {
 }
 
 pub fn decode_b_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
-    let signed_immed_24 = get_bits(instruction, 0, 24);
-    let offset = sign_extend(signed_immed_24, 24) << 2;
+    let signed_immed_24 = get_bits32(instruction, 0, 24);
+    let offset = sign_extend32(signed_immed_24, 24) << 2;
     Box::new(Opcode::B { offset })
 }
 
 pub fn decode_bl_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
-    let signed_immed_24 = get_bits(instruction, 0, 24);
-    let offset = sign_extend(signed_immed_24, 24) << 2;
+    let signed_immed_24 = get_bits32(instruction, 0, 24);
+    let offset = sign_extend32(signed_immed_24, 24) << 2;
     Box::new(Opcode::BL { offset })
 }
 
 pub fn decode_bx_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
-    let m = get_bits(instruction, 0, 4) as u8;
+    let m = get_bits32(instruction, 0, 4) as u8;
     Box::new(Opcode::BX { m })
 }
 

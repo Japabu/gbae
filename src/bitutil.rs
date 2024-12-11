@@ -1,10 +1,16 @@
-pub const fn get_bits(data: u32, i: u8, len: u8) -> u32 {
+pub const fn get_bits32(data: u32, i: u8, len: u8) -> u32 {
     let mask = (1u32 << len) - 1;
     let shifted_mask = mask << i;
     (data & shifted_mask) >> i
 }
 
-pub const fn set_bits(data: u32, i: u8, len: u8, value: u32) -> u32 {
+pub const fn get_bits16(data: u16, i: u8, len: u8) -> u16 {
+    let mask = (1u16 << len) - 1;
+    let shifted_mask = mask << i;
+    (data & shifted_mask) >> i
+}
+
+pub const fn set_bits32(data: u32, i: u8, len: u8, value: u32) -> u32 {
     let mask = ((1u32 << len) - 1) << i;
     (data & !mask) | ((value << i) & mask)
 }
@@ -14,7 +20,12 @@ pub const fn get_bit(data: u32, i: u8) -> bool {
     (data & mask) != 0
 }
 
-pub const fn set_bit(data: u32, i: u8, v: bool) -> u32 {
+pub const fn get_bit16(data: u16, i: u8) -> bool {
+    let mask = 1 << i;
+    (data & mask) != 0
+}
+
+pub const fn set_bit32(data: u32, i: u8, v: bool) -> u32 {
     let mask = 1 << i;
     if v {
         data | mask
@@ -23,7 +34,7 @@ pub const fn set_bit(data: u32, i: u8, v: bool) -> u32 {
     }
 }
 
-pub const fn sign_extend(data: u32, data_len: u8) -> u32 {
+pub const fn sign_extend32(data: u32, data_len: u8) -> u32 {
     let shift = 32 - data_len;
     (((data << shift) as i32) >> shift) as u32
 }
@@ -86,17 +97,17 @@ mod tests {
 
     #[test]
     fn test_get_bits() {
-        assert_eq!(get_bits(0b00000000, 0, 8), 0);
-        assert_eq!(get_bits(0b00000011, 0, 8), 3);
-        assert_eq!(get_bits(0b00000011, 0, 1), 1);
-        assert_eq!(get_bits(0b10110000, 6, 2), 2);
+        assert_eq!(get_bits32(0b00000000, 0, 8), 0);
+        assert_eq!(get_bits32(0b00000011, 0, 8), 3);
+        assert_eq!(get_bits32(0b00000011, 0, 1), 1);
+        assert_eq!(get_bits32(0b10110000, 6, 2), 2);
     }
 
     #[test]
     fn test_set_bits() {
-        assert_eq!(set_bits(0b00000000, 0, 8, 0b11111111), 0b11111111);
-        assert_eq!(set_bits(0b11111111, 0, 8, 0b00000000), 0b00000000);
-        assert_eq!(set_bits(0b11111111, 4, 4, 0b0110), 0b01101111);
+        assert_eq!(set_bits32(0b00000000, 0, 8, 0b11111111), 0b11111111);
+        assert_eq!(set_bits32(0b11111111, 0, 8, 0b00000000), 0b00000000);
+        assert_eq!(set_bits32(0b11111111, 4, 4, 0b0110), 0b01101111);
     }
 
     #[test]
@@ -107,36 +118,36 @@ mod tests {
 
     #[test]
     fn test_set_bit() {
-        assert_eq!(set_bit(0b00000000, 0, true), 0b00000001);
-        assert_eq!(set_bit(0b00000001, 0, false), 0b00000000);
-        assert_eq!(set_bit(0b00000001, 1, true), 0b00000011);
-        assert_eq!(set_bit(0b00000011, 1, false), 0b00000001);
+        assert_eq!(set_bit32(0b00000000, 0, true), 0b00000001);
+        assert_eq!(set_bit32(0b00000001, 0, false), 0b00000000);
+        assert_eq!(set_bit32(0b00000001, 1, true), 0b00000011);
+        assert_eq!(set_bit32(0b00000011, 1, false), 0b00000001);
     }
 
     #[test]
     fn test_sign_extend() {
         // Test 12-bit sign extension (positive value)
-        assert_eq!(sign_extend(0x7FF, 12), 0x7FF); // 2047, positive max
-                                                   // Test 12-bit sign extension (negative value)
-        assert_eq!(sign_extend(0x800, 12), 0xFFFFF800); // -2048 in signed terms
+        assert_eq!(sign_extend32(0x7FF, 12), 0x7FF); // 2047, positive max
+                                                     // Test 12-bit sign extension (negative value)
+        assert_eq!(sign_extend32(0x800, 12), 0xFFFFF800); // -2048 in signed terms
 
         // Test 8-bit sign extension (positive value)
-        assert_eq!(sign_extend(0x7F, 8), 0x7F); // 127, positive max
-                                                // Test 8-bit sign extension (negative value)
-        assert_eq!(sign_extend(0x80, 8), 0xFFFFFF80); // -128 in signed terms
+        assert_eq!(sign_extend32(0x7F, 8), 0x7F); // 127, positive max
+                                                  // Test 8-bit sign extension (negative value)
+        assert_eq!(sign_extend32(0x80, 8), 0xFFFFFF80); // -128 in signed terms
 
         // Test 16-bit sign extension (positive value)
-        assert_eq!(sign_extend(0x7FFF, 16), 0x7FFF); // 32767, positive max
-                                                     // Test 16-bit sign extension (negative value)
-        assert_eq!(sign_extend(0x8000, 16), 0xFFFF8000); // -32768 in signed terms
+        assert_eq!(sign_extend32(0x7FFF, 16), 0x7FFF); // 32767, positive max
+                                                       // Test 16-bit sign extension (negative value)
+        assert_eq!(sign_extend32(0x8000, 16), 0xFFFF8000); // -32768 in signed terms
 
         // Edge case: 1-bit sign extension
-        assert_eq!(sign_extend(0x0, 1), 0x0); // 0
-        assert_eq!(sign_extend(0x1, 1), 0xFFFFFFFF); // -1 in signed terms
+        assert_eq!(sign_extend32(0x0, 1), 0x0); // 0
+        assert_eq!(sign_extend32(0x1, 1), 0xFFFFFFFF); // -1 in signed terms
 
         // Edge case: Full 32-bit value
-        assert_eq!(sign_extend(0xFFFFFFFF, 32), 0xFFFFFFFF); // No change
-        assert_eq!(sign_extend(0x7FFFFFFF, 32), 0x7FFFFFFF); // No change
+        assert_eq!(sign_extend32(0xFFFFFFFF, 32), 0xFFFFFFFF); // No change
+        assert_eq!(sign_extend32(0x7FFFFFFF, 32), 0x7FFFFFFF); // No change
     }
 
     #[test]

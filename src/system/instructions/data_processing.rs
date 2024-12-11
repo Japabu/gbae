@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    bitutil::{self, arithmetic_shift_right, get_bit, get_bits, rotate_right_with_extend},
+    bitutil::{self, arithmetic_shift_right, get_bit, get_bits16, get_bits32, rotate_right_with_extend},
     system::cpu::CPU,
 };
 
@@ -11,9 +11,32 @@ pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     Box::new(DataProcessing {
         opcode: Opcode::decode_arm(instruction),
         set_flags: get_bit(instruction, 20),
-        d: get_bits(instruction, 12, 4) as u8,
-        n: get_bits(instruction, 16, 4) as u8,
+        d: get_bits32(instruction, 12, 4) as u8,
+        n: get_bits32(instruction, 16, 4) as u8,
         shifter_operand: ShifterOperand::decode_arm(instruction),
+    })
+}
+
+pub fn decode_thumb_3(instruction: u16) -> Box<dyn DecodedInstruction> {
+    use Opcode::*;
+    Box::new({
+        let d_n = get_bits16(instruction, 8, 3) as u8;
+        DataProcessing {
+            opcode: match get_bits16(instruction, 11, 2) {
+                0b00 => MOV,
+                0b01 => CMP,
+                0b10 => ADD,
+                0b11 => SUB,
+                _ => unreachable!(),
+            },
+            set_flags: true,
+            d: d_n,
+            n: d_n,
+            shifter_operand: ShifterOperand::Immediate {
+                immed_8: get_bits16(instruction, 0, 8) as u8,
+                rotate_imm: 0,
+            },
+        }
     })
 }
 
@@ -133,7 +156,7 @@ impl DecodedInstruction for DataProcessing {
 
 impl Opcode {
     const fn decode_arm(instruction: u32) -> Opcode {
-        match get_bits(instruction, 21, 4) {
+        match get_bits32(instruction, 21, 4) {
             0b0000 => Opcode::AND,
             0b0001 => Opcode::EOR,
             0b0010 => Opcode::SUB,
@@ -183,16 +206,16 @@ impl ShifterOperand {
 
         if is_immediate {
             ShifterOperand::Immediate {
-                immed_8: get_bits(instruction, 0, 8) as u8,
-                rotate_imm: get_bits(instruction, 8, 4) as u8,
+                immed_8: get_bits32(instruction, 0, 8) as u8,
+                rotate_imm: get_bits32(instruction, 8, 4) as u8,
             }
         } else {
-            let m = get_bits(instruction, 0, 4) as u8;
+            let m = get_bits32(instruction, 0, 4) as u8;
             let is_reg_shift = get_bit(instruction, 4);
 
             if is_reg_shift {
-                let s = get_bits(instruction, 8, 4) as u8;
-                let shift_type = get_bits(instruction, 5, 2);
+                let s = get_bits32(instruction, 8, 4) as u8;
+                let shift_type = get_bits32(instruction, 5, 2);
                 match shift_type {
                     0b00 => ShifterOperand::LogicalShiftLeftRegister { m, s },
                     0b01 => ShifterOperand::LogicalShiftRightRegister { m, s },
@@ -201,8 +224,8 @@ impl ShifterOperand {
                     _ => unreachable!(),
                 }
             } else {
-                let shift_imm = get_bits(instruction, 7, 5) as u8;
-                let shift_type = get_bits(instruction, 5, 2);
+                let shift_imm = get_bits32(instruction, 7, 5) as u8;
+                let shift_type = get_bits32(instruction, 5, 2);
                 match shift_type {
                     0b00 if shift_imm == 0 => ShifterOperand::Register { m },
                     0b00 => ShifterOperand::LogicalShiftLeftImmediate { m, shift_imm },

@@ -1,6 +1,6 @@
 pub mod mrs {
     use crate::{
-        bitutil::{get_bit, get_bits},
+        bitutil::{get_bit, get_bits32},
         system::{
             cpu::CPU,
             instructions::{Condition, DecodedInstruction},
@@ -15,7 +15,7 @@ pub mod mrs {
 
     pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
         Box::new(Mrs {
-            d: get_bits(instruction, 12, 4) as u8,
+            d: get_bits32(instruction, 12, 4) as u8,
             r: get_bit(instruction, 22),
         })
     }
@@ -38,7 +38,7 @@ pub mod mrs {
 
 pub mod msr {
     use crate::{
-        bitutil::{get_bit, get_bits},
+        bitutil::{get_bit, get_bits32},
         system::{
             cpu::CPU,
             instructions::{Condition, DecodedInstruction},
@@ -65,15 +65,15 @@ pub mod msr {
     }
 
     pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
-        debug_assert_eq!(get_bits(instruction, 12, 4), 0b1111);
+        debug_assert_eq!(get_bits32(instruction, 12, 4), 0b1111);
 
         let is_immediate = get_bit(instruction, 25);
         Box::new(Msr {
             mode: match is_immediate {
-                false => MsrOperand::Register(get_bits(instruction, 0, 4) as u8),
-                true => MsrOperand::Immediate((get_bits(instruction, 0, 8)).rotate_right(get_bits(instruction, 8, 4))),
+                false => MsrOperand::Register(get_bits32(instruction, 0, 4) as u8),
+                true => MsrOperand::Immediate((get_bits32(instruction, 0, 8)).rotate_right(get_bits32(instruction, 8, 4))),
             },
-            field_mask: get_bits(instruction, 16, 4) as u8,
+            field_mask: get_bits32(instruction, 16, 4) as u8,
             r: get_bit(instruction, 22),
         })
     }

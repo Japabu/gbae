@@ -1,5 +1,5 @@
 use crate::system::instructions::{branch, data_processing, load_store};
-use crate::{bitutil::get_bits, system::cpu::CPU};
+use crate::{bitutil::get_bits32, system::cpu::CPU};
 
 use super::{ctrl_ext, load_store_multiple, Condition, DecodedInstruction};
 
@@ -55,8 +55,8 @@ impl InstructionLut {
 
     fn index_arm(instruction: u32) -> usize {
         // Bits 4-7 and 20-27 can be used to differentiate instructions and then index into the table
-        let upper = get_bits(instruction, 20, 8);
-        let lower = get_bits(instruction, 4, 4);
+        let upper = get_bits32(instruction, 20, 8);
+        let lower = get_bits32(instruction, 4, 4);
         ((upper << 4) | lower) as usize
     }
 
@@ -66,6 +66,7 @@ impl InstructionLut {
 
     fn setup_patterns(&mut self) {
         use DecoderFn::*;
+        // arm
         // data processing immediate shift
         self.add_pattern("000xxxxx xxx0", Arm(data_processing::decode_arm));
         // misc
@@ -106,17 +107,66 @@ impl InstructionLut {
         self.add_pattern("1110xxxx xxx1", Arm(UnknownInstruction::decode_arm));
         // software interrupt
         self.add_pattern("1111xxxx xxxx", Arm(UnknownInstruction::decode_arm));
+
+        // thumb
+        // shift by immediate
+        self.add_pattern("000 xx x xx", Thumb(UnknownInstruction::decode_thumb));
+        // add/subtract register
+        self.add_pattern("000 11 0 xx", Thumb(UnknownInstruction::decode_thumb));
+        // add/subtract immediate
+        self.add_pattern("000 11 1 xx", Thumb(UnknownInstruction::decode_thumb));
+        // add/subtract/compare/move immediate
+        self.add_pattern("001 xxxxx", Thumb(data_processing::decode_thumb_3));
+        // data processing register
+        self.add_pattern("010000 xx", Thumb(UnknownInstruction::decode_thumb));
+        // special data processing
+        self.add_pattern("010001 xx", Thumb(UnknownInstruction::decode_thumb));
+        // branch/exchange
+        self.add_pattern("010001 11", Thumb(UnknownInstruction::decode_thumb));
+        // load from literal pool
+        self.add_pattern("01001x xx", Thumb(load_store::decode_thumb_load_from_literal_pool));
+        // load/store register offset
+        self.add_pattern("0101 xxxx", Thumb(load_store::decode_thumb_load_store_register_offset));
+        // load/store word/byte immediate offset
+        self.add_pattern("011x xxxx", Thumb(UnknownInstruction::decode_thumb));
+        // load/store halfword immediate offset
+        self.add_pattern("1000 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        // load/store to/from stack
+        self.add_pattern("1001 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        // add sp or pc
+        self.add_pattern("1010 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        // misc
+        self.add_pattern("1011 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        // load/store multiple
+        self.add_pattern("1100 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        // conditional branch
+        self.add_pattern("1101 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        // undefined
+        self.add_pattern("1101 1110", Thumb(UnknownInstruction::decode_thumb));
+        // software interrupt
+        self.add_pattern("1101 1111", Thumb(UnknownInstruction::decode_thumb));
+        // unconditional branch
+        self.add_pattern("11100 xxx", Thumb(UnknownInstruction::decode_thumb));
+        // blx suffix
+        self.add_pattern("11101 xxx", Thumb(UnknownInstruction::decode_thumb));
+        // bl/blx prefix
+        self.add_pattern("11110 xxx", Thumb(UnknownInstruction::decode_thumb));
+        // bl suffix
+        self.add_pattern("11111 xxx", Thumb(UnknownInstruction::decode_thumb));
     }
 
     fn add_pattern(&mut self, pattern: &str, decoder: DecoderFn) {
         use DecoderFn::*;
 
         let pattern = pattern.to_string().replace(" ", "");
-
-        match decoder {
-            Arm(_) => assert_eq!(pattern.len(), 12, "Pattern must be 12 bits long"),
-            Thumb(_) => assert_eq!(pattern.len(), 8, "Pattern must be 8 bits long"),
+        let pattern_len = match decoder {
+            Arm(_) => 12,
+            Thumb(_) => 8,
         };
+
+        if pattern.len() != pattern_len {
+            panic!("Pattern must be {} bits long", pattern_len);
+        }
 
         // Determine which bits are fixed and which are wildcards
         let mut base_index = 0usize;
@@ -125,8 +175,8 @@ impl InstructionLut {
         for (i, c) in pattern.chars().enumerate() {
             match c {
                 '0' => {}
-                '1' => base_index |= 1 << (11 - i),
-                'x' => wildcard_positions.push(11 - i),
+                '1' => base_index |= 1 << (pattern_len - 1 - i),
+                'x' => wildcard_positions.push(pattern_len - 1 - i),
                 _ => panic!("Invalid character in pattern: {}", c),
             }
         }

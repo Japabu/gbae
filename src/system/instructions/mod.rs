@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use super::cpu::CPU;
-use crate::bitutil::{get_bit, get_bits};
+use crate::bitutil::{get_bit, get_bits32};
 
 mod branch;
 mod ctrl_ext;
@@ -35,8 +35,8 @@ pub fn format_instruction_arm(instruction: u32) -> String {
 pub fn format_instruction_thumb(instruction: u16) -> String {
     format!(
         "{} ({:04x})\n\
-            Bit Index:   15 14 13 12 11 10 09 08\n\
-            Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2}",
+            Bit Index:   15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00\n\
+            Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2}",
         lut::InstructionLut::decode_thumb(instruction).disassemble(Condition::AL),
         instruction,
         get_bit(instruction as u32, 15) as u32,
@@ -47,6 +47,14 @@ pub fn format_instruction_thumb(instruction: u16) -> String {
         get_bit(instruction as u32, 10) as u32,
         get_bit(instruction as u32, 9) as u32,
         get_bit(instruction as u32, 8) as u32,
+        get_bit(instruction as u32, 7) as u32,
+        get_bit(instruction as u32, 6) as u32,
+        get_bit(instruction as u32, 5) as u32,
+        get_bit(instruction as u32, 4) as u32,
+        get_bit(instruction as u32, 3) as u32,
+        get_bit(instruction as u32, 2) as u32,
+        get_bit(instruction as u32, 1) as u32,
+        get_bit(instruction as u32, 0) as u32,
     )
 }
 
@@ -71,7 +79,7 @@ pub enum Condition {
 
 impl Condition {
     pub const fn decode_arm(instruction: u32) -> Condition {
-        match get_bits(instruction, 28, 4) {
+        match get_bits32(instruction, 28, 4) {
             0b0000 => Condition::EQ,
             0b0001 => Condition::NE,
             0b0010 => Condition::CS,

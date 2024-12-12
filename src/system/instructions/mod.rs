@@ -58,7 +58,7 @@ pub fn format_instruction_thumb(instruction: u16) -> String {
     )
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Condition {
     EQ, // Equal
     NE, // Not Equal
@@ -78,8 +78,8 @@ pub enum Condition {
 }
 
 impl Condition {
-    pub const fn decode_arm(instruction: u32) -> Condition {
-        match get_bits32(instruction, 28, 4) {
+    pub const fn parse(cond: u8) -> Condition {
+        match cond {
             0b0000 => Condition::EQ,
             0b0001 => Condition::NE,
             0b0010 => Condition::CS,
@@ -95,9 +95,12 @@ impl Condition {
             0b1100 => Condition::GT,
             0b1101 => Condition::LE,
             0b1110 => Condition::AL,
-            0b1111 => panic!("Invalid condition"),
-            _ => unreachable!(),
+            _ => panic!("Invalid condition"),
         }
+    }
+
+    pub const fn decode_arm(instruction: u32) -> Condition {
+        Condition::parse(get_bits32(instruction, 28, 4) as u8)
     }
 
     pub fn check(&self, cpu: &CPU) -> bool {

@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::{
     bitutil::{self, arithmetic_shift_right, get_bit, get_bit16, get_bits16, get_bits32, rotate_right_with_extend},
-    system::cpu::CPU,
+    system::cpu::{CPU, REGISTER_SP},
 };
 
 use super::{Condition, DecodedInstruction};
@@ -36,7 +36,7 @@ pub fn decode_add_sub_immediate_thumb(instruction: u16) -> Box<dyn DecodedInstru
         d: get_bits16(instruction, 0, 3) as u8,
         n: get_bits16(instruction, 3, 3) as u8,
         shifter_operand: ShifterOperand::Immediate {
-            immed_8: get_bits16(instruction, 6, 3) as u8,
+            immed: get_bits16(instruction, 6, 3),
             rotate_imm: 0,
         },
     })
@@ -58,10 +58,23 @@ pub fn decode_add_sub_compare_move_immediate_thumb(instruction: u16) -> Box<dyn 
             d: d_n,
             n: d_n,
             shifter_operand: ShifterOperand::Immediate {
-                immed_8: get_bits16(instruction, 0, 8) as u8,
+                immed: get_bits16(instruction, 0, 8),
                 rotate_imm: 0,
             },
         }
+    })
+}
+
+pub fn decode_adjust_sp_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+    Box::new(DataProcessing {
+        opcode: if get_bit16(instruction, 7) { Opcode::SUB } else { Opcode::ADD },
+        set_flags: false,
+        d: REGISTER_SP,
+        n: REGISTER_SP,
+        shifter_operand: ShifterOperand::Immediate {
+            immed: get_bits16(instruction, 0, 7) << 2,
+            rotate_imm: 0,
+        },
     })
 }
 
@@ -96,7 +109,7 @@ enum Opcode {
 
 #[derive(Debug)]
 enum ShifterOperand {
-    Immediate { immed_8: u8, rotate_imm: u8 },
+    Immediate { immed: u16, rotate_imm: u8 },
     Register { m: u8 },
     LogicalShiftLeftImmediate { m: u8, shift_imm: u8 },
     LogicalShiftLeftRegister { m: u8, s: u8 },
@@ -206,7 +219,7 @@ impl Opcode {
 impl Display for ShifterOperand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
-            ShifterOperand::Immediate { immed_8, rotate_imm } => write!(f, "#{:#X}", ShifterOperand::calc_immediate(immed_8, rotate_imm)),
+            ShifterOperand::Immediate { immed, rotate_imm } => write!(f, "#{:#X}", ShifterOperand::calc_immediate(immed, rotate_imm)),
             ShifterOperand::Register { m } => write!(f, "R{}", m),
             ShifterOperand::LogicalShiftLeftImmediate { m, shift_imm } => write!(f, "R{}, LSL #{:#X}", m, shift_imm),
             ShifterOperand::LogicalShiftLeftRegister { m, s } => write!(f, "R{}, LSL R{}", m, s),
@@ -222,8 +235,8 @@ impl Display for ShifterOperand {
 }
 
 impl ShifterOperand {
-    const fn calc_immediate(immed_8: u8, rotate_imm: u8) -> u32 {
-        (immed_8 as u32).rotate_right(2 * rotate_imm as u32)
+    const fn calc_immediate(immed: u16, rotate_imm: u8) -> u32 {
+        (immed as u32).rotate_right(rotate_imm as u32 * 2)
     }
 
     const fn decode_arm(instruction: u32) -> ShifterOperand {
@@ -231,7 +244,7 @@ impl ShifterOperand {
 
         if is_immediate {
             ShifterOperand::Immediate {
-                immed_8: get_bits32(instruction, 0, 8) as u8,
+                immed: get_bits32(instruction, 0, 8) as u16,
                 rotate_imm: get_bits32(instruction, 8, 4) as u8,
             }
         } else {
@@ -266,8 +279,8 @@ impl ShifterOperand {
 
     fn eval(&self, cpu: &CPU) -> (u32, bool) {
         match *self {
-            ShifterOperand::Immediate { immed_8, rotate_imm } => {
-                let shifter_operand = ShifterOperand::calc_immediate(immed_8, rotate_imm);
+            ShifterOperand::Immediate { immed, rotate_imm } => {
+                let shifter_operand = ShifterOperand::calc_immediate(immed, rotate_imm);
                 let carry = if rotate_imm == 0 { cpu.get_carry_flag() } else { get_bit(shifter_operand, 31) };
                 (shifter_operand, carry)
             }

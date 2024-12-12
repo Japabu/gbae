@@ -1,6 +1,6 @@
 use crate::{
     bitutil::{get_bit, get_bits32, set_bit32, set_bits32},
-    system::instructions::{self, format_instruction_arm, format_instruction_thumb},
+    system::instructions::{format_instruction_arm, format_instruction_thumb},
 };
 
 use super::{
@@ -15,6 +15,13 @@ pub const MODE_SVC: u8 = 0b10011;
 pub const MODE_ABT: u8 = 0b10111;
 pub const MODE_UND: u8 = 0b11011;
 pub const MODE_SYS: u8 = 0b11111;
+
+pub const REGISTER_SP: u8 = 13;
+pub const REGISTER_LR: u8 = 14;
+pub const REGISTER_PC: u8 = 15;
+
+pub const INSTRUCTION_LEN_ARM: u32 = 4;
+pub const INSTRUCTION_LEN_THUMB: u32 = 2;
 
 pub fn format_mode(mode: u8) -> &'static str {
     match mode {
@@ -149,12 +156,12 @@ impl CPU {
         // Fetch and decode
         let decoded_instruction = if self.get_thumb_state() {
             let instruction = self.fetch_thumb();
-            self.r[15] += self.instruction_size_in_bytes();
+            self.r[REGISTER_PC as usize] += self.instruction_size_in_bytes();
 
             InstructionLut::decode_thumb(instruction)
         } else {
             let instruction = self.fetch_arm();
-            self.r[15] += self.instruction_size_in_bytes();
+            self.r[REGISTER_PC as usize] += self.instruction_size_in_bytes();
 
             let cond = Condition::decode_arm(instruction);
             if !cond.check(self) {
@@ -162,16 +169,16 @@ impl CPU {
             }
             InstructionLut::decode_arm(instruction)
         };
-        self.r[15] += self.instruction_size_in_bytes();
+        self.r[REGISTER_PC as usize] += self.instruction_size_in_bytes();
 
         // Execute
         // Pc should be two instructions ahead of currently executed instruction
-        let pc_before = self.r[15];
+        let pc_before = self.r[REGISTER_PC as usize];
         decoded_instruction.execute(self);
 
         // If there was no branch (i.e. pc didn't change) set pc to the next instruction
-        if pc_before == self.r[15] {
-            self.r[15] -= self.instruction_size_in_bytes();
+        if pc_before == self.r[REGISTER_PC as usize] {
+            self.r[REGISTER_PC as usize] -= self.instruction_size_in_bytes();
         }
     }
 
@@ -180,27 +187,27 @@ impl CPU {
         self.set_thumb_state(false);
         self.set_fiq_disable(true);
         self.set_irq_disable(true);
-        self.r[15] = 0x00000000;
+        self.r[REGISTER_PC as usize] = 0x00000000;
     }
 
     fn fetch_arm(&self) -> u32 {
-        self.mem.read_u32(self.r[15])
+        self.mem.read_u32(self.r[REGISTER_PC as usize])
     }
 
     fn fetch_thumb(&self) -> u16 {
-        self.mem.read_u16(self.r[15])
+        self.mem.read_u16(self.r[REGISTER_PC as usize])
     }
 
     fn instruction_size_in_bytes(&self) -> u32 {
         if self.get_thumb_state() {
-            2
+            INSTRUCTION_LEN_THUMB
         } else {
-            4
+            INSTRUCTION_LEN_ARM
         }
     }
 
     pub fn next_instruction_address_from_execution_stage(&self) -> u32 {
-        self.r[15] - self.instruction_size_in_bytes()
+        self.r[REGISTER_PC as usize] - self.instruction_size_in_bytes()
     }
 
     pub fn get_negative_flag(&self) -> bool {
@@ -296,9 +303,9 @@ impl CPU {
 
     pub fn print_next_instruction(&self) {
         if self.get_thumb_state() {
-            println!("Next thumb instruction at 0x{:08X}: {}", self.get_r(15), format_instruction_thumb(self.fetch_thumb()));
+            println!("Next thumb instruction at 0x{:08X}: {}", self.r[REGISTER_PC as usize], format_instruction_thumb(self.fetch_thumb()));
         } else {
-            println!("Next arm instruction at 0x{:08X}: {}", self.get_r(15), format_instruction_arm(self.fetch_arm()));
+            println!("Next arm instruction at 0x{:08X}: {}", self.r[REGISTER_PC as usize], format_instruction_arm(self.fetch_arm()));
         }
     }
 }

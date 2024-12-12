@@ -1,8 +1,8 @@
 use std::fmt::Display;
 
 use crate::{
-    bitutil::{get_bit, get_bits32},
-    system::cpu::{self, CPU},
+    bitutil::{get_bit, get_bit16, get_bits16, get_bits32},
+    system::cpu::{self, CPU, REGISTER_LR, REGISTER_PC, REGISTER_SP},
 };
 
 use super::{Condition, DecodedInstruction};
@@ -62,6 +62,36 @@ pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
             },
         },
         s,
+    })
+}
+
+pub fn decode_push_thumb(instruction: u16) -> Box<dyn super::DecodedInstruction> {
+    let is_lr = get_bits16(instruction, 8, 1);
+    let registers = get_bits16(instruction, 0, 8) | is_lr << REGISTER_LR;
+    Box::new(LoadStoreMultiple {
+        opcode: Opcode::STM,
+        addressing_mode: AddressingMode {
+            n: REGISTER_SP,
+            w: true,
+            registers,
+            typ: AddressingModeType::DecrementBefore,
+        },
+        s: false,
+    })
+}
+
+pub fn decode_pop_thumb(instruction: u16) -> Box<dyn super::DecodedInstruction> {
+    let is_pc = get_bits16(instruction, 8, 1);
+    let registers = get_bits16(instruction, 0, 8) | is_pc << REGISTER_PC;
+    Box::new(LoadStoreMultiple {
+        opcode: Opcode::LDM,
+        addressing_mode: AddressingMode {
+            n: REGISTER_SP,
+            w: true,
+            registers,
+            typ: AddressingModeType::IncrementAfter,
+        },
+        s: false,
     })
 }
 

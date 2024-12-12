@@ -122,7 +122,7 @@ impl InstructionLut {
         // special data processing
         self.add_pattern("010001 xx", Thumb(UnknownInstruction::decode_thumb));
         // branch/exchange
-        self.add_pattern("010001 11", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("010001 11", Thumb(branch::decode_branch_exchange_thumb));
         // load from literal pool
         self.add_pattern("01001x xx", Thumb(load_store::decode_load_from_literal_pool_thumb));
         // load/store register offset
@@ -137,10 +137,13 @@ impl InstructionLut {
         self.add_pattern("1010 xxxx", Thumb(UnknownInstruction::decode_thumb));
         // misc
         self.add_pattern("1011 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("1011 0000", Thumb(data_processing::decode_adjust_sp_thumb));
+        self.add_pattern("1011 010x", Thumb(load_store_multiple::decode_push_thumb));
+        self.add_pattern("1011 110x", Thumb(load_store_multiple::decode_pop_thumb));
         // load/store multiple
         self.add_pattern("1100 xxxx", Thumb(UnknownInstruction::decode_thumb));
         // conditional branch
-        self.add_pattern("1101 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("1101 xxxx", Thumb(branch::decode_conditional_branch_thumb));
         // undefined
         self.add_pattern("1101 1110", Thumb(UnknownInstruction::decode_thumb));
         // software interrupt

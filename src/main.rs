@@ -27,8 +27,8 @@ fn main() {
 
     loop {
         // Print current instruction before executing it
-        cpu.print_registers();
-        cpu.print_status();
+        //cpu.print_registers();
+        //cpu.print_status();
         cpu.print_next_instruction();
 
         if !debugger.running || debugger.should_break(&cpu) {

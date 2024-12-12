@@ -132,7 +132,7 @@ impl InstructionLut {
         // load/store halfword immediate offset
         self.add_pattern("1000 xxxx", Thumb(UnknownInstruction::decode_thumb));
         // load/store to/from stack
-        self.add_pattern("1001 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("1001 xxxx", Thumb(load_store::decode_load_store_stack_thumb));
         // add sp or pc
         self.add_pattern("1010 xxxx", Thumb(UnknownInstruction::decode_thumb));
         // misc

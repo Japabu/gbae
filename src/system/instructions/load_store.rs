@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::{
     bitutil::{arithmetic_shift_right, get_bit, get_bit16, get_bits16, get_bits32, rotate_right_with_extend, sign_extend32},
-    system::cpu::CPU,
+    system::cpu::{CPU, REGISTER_SP},
 };
 
 use super::{Condition, DecodedInstruction};
@@ -10,7 +10,6 @@ use super::{Condition, DecodedInstruction};
 pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     let d = get_bits32(instruction, 12, 4) as u8;
     let b = get_bit(instruction, 22);
-
     Box::new(LoadStore {
         opcode: if get_bit(instruction, 20) { Opcode::LDR } else { Opcode::STR },
         length: if b { Length::Byte } else { Length::Word },
@@ -22,11 +21,9 @@ pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
 
 pub fn decode_extra_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     let d = get_bits32(instruction, 12, 4) as u8;
-
     let l = get_bit(instruction, 20);
     let s = get_bit(instruction, 6);
     let h = get_bit(instruction, 5);
-
     let (opcode, sign_extend, length) = match (l, s, h) {
         (false, false, true) => (Opcode::STR, false, Length::Halfword),
         (false, true, false) => (Opcode::LDR, false, Length::Doubleword),
@@ -36,13 +33,28 @@ pub fn decode_extra_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
         (true, true, true) => (Opcode::LDR, true, Length::Halfword),
         _ => panic!("Invalid extra arm instruction: {:#08X}", instruction),
     };
-
     Box::new(LoadStore {
         opcode,
         length,
         sign_extend,
         d,
         adressing_mode: AddressingMode::decode_extra_arm(instruction),
+    })
+}
+
+pub fn decode_load_store_stack_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+    let is_load = get_bit16(instruction, 11);
+    Box::new(LoadStore {
+        opcode: if is_load { Opcode::LDR } else { Opcode::STR },
+        length: Length::Word,
+        sign_extend: false,
+        d: get_bits16(instruction, 8, 3) as u8,
+        adressing_mode: AddressingMode {
+            u_is_add: true,
+            n: REGISTER_SP,
+            mode: AddressingModeType::Immediate(get_bits16(instruction, 0, 3) as u16 * 4),
+            indexing_mode: IndexingMode::Offset,
+        },
     })
 }
 
@@ -53,7 +65,7 @@ pub fn decode_load_from_literal_pool_thumb(instruction: u16) -> Box<dyn DecodedI
         sign_extend: false,
         d: get_bits16(instruction, 8, 3) as u8,
         adressing_mode: AddressingMode {
-            u: true,
+            u_is_add: true,
             n: 15,
             mode: AddressingModeType::Immediate(get_bits16(instruction, 0, 8) as u16 * 4),
             indexing_mode: IndexingMode::Offset,
@@ -70,7 +82,7 @@ pub fn decode_load_store_register_offset_thumb(instruction: u16) -> Box<dyn Deco
         sign_extend: false,
         d: get_bits16(instruction, 0, 3) as u8,
         adressing_mode: AddressingMode {
-            u: true,
+            u_is_add: true,
             n: get_bits16(instruction, 3, 3) as u8,
             mode: AddressingModeType::Register {
                 m: get_bits16(instruction, 6, 3) as u8,
@@ -105,7 +117,7 @@ enum Length {
 
 #[derive(Debug)]
 struct AddressingMode {
-    u: bool,
+    u_is_add: bool,
     n: u8,
     mode: AddressingModeType,
     indexing_mode: IndexingMode,
@@ -191,7 +203,7 @@ impl AddressingMode {
         let n = get_bits32(instruction, 16, 4) as u8;
 
         AddressingMode {
-            u,
+            u_is_add: u,
             n,
             mode: {
                 use AddressingModeType::*;
@@ -231,7 +243,7 @@ impl AddressingMode {
         let n = get_bits32(instruction, 16, 4) as u8;
 
         AddressingMode {
-            u,
+            u_is_add: u,
             n,
             mode: {
                 let is_immediate = get_bit(instruction, 22);
@@ -284,10 +296,7 @@ impl AddressingMode {
 
         // If n == 15, we need to mask the bottom two bits of the PC for Thumb mode
         let r_n = if self.n == 15 { cpu.get_r(self.n) & !0b11u32 } else { cpu.get_r(self.n) };
-        let r_n_offset = match self.u {
-            false => r_n.wrapping_sub(offset),
-            true => r_n.wrapping_add(offset),
-        };
+        let r_n_offset = if self.u_is_add { r_n.wrapping_add(offset) } else { r_n.wrapping_sub(offset) };
 
         match self.indexing_mode {
             IndexingMode::Offset => r_n_offset,
@@ -307,7 +316,7 @@ impl Display for AddressingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use AddressingModeType::*;
         let rhs = match self.mode {
-            Immediate(imm) => format!("#{}{:#X}", if self.u { "+" } else { "-" }, imm),
+            Immediate(imm) => format!("#{}{:#X}", if self.u_is_add { "+" } else { "-" }, imm),
             Register { m } => format!("R{}", m),
             LogicalShiftLeft { m, shift_imm } => format!("R{}, LSL #{:#X}", m, shift_imm),
             LogicalShiftRight { m, shift_imm } => format!("R{}, LSR #{:#X}", m, shift_imm),

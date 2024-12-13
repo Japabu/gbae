@@ -42,7 +42,23 @@ pub fn decode_extra_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     })
 }
 
-pub fn decode_load_store_stack_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_halfword_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+    let is_load = get_bit16(instruction, 11);
+    Box::new(LoadStore {
+        opcode: if is_load { Opcode::LDR } else { Opcode::STR },
+        length: Length::Halfword,
+        sign_extend: false,
+        d: get_bits16(instruction, 0, 3) as u8,
+        adressing_mode: AddressingMode {
+            u_is_add: true,
+            n: get_bits16(instruction, 3, 3) as u8,
+            mode: AddressingModeType::Immediate(get_bits16(instruction, 6, 5) as u16 * 2),
+            indexing_mode: IndexingMode::Offset,
+        },
+    })
+}
+
+pub fn decode_stack_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     let is_load = get_bit16(instruction, 11);
     Box::new(LoadStore {
         opcode: if is_load { Opcode::LDR } else { Opcode::STR },
@@ -73,7 +89,7 @@ pub fn decode_load_from_literal_pool_thumb(instruction: u16, _next_instruction: 
     })
 }
 
-pub fn decode_load_store_register_offset_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_register_offset_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     let is_load = get_bit16(instruction, 11);
 
     Box::new(LoadStore {
@@ -348,5 +364,11 @@ mod tests {
     fn test_ldrsd() {
         let instruction = decode_extra_arm(0xe17670f1);
         assert_eq!(format!("{}", instruction.disassemble(Condition::EQ)), "LDREQSH R7, [R6, #-0x1]!");
+    }
+
+    #[test]
+    fn test_strh_thumb() {
+        let instruction = decode_halfword_thumb(0x8021, 0);
+        assert_eq!(format!("{}", instruction.disassemble(Condition::AL)), "STRH R1, [R4, #+0x0]");
     }
 }

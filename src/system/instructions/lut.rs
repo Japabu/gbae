@@ -127,13 +127,13 @@ impl InstructionLut {
         // load from literal pool
         self.add_pattern("01001x xx", Thumb(load_store::decode_load_from_literal_pool_thumb));
         // load/store register offset
-        self.add_pattern("0101 xxxx", Thumb(load_store::decode_load_store_register_offset_thumb));
+        self.add_pattern("0101 xxxx", Thumb(load_store::decode_register_offset_thumb));
         // load/store word/byte immediate offset
         self.add_pattern("011x xxxx", Thumb(UnknownInstruction::decode_thumb));
         // load/store halfword immediate offset
-        self.add_pattern("1000 xxxx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("1000 xxxx", Thumb(load_store::decode_halfword_thumb));
         // load/store to/from stack
-        self.add_pattern("1001 xxxx", Thumb(load_store::decode_load_store_stack_thumb));
+        self.add_pattern("1001 xxxx", Thumb(load_store::decode_stack_thumb));
         // add sp or pc
         self.add_pattern("1010 xxxx", Thumb(UnknownInstruction::decode_thumb));
         // misc

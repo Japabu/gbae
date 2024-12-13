@@ -111,7 +111,7 @@ impl InstructionLut {
 
         // thumb
         // shift by immediate
-        self.add_pattern("000 xx x xx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("000 xx x xx", Thumb(data_processing::decode_shift_imm_thumb));
         // add/subtract register
         self.add_pattern("000 11 0 xx", Thumb(data_processing::decode_add_sub_register_thumb));
         // add/subtract immediate

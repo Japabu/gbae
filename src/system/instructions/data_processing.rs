@@ -17,6 +17,23 @@ pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     })
 }
 
+pub fn decode_shift_imm_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+    let m = get_bits16(instruction, 3, 3) as u8;
+    let shift_imm = get_bits16(instruction, 6, 5) as u8;
+    Box::new(DataProcessing {
+        opcode: Opcode::MOV,
+        set_flags: true,
+        d: get_bits16(instruction, 0, 3) as u8,
+        n: 0, // Unused for mov
+        shifter_operand: match get_bits16(instruction, 11, 2) {
+            0b00 => ShifterOperand::LogicalShiftLeftImmediate { m, shift_imm },
+            0b01 => ShifterOperand::LogicalShiftRightImmediate { m, shift_imm },
+            0b10 => ShifterOperand::ArithmeticShiftRightImmediate { m, shift_imm },
+            _ => panic!("decode_shift_imm_thumb: Unknown shift type"),
+        },
+    })
+}
+
 pub fn decode_register_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     let d = get_bits16(instruction, 0, 3) as u8;
     let s = get_bits16(instruction, 3, 3) as u8;

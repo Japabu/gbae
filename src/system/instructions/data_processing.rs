@@ -17,7 +17,23 @@ pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     })
 }
 
-pub fn decode_add_sub_register_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_register_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+    let d = get_bits16(instruction, 0, 3) as u8;
+    let s = get_bits16(instruction, 3, 3) as u8;
+    let (opcode, shifter_operand) = match get_bits16(instruction, 6, 4) {
+        0b1111 => (Opcode::MVN, ShifterOperand::Register { m: s }),
+        x => todo!("Thumb opcode {:#04b}", x),
+    };
+    Box::new(DataProcessing {
+        opcode,
+        set_flags: true,
+        d: get_bits16(instruction, 0, 3) as u8,
+        n: d,
+        shifter_operand,
+    })
+}
+
+pub fn decode_add_sub_register_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     Box::new(DataProcessing {
         opcode: if get_bit16(instruction, 9) { Opcode::SUB } else { Opcode::ADD },
         set_flags: true,
@@ -29,7 +45,7 @@ pub fn decode_add_sub_register_thumb(instruction: u16) -> Box<dyn DecodedInstruc
     })
 }
 
-pub fn decode_add_sub_immediate_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_add_sub_immediate_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     Box::new(DataProcessing {
         opcode: if get_bit16(instruction, 9) { Opcode::SUB } else { Opcode::ADD },
         set_flags: true,
@@ -42,7 +58,7 @@ pub fn decode_add_sub_immediate_thumb(instruction: u16) -> Box<dyn DecodedInstru
     })
 }
 
-pub fn decode_add_sub_compare_move_immediate_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_mov_cmp_add_sub_immediate_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     use Opcode::*;
     Box::new({
         let d_n = get_bits16(instruction, 8, 3) as u8;
@@ -65,7 +81,7 @@ pub fn decode_add_sub_compare_move_immediate_thumb(instruction: u16) -> Box<dyn 
     })
 }
 
-pub fn decode_adjust_sp_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_adjust_sp_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     Box::new(DataProcessing {
         opcode: if get_bit16(instruction, 7) { Opcode::SUB } else { Opcode::ADD },
         set_flags: false,

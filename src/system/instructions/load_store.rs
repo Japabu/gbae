@@ -42,7 +42,7 @@ pub fn decode_extra_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
     })
 }
 
-pub fn decode_load_store_stack_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_load_store_stack_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     let is_load = get_bit16(instruction, 11);
     Box::new(LoadStore {
         opcode: if is_load { Opcode::LDR } else { Opcode::STR },
@@ -58,7 +58,7 @@ pub fn decode_load_store_stack_thumb(instruction: u16) -> Box<dyn DecodedInstruc
     })
 }
 
-pub fn decode_load_from_literal_pool_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_load_from_literal_pool_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     Box::new(LoadStore {
         opcode: Opcode::LDR,
         length: Length::Word,
@@ -73,7 +73,7 @@ pub fn decode_load_from_literal_pool_thumb(instruction: u16) -> Box<dyn DecodedI
     })
 }
 
-pub fn decode_load_store_register_offset_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+pub fn decode_load_store_register_offset_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     let is_load = get_bit16(instruction, 11);
 
     Box::new(LoadStore {

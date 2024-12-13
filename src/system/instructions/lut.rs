@@ -9,7 +9,7 @@ const LUT_THUMB_SIZE: usize = 1 << 8;
 static mut INSTRUCTION_LUT: Option<InstructionLut> = None;
 
 type DecoderArmFn = fn(u32) -> Box<dyn DecodedInstruction>;
-type DecoderThumbFn = fn(u16) -> Box<dyn DecodedInstruction>;
+type DecoderThumbFn = fn(u16, u16) -> Box<dyn DecodedInstruction>;
 
 enum DecoderFn {
     Arm(DecoderArmFn),
@@ -43,10 +43,10 @@ impl InstructionLut {
         }
     }
 
-    pub fn decode_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
+    pub fn decode_thumb(instruction: u16, next_instruction: u16) -> Box<dyn DecodedInstruction> {
         unsafe {
             if let Some(ref lut) = INSTRUCTION_LUT {
-                (lut.decoders_thumb[Self::index_thumb(instruction)])(instruction)
+                (lut.decoders_thumb[Self::index_thumb(instruction)])(instruction, next_instruction)
             } else {
                 panic!("Instruction LUT not initialized!");
             }
@@ -78,6 +78,7 @@ impl InstructionLut {
         // misc
         self.add_pattern("00010xx0 xxx1", Arm(UnknownInstruction::decode_arm));
         self.add_pattern("00010010 0001", Arm(branch::decode_bx_arm));
+        self.add_pattern("00010010 0011", Arm(branch::decode_blx_arm));
         // multiplies, extra load/stores
         self.add_pattern("000xxxxx 1xx1", Arm(load_store::decode_extra_arm));
         // data processing immediate
@@ -116,9 +117,9 @@ impl InstructionLut {
         // add/subtract immediate
         self.add_pattern("000 11 1 xx", Thumb(data_processing::decode_add_sub_immediate_thumb));
         // add/subtract/compare/move immediate
-        self.add_pattern("001 xxxxx", Thumb(data_processing::decode_add_sub_compare_move_immediate_thumb));
+        self.add_pattern("001 xxxxx", Thumb(data_processing::decode_mov_cmp_add_sub_immediate_thumb));
         // data processing register
-        self.add_pattern("010000 xx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("010000 xx", Thumb(data_processing::decode_register_thumb));
         // special data processing
         self.add_pattern("010001 xx", Thumb(UnknownInstruction::decode_thumb));
         // branch/exchange
@@ -153,7 +154,7 @@ impl InstructionLut {
         // blx suffix
         self.add_pattern("11101 xxx", Thumb(UnknownInstruction::decode_thumb));
         // bl/blx prefix
-        self.add_pattern("11110 xxx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("11110 xxx", Thumb(branch::decode_bl_blx_prefix_thumb));
         // bl suffix
         self.add_pattern("11111 xxx", Thumb(UnknownInstruction::decode_thumb));
     }
@@ -209,28 +210,28 @@ impl InstructionLut {
 #[derive(Debug)]
 enum UnknownInstruction {
     Arm(u32),
-    Thumb(u16),
+    Thumb(u16, u16),
 }
 impl UnknownInstruction {
     fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
         Box::new(UnknownInstruction::Arm(instruction))
     }
-    fn decode_thumb(instruction: u16) -> Box<dyn DecodedInstruction> {
-        Box::new(UnknownInstruction::Thumb(instruction))
+    fn decode_thumb(instruction: u16, next_instruction: u16) -> Box<dyn DecodedInstruction> {
+        Box::new(UnknownInstruction::Thumb(instruction, next_instruction))
     }
 }
 impl DecodedInstruction for UnknownInstruction {
     fn execute(&self, _cpu: &mut CPU) {
         match self {
             UnknownInstruction::Arm(instruction) => panic!("Tried to execute unknown arm instruction: {:#08X}", instruction),
-            UnknownInstruction::Thumb(instruction) => panic!("Tried to execute unknown thumb instruction: {:#04X}", instruction),
+            UnknownInstruction::Thumb(instruction, next_instruction) => panic!("Tried to execute unknown thumb instruction: {:#04X}, next: {:#04X}", instruction, next_instruction),
         }
     }
 
     fn disassemble(&self, _cond: Condition) -> String {
         match self {
             UnknownInstruction::Arm(instruction) => format!("???: {:#08X}", instruction),
-            UnknownInstruction::Thumb(instruction) => format!("???: {:#04X}", instruction),
+            UnknownInstruction::Thumb(instruction, _) => format!("???: {:#04X}", instruction),
         }
     }
 }

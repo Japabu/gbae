@@ -65,7 +65,7 @@ pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
     })
 }
 
-pub fn decode_push_thumb(instruction: u16) -> Box<dyn super::DecodedInstruction> {
+pub fn decode_push_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn super::DecodedInstruction> {
     let is_lr = get_bits16(instruction, 8, 1);
     let registers = get_bits16(instruction, 0, 8) | is_lr << REGISTER_LR;
     Box::new(LoadStoreMultiple {
@@ -80,7 +80,7 @@ pub fn decode_push_thumb(instruction: u16) -> Box<dyn super::DecodedInstruction>
     })
 }
 
-pub fn decode_pop_thumb(instruction: u16) -> Box<dyn super::DecodedInstruction> {
+pub fn decode_pop_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn super::DecodedInstruction> {
     let is_pc = get_bits16(instruction, 8, 1);
     let registers = get_bits16(instruction, 0, 8) | is_pc << REGISTER_PC;
     Box::new(LoadStoreMultiple {

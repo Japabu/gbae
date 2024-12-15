@@ -8,11 +8,30 @@ use crate::{
 use super::{Condition, DecodedInstruction};
 
 pub fn decode_arm(instruction: u32) -> Box<dyn DecodedInstruction> {
+    let d = get_bits32(instruction, 12, 4) as u8;
+    let n = get_bits32(instruction, 16, 4) as u8;
     Box::new(DataProcessing {
-        opcode: Opcode::decode_arm(instruction),
+        opcode: match get_bits32(instruction, 21, 4) {
+            0b0000 => Opcode::AND { d, n },
+            0b0001 => Opcode::EOR { d, n },
+            0b0010 => Opcode::SUB { d, n },
+            0b0011 => Opcode::RSB { d, n },
+            0b0100 => Opcode::ADD { d, n },
+            0b0101 => Opcode::ADC { d, n },
+            0b0110 => Opcode::SBC { d, n },
+            0b0111 => Opcode::RSC { d, n },
+            0b1000 => Opcode::TST { n },
+            0b1001 => Opcode::TEQ { n },
+            0b1010 => Opcode::CMP { n },
+            0b1011 => Opcode::CMN { n },
+            0b1100 => Opcode::ORR { d, n },
+            0b1101 => Opcode::MOV { d },
+            0b1110 => Opcode::BIC { d, n },
+            0b1111 => Opcode::MVN { d },
+            _ => unreachable!(),
+        },
         set_flags: get_bit(instruction, 20),
-        d: get_bits32(instruction, 12, 4) as u8,
-        n: get_bits32(instruction, 16, 4) as u8,
+
         shifter_operand: ShifterOperand::decode_arm(instruction),
     })
 }
@@ -21,10 +40,10 @@ pub fn decode_shift_imm_thumb(instruction: u16, _next_instruction: u16) -> Box<d
     let m = get_bits16(instruction, 3, 3) as u8;
     let shift_imm = get_bits16(instruction, 6, 5) as u8;
     Box::new(DataProcessing {
-        opcode: Opcode::MOV,
+        opcode: Opcode::MOV {
+            d: get_bits16(instruction, 0, 3) as u8,
+        },
         set_flags: true,
-        d: get_bits16(instruction, 0, 3) as u8,
-        n: 0, // Unused for mov
         shifter_operand: match get_bits16(instruction, 11, 2) {
             0b00 => ShifterOperand::LogicalShiftLeftImmediate { m, shift_imm },
             0b01 => ShifterOperand::LogicalShiftRightImmediate { m, shift_imm },
@@ -36,26 +55,25 @@ pub fn decode_shift_imm_thumb(instruction: u16, _next_instruction: u16) -> Box<d
 
 pub fn decode_register_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     let d = get_bits16(instruction, 0, 3) as u8;
-    let s = get_bits16(instruction, 3, 3) as u8;
+    let m = get_bits16(instruction, 3, 3) as u8;
     let (opcode, shifter_operand) = match get_bits16(instruction, 6, 4) {
-        0b1111 => (Opcode::MVN, ShifterOperand::Register { m: s }),
+        0b1000 => (Opcode::TST { n: d }, ShifterOperand::Register { m }),
+        0b1111 => (Opcode::MVN { d }, ShifterOperand::Register { m }),
         x => todo!("Thumb opcode {:#04b}", x),
     };
     Box::new(DataProcessing {
         opcode,
         set_flags: true,
-        d: get_bits16(instruction, 0, 3) as u8,
-        n: d,
         shifter_operand,
     })
 }
 
 pub fn decode_add_sub_register_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+    let d = get_bits16(instruction, 0, 3) as u8;
+    let n = get_bits16(instruction, 3, 3) as u8;
     Box::new(DataProcessing {
-        opcode: if get_bit16(instruction, 9) { Opcode::SUB } else { Opcode::ADD },
+        opcode: if get_bit16(instruction, 9) { Opcode::SUB { d, n } } else { Opcode::ADD { d, n } },
         set_flags: true,
-        d: get_bits16(instruction, 0, 3) as u8,
-        n: get_bits16(instruction, 3, 3) as u8,
         shifter_operand: ShifterOperand::Register {
             m: get_bits16(instruction, 6, 3) as u8,
         },
@@ -63,11 +81,11 @@ pub fn decode_add_sub_register_thumb(instruction: u16, _next_instruction: u16) -
 }
 
 pub fn decode_add_sub_immediate_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+    let d = get_bits16(instruction, 0, 3) as u8;
+    let n = get_bits16(instruction, 3, 3) as u8;
     Box::new(DataProcessing {
-        opcode: if get_bit16(instruction, 9) { Opcode::SUB } else { Opcode::ADD },
+        opcode: if get_bit16(instruction, 9) { Opcode::SUB { d, n } } else { Opcode::ADD { d, n } },
         set_flags: true,
-        d: get_bits16(instruction, 0, 3) as u8,
-        n: get_bits16(instruction, 3, 3) as u8,
         shifter_operand: ShifterOperand::Immediate {
             immed: get_bits16(instruction, 6, 3),
             rotate_imm: 0,
@@ -76,34 +94,29 @@ pub fn decode_add_sub_immediate_thumb(instruction: u16, _next_instruction: u16) 
 }
 
 pub fn decode_mov_cmp_add_sub_immediate_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
-    use Opcode::*;
-    Box::new({
-        let d_n = get_bits16(instruction, 8, 3) as u8;
-        DataProcessing {
-            opcode: match get_bits16(instruction, 11, 2) {
-                0b00 => MOV,
-                0b01 => CMP,
-                0b10 => ADD,
-                0b11 => SUB,
-                _ => unreachable!(),
-            },
-            set_flags: true,
-            d: d_n,
-            n: d_n,
-            shifter_operand: ShifterOperand::Immediate {
-                immed: get_bits16(instruction, 0, 8),
-                rotate_imm: 0,
-            },
-        }
+    let d_n = get_bits16(instruction, 8, 3) as u8;
+    Box::new(DataProcessing {
+        opcode: match get_bits16(instruction, 11, 2) {
+            0b00 => Opcode::MOV { d: d_n },
+            0b01 => Opcode::CMP { n: d_n },
+            0b10 => Opcode::ADD { d: d_n, n: d_n },
+            0b11 => Opcode::SUB { d: d_n, n: d_n },
+            _ => unreachable!(),
+        },
+        set_flags: true,
+        shifter_operand: ShifterOperand::Immediate {
+            immed: get_bits16(instruction, 0, 8),
+            rotate_imm: 0,
+        },
     })
 }
 
 pub fn decode_adjust_sp_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+    let d = REGISTER_SP;
+    let n = REGISTER_SP;
     Box::new(DataProcessing {
-        opcode: if get_bit16(instruction, 7) { Opcode::SUB } else { Opcode::ADD },
+        opcode: if get_bit16(instruction, 7) { Opcode::SUB { d, n } } else { Opcode::ADD { d, n } },
         set_flags: false,
-        d: REGISTER_SP,
-        n: REGISTER_SP,
         shifter_operand: ShifterOperand::Immediate {
             immed: get_bits16(instruction, 0, 7) << 2,
             rotate_imm: 0,
@@ -115,29 +128,27 @@ pub fn decode_adjust_sp_thumb(instruction: u16, _next_instruction: u16) -> Box<d
 struct DataProcessing {
     opcode: Opcode,
     set_flags: bool,
-    d: u8,
-    n: u8,
     shifter_operand: ShifterOperand,
 }
 
 #[derive(Debug)]
 enum Opcode {
-    AND,
-    EOR,
-    SUB,
-    RSB,
-    ADD,
-    ADC,
-    SBC,
-    RSC,
-    TST,
-    TEQ,
-    CMP,
-    CMN,
-    ORR,
-    MOV,
-    BIC,
-    MVN,
+    AND { d: u8, n: u8 },
+    EOR { d: u8, n: u8 },
+    SUB { d: u8, n: u8 },
+    RSB { d: u8, n: u8 },
+    ADD { d: u8, n: u8 },
+    ADC { d: u8, n: u8 },
+    SBC { d: u8, n: u8 },
+    RSC { d: u8, n: u8 },
+    TST { n: u8 },
+    TEQ { n: u8 },
+    CMP { n: u8 },
+    CMN { n: u8 },
+    ORR { d: u8, n: u8 },
+    MOV { d: u8 },
+    BIC { d: u8, n: u8 },
+    MVN { d: u8 },
 }
 
 #[derive(Debug)]
@@ -159,93 +170,85 @@ impl DecodedInstruction for DataProcessing {
     fn execute(&self, cpu: &mut CPU) {
         use Opcode::*;
 
-        if self.set_flags && self.d == 15 {
-            todo!("set_flags and d == 15");
-        }
-
-        let r_n = cpu.get_r(self.n);
-        let (shifter_operand, mut carry) = self.shifter_operand.eval(cpu);
-
-        let result = match self.opcode {
-            AND => r_n & shifter_operand,
-            EOR => r_n ^ shifter_operand,
-            SUB => {
-                let (result, borrow, overflow) = bitutil::sub_with_flags(r_n, shifter_operand);
-                carry = !borrow;
-                cpu.set_overflow_flag(overflow);
-                result
+        let process_result = |cpu: &mut CPU, d: Option<u8>, result: u32, carry: bool, overflow: Option<bool>| {
+            if let Some(d) = d {
+                if self.set_flags && d == 15 {
+                    todo!("d == 15");
+                }
+                cpu.set_r(d, result);
             }
-            RSB => {
-                let (result, borrow, overflow) = bitutil::sub_with_flags(shifter_operand, r_n);
-                carry = !borrow;
-                cpu.set_overflow_flag(overflow);
-                result
+            if self.set_flags {
+                cpu.set_negative_flag(get_bit(result, 31));
+                cpu.set_zero_flag(result == 0);
+                cpu.set_carry_flag(carry);
+                if let Some(overflow) = overflow {
+                    cpu.set_overflow_flag(overflow);
+                }
             }
-            ADD => {
-                let (result, add_carry, overflow) = bitutil::add_with_flags(r_n, shifter_operand);
-                carry = add_carry;
-                cpu.set_overflow_flag(overflow);
-                result
-            }
-            TEQ => r_n ^ shifter_operand,
-            CMP => {
-                let (result, borrow, overflow) = bitutil::sub_with_flags(r_n, shifter_operand);
-                carry = !borrow;
-                cpu.set_overflow_flag(overflow);
-                result
-            }
-            MOV => shifter_operand,
-            MVN => !shifter_operand,
-            _ => todo!("opcode: {:?}", self.opcode),
         };
 
-        cpu.set_r(self.d, result);
-        if self.set_flags {
-            cpu.set_negative_flag(get_bit(result, 31));
-            cpu.set_zero_flag(result == 0);
-            cpu.set_carry_flag(carry);
+        let (shifter_operand, shifter_carry) = self.shifter_operand.eval(cpu);
+        match self.opcode {
+            AND { d, n } => process_result(cpu, Some(d), cpu.get_r(n) & shifter_operand, shifter_carry, None),
+            EOR { d, n } => process_result(cpu, Some(d), cpu.get_r(n) ^ shifter_operand, shifter_carry, None),
+            SUB { d, n } => {
+                let (result, borrow, overflow) = bitutil::sub_with_flags(cpu.get_r(n), shifter_operand);
+                process_result(cpu, Some(d), result, !borrow, Some(overflow));
+            }
+            RSB { d, n } => {
+                let (result, borrow, overflow) = bitutil::sub_with_flags(shifter_operand, cpu.get_r(n));
+                process_result(cpu, Some(d), result, !borrow, Some(overflow))
+            }
+            ADD { d, n } => {
+                let (result, carry, overflow) = bitutil::add_with_flags(cpu.get_r(n), shifter_operand);
+                process_result(cpu, Some(d), result, carry, Some(overflow))
+            }
+            ADC { d, n } => {
+                let (result, carry, overflow) = bitutil::add_with_flags_carry(cpu.get_r(n), shifter_operand, cpu.get_carry_flag());
+                process_result(cpu, Some(d), result, carry, Some(overflow))
+            }
+            SBC { d, n } => {
+                let (result, borrow, overflow) = bitutil::sub_with_flags_carry(cpu.get_r(n), shifter_operand, !cpu.get_carry_flag());
+                process_result(cpu, Some(d), result, !borrow, Some(overflow))
+            }
+            RSC { d, n } => {
+                let (result, borrow, overflow) = bitutil::sub_with_flags_carry(shifter_operand, cpu.get_r(n), !cpu.get_carry_flag());
+                process_result(cpu, Some(d), result, !borrow, Some(overflow))
+            }
+            TST { n } => process_result(cpu, None, cpu.get_r(n) & shifter_operand, shifter_carry, None),
+            TEQ { n } => process_result(cpu, None, cpu.get_r(n) ^ shifter_operand, shifter_carry, None),
+            CMP { n } => {
+                let (result, borrow, overflow) = bitutil::sub_with_flags(cpu.get_r(n), shifter_operand);
+                process_result(cpu, None, result, !borrow, Some(overflow));
+            }
+            CMN { n } => {
+                let (result, add_carry, overflow) = bitutil::add_with_flags(cpu.get_r(n), shifter_operand);
+                process_result(cpu, None, result, add_carry, Some(overflow));
+            }
+            ORR { d, n } => process_result(cpu, Some(d), cpu.get_r(n) | shifter_operand, shifter_carry, None),
+            MOV { d } => process_result(cpu, Some(d), shifter_operand, shifter_carry, None),
+            BIC { d, n } => process_result(cpu, Some(d), cpu.get_r(n) & !shifter_operand, shifter_carry, None),
+            MVN { d } => process_result(cpu, Some(d), !shifter_operand, shifter_carry, None),
         }
     }
 
     fn disassemble(&self, cond: Condition) -> String {
         use Opcode::*;
-        let has_d = !matches!(self.opcode, CMP | CMN | TST | TEQ);
-        let has_n = !matches!(self.opcode, MOV | MVN);
+        let (d, n) = match self.opcode {
+            AND { d, n } | EOR { d, n } | SUB { d, n } | RSB { d, n } | ADD { d, n } | ADC { d, n } | SBC { d, n } | RSC { d, n } | ORR { d, n } | BIC { d, n } => (Some(d), Some(n)),
+            TST { n } | TEQ { n } | CMP { n } | CMN { n } => (None, Some(n)),
+            MOV { d } | MVN { d } => (Some(d), None),
+        };
 
-        // <opcode>{<cond>}{S} <Rd>, <Rn>, <shifter_operand>
         format!(
-            "{:?}{}{} {}{}{}",
+            "{}{}{} {}{}{}",
             self.opcode,
             cond,
-            if has_d && self.set_flags { "S" } else { "" },
-            if has_d { format!("R{}, ", self.d) } else { "".into() },
-            if has_n { format!("R{}, ", self.n) } else { "".into() },
+            if d.is_some() && self.set_flags { "S" } else { "" },
+            d.map_or(String::new(), |d| format!("R{}, ", d)),
+            n.map_or(String::new(), |n| format!("R{}, ", n)),
             self.shifter_operand
         )
-    }
-}
-
-impl Opcode {
-    const fn decode_arm(instruction: u32) -> Opcode {
-        match get_bits32(instruction, 21, 4) {
-            0b0000 => Opcode::AND,
-            0b0001 => Opcode::EOR,
-            0b0010 => Opcode::SUB,
-            0b0011 => Opcode::RSB,
-            0b0100 => Opcode::ADD,
-            0b0101 => Opcode::ADC,
-            0b0110 => Opcode::SBC,
-            0b0111 => Opcode::RSC,
-            0b1000 => Opcode::TST,
-            0b1001 => Opcode::TEQ,
-            0b1010 => Opcode::CMP,
-            0b1011 => Opcode::CMN,
-            0b1100 => Opcode::ORR,
-            0b1101 => Opcode::MOV,
-            0b1110 => Opcode::BIC,
-            0b1111 => Opcode::MVN,
-            _ => unreachable!(),
-        }
     }
 }
 
@@ -263,6 +266,29 @@ impl Display for ShifterOperand {
             ShifterOperand::RotateRightImmediate { m, s } => write!(f, "R{}, ROR #{:#X}", m, s),
             ShifterOperand::RotateRightRegister { m, s } => write!(f, "R{}, ROR R{}", m, s),
             ShifterOperand::RotateRightWithExtend { m } => write!(f, "R{}, RRX", m),
+        }
+    }
+}
+
+impl Display for Opcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Opcode::AND { .. } => write!(f, "AND"),
+            Opcode::EOR { .. } => write!(f, "EOR"),
+            Opcode::SUB { .. } => write!(f, "SUB"),
+            Opcode::RSB { .. } => write!(f, "RSB"),
+            Opcode::ADD { .. } => write!(f, "ADD"),
+            Opcode::ADC { .. } => write!(f, "ADC"),
+            Opcode::SBC { .. } => write!(f, "SBC"),
+            Opcode::RSC { .. } => write!(f, "RSC"),
+            Opcode::TST { .. } => write!(f, "TST"),
+            Opcode::TEQ { .. } => write!(f, "TEQ"),
+            Opcode::CMP { .. } => write!(f, "CMP"),
+            Opcode::CMN { .. } => write!(f, "CMN"),
+            Opcode::ORR { .. } => write!(f, "ORR"),
+            Opcode::MOV { .. } => write!(f, "MOV"),
+            Opcode::BIC { .. } => write!(f, "BIC"),
+            Opcode::MVN { .. } => write!(f, "MVN"),
         }
     }
 }

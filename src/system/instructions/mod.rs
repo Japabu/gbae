@@ -12,7 +12,7 @@ pub mod lut;
 
 pub fn format_instruction_arm(instruction: u32) -> String {
     format!(
-        "{} ({:08x})\n\
+        "{} ({:#X})\n\
             Bit Index:   27 26 25 24 23 22 21 20   07 06 05 04\n\
             Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<4} {:<2} {:<2} {:<2} {:<2}",
         lut::InstructionLut::decode_arm(instruction).disassemble(Condition::decode_arm(instruction)),
@@ -59,7 +59,7 @@ pub fn format_instruction_thumb(instruction: u16, next_instruction: u16) -> Stri
     )
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Condition {
     EQ, // Equal
     NE, // Not Equal
@@ -137,4 +137,29 @@ impl Display for Condition {
 pub trait DecodedInstruction: Debug {
     fn execute(&self, cpu: &mut CPU);
     fn disassemble(&self, cond: Condition) -> String;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_arm() {
+        assert_eq!(Condition::decode_arm(0b0000_0000_0000_0000_0000_0000_0000_0000), Condition::EQ);
+        assert_eq!(Condition::decode_arm(0b0001_0000_0000_0000_0000_0000_0000_0000), Condition::NE);
+        assert_eq!(Condition::decode_arm(0b0010_0000_0000_0000_0000_0000_0000_0000), Condition::CS);
+        assert_eq!(Condition::decode_arm(0b0011_0000_0000_0000_0000_0000_0000_0000), Condition::CC);
+        assert_eq!(Condition::decode_arm(0b0100_0000_0000_0000_0000_0000_0000_0000), Condition::MI);
+        assert_eq!(Condition::decode_arm(0b0101_0000_0000_0000_0000_0000_0000_0000), Condition::PL);
+        assert_eq!(Condition::decode_arm(0b0110_0000_0000_0000_0000_0000_0000_0000), Condition::VS);
+        assert_eq!(Condition::decode_arm(0b0111_0000_0000_0000_0000_0000_0000_0000), Condition::VC);
+        assert_eq!(Condition::decode_arm(0b1000_0000_0000_0000_0000_0000_0000_0000), Condition::HI);
+        assert_eq!(Condition::decode_arm(0b1001_0000_0000_0000_0000_0000_0000_0000), Condition::LS);
+        assert_eq!(Condition::decode_arm(0b1010_0000_0000_0000_0000_0000_0000_0000), Condition::GE);
+        assert_eq!(Condition::decode_arm(0b1011_0000_0000_0000_0000_0000_0000_0000), Condition::LT);
+        assert_eq!(Condition::decode_arm(0b1100_0000_0000_0000_0000_0000_0000_0000), Condition::GT);
+        assert_eq!(Condition::decode_arm(0b1101_0000_0000_0000_0000_0000_0000_0000), Condition::LE);
+        assert_eq!(Condition::decode_arm(0b1110_0000_0000_0000_0000_0000_0000_0000), Condition::AL);
+        assert_eq!(Condition::decode_arm(0x39_00_00_00), Condition::CC);
+    }
 }

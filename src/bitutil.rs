@@ -1,3 +1,5 @@
+use std::ops::AddAssign;
+
 pub const fn get_bits32(data: u32, i: u8, len: u8) -> u32 {
     let mask = (1u32 << len) - 1;
     let shifted_mask = mask << i;
@@ -47,48 +49,36 @@ pub const fn rotate_right_with_extend(c_flag: bool, data: u32) -> u32 {
     (c_flag as u32) << 31 | (data >> 1)
 }
 
-/// Adds two 32-bit unsigned integers and returns the result along with carry and overflow flags.
-///
-/// # Arguments
-///
-/// * `a` - The first operand.
-/// * `b` - The second operand.
-///
-/// # Returns
-///
-/// A tuple containing:
-/// * The 32-bit result of the addition.
-/// * A boolean value indicating whether a carry occurred.
-/// * A boolean value indicating whether an overflow occurred.
 pub const fn add_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
-    let (result, carry) = a.overflowing_add(b);
-    let sign_op1 = get_bit(a, 31);
-    let sign_op2 = get_bit(b, 31);
-    let sign_result = get_bit(result, 31);
-    let overflow = sign_op1 == sign_op2 && sign_op1 != sign_result;
-    (result, carry, overflow)
+    let unsigned_result_64 = (a as u64).wrapping_add(b as u64);
+    let signed_result_64 = (a as i32 as i64).wrapping_add(b as i32 as i64);
+    let unsigned_overflow = unsigned_result_64 > u32::MAX as u64;
+    let signed_overflow = signed_result_64 > i32::MAX as i64 || signed_result_64 < i32::MIN as i64;
+    (unsigned_result_64 as u32, unsigned_overflow, signed_overflow)
 }
 
-/// Subtracts two 32-bit unsigned integers and returns the result along with borrow and overflow flags.
-///
-/// # Arguments
-///
-/// * `a` - The first operand.
-/// * `b` - The second operand.
-///
-/// # Returns
-///
-/// A tuple containing:
-/// * The 32-bit result of the subtraction.
-/// * A boolean value indicating whether a borrow occurred.
-/// * A boolean value indicating whether an overflow occurred.
 pub const fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
-    let (result, borrow) = a.overflowing_sub(b);
-    let sign_a = get_bit(a, 31);
-    let sign_b = get_bit(b, 31);
-    let sign_result = get_bit(result, 31);
-    let overflow = sign_a != sign_b && sign_a != sign_result;
-    (result, borrow, overflow)
+    let unsigned_result_64 = (a as u64).wrapping_sub(b as u64);
+    let signed_result_64 = (a as i32 as i64).wrapping_sub(b as i32 as i64);
+    let unsigned_underflow = unsigned_result_64 > u32::MAX as u64;
+    let signed_overflow = signed_result_64 > i32::MAX as i64 || signed_result_64 < i32::MIN as i64;
+    (unsigned_result_64 as u32, unsigned_underflow, signed_overflow)
+}
+
+pub fn add_with_flags_carry(a: u32, b: u32, carry: bool) -> (u32, bool, bool) {
+    let unsigned_result_64 = (a as u64).wrapping_add(b as u64).wrapping_add(carry as u64);
+    let signed_result_64 = (a as i32 as i64).wrapping_add(b as i32 as i64).wrapping_add(carry as i32 as i64);
+    let unsigned_overflow = unsigned_result_64 > u32::MAX as u64;
+    let signed_overflow = signed_result_64 > i32::MAX as i64 || signed_result_64 < i32::MIN as i64;
+    (unsigned_result_64 as u32, unsigned_overflow, signed_overflow)
+}
+
+pub fn sub_with_flags_carry(a: u32, b: u32, carry: bool) -> (u32, bool, bool) {
+    let unsigned_result_64 = (a as u64).wrapping_sub(b as u64).wrapping_sub(carry as u64);
+    let signed_result_64 = (a as i32 as i64).wrapping_sub(b as i32 as i64).wrapping_sub(carry as i32 as i64);
+    let unsigned_overflow = unsigned_result_64 > u32::MAX as u64;
+    let signed_overflow = signed_result_64 > i32::MAX as i64 || signed_result_64 < i32::MIN as i64;
+    (unsigned_result_64 as u32, unsigned_overflow, signed_overflow)
 }
 
 #[cfg(test)]
@@ -172,15 +162,15 @@ mod tests {
         assert_eq!(add_with_flags(1, 1), (2, false, false));
 
         // Test carry flag (unsigned overflow)
-        assert_eq!(add_with_flags(0xFFFFFFFF, 1), (0, true, false));
-        assert_eq!(add_with_flags(0xFFFFFFFF, 2), (1, true, false));
+        assert_eq!(add_with_flags(u32::MAX, 1), (0, true, false));
+        assert_eq!(add_with_flags(u32::MAX, 2), (1, true, false));
 
         // Test overflow flag (signed overflow)
         // Positive + Positive = Negative (overflow)
-        assert_eq!(add_with_flags(0x7FFFFFFF, 1), (0x80000000, false, true));
+        assert_eq!(add_with_flags(i32::MAX as u32, 1), (0x80000000, false, true));
 
         // Negative + Negative = Positive (overflow)
-        assert_eq!(add_with_flags(0x80000000, 0x80000000), (0, true, true));
+        assert_eq!(add_with_flags(2u32.pow(31), 2u32.pow(31)), (0, true, true));
 
         // No overflow when adding numbers of different signs
         assert_eq!(add_with_flags(0x80000000, 1), (0x80000001, false, false));
@@ -212,5 +202,93 @@ mod tests {
         assert_eq!(sub_with_flags(0, 0), (0, false, false));
         // 0x80000000 - 0x7FFFFFFF = 1 (overflow: negative - positive = positive)
         assert_eq!(sub_with_flags(0x80000000, 0x7FFFFFFF), (1, false, true));
+    }
+
+    #[test]
+    fn test_add_with_flags_carry() {
+        // Basic addition without carry or overflow
+        assert_eq!(add_with_flags_carry(1, 1, false), (2, false, false));
+
+        // Adding with carry input
+        assert_eq!(add_with_flags_carry(1, 1, true), (3, false, false));
+
+        // Test carry flag (unsigned overflow)
+        assert_eq!(add_with_flags_carry(u32::MAX, 1, false), (0, true, false));
+        assert_eq!(add_with_flags_carry(u32::MAX, 0, true), (0, true, false));
+
+        // Test overflow flag (signed overflow)
+        // Positive + Positive + Carry = Negative (overflow)
+        assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, true), (0x80000001, false, true));
+
+        // Negative + Negative + Carry = Positive (overflow)
+        assert_eq!(add_with_flags_carry(0x80000000, 0x80000000, true), (1, true, true));
+
+        // Edge cases
+        assert_eq!(add_with_flags_carry(0, 0, false), (0, false, false));
+        assert_eq!(add_with_flags_carry(0, 0, true), (1, false, false));
+
+        // Test when adding numbers of different signs
+        assert_eq!(add_with_flags_carry(0x80000000, 1, true), (0x80000002, false, false));
+    }
+
+    #[test]
+    fn test_sub_with_flags_carry() {
+        // Basic subtraction without borrow or overflow
+        assert_eq!(sub_with_flags_carry(2, 1, false), (1, false, false));
+
+        // Subtraction with borrow input
+        assert_eq!(sub_with_flags_carry(2, 1, true), (0, false, false));
+
+        // Test borrow flag (unsigned underflow)
+        assert_eq!(sub_with_flags_carry(0, 1, false), (0xFFFFFFFF, true, false));
+        assert_eq!(sub_with_flags_carry(0, 0, true), (0xFFFFFFFF, true, false));
+
+        // Test overflow flag (signed overflow)
+        // Positive - Negative - Borrow = Negative (overflow)
+        assert_eq!(sub_with_flags_carry(i32::MAX as u32, i32::MIN as u32, true), (0xFFFFFFFE, false, true));
+
+        // Negative - Positive - Borrow = Positive (overflow)
+        assert_eq!(sub_with_flags_carry(0x80000000, 1, true), (0x7FFFFFFE, false, true));
+
+        // Edge cases
+        assert_eq!(sub_with_flags_carry(0, 0, false), (0, false, false));
+        assert_eq!(sub_with_flags_carry(0, 0, true), (0xFFFFFFFF, true, false));
+
+        // Subtracting numbers of the same sign
+        assert_eq!(sub_with_flags_carry(0x80000000, 0x80000000, false), (0, false, false));
+        assert_eq!(sub_with_flags_carry(1, 1, false), (0, false, false));
+    }
+
+    #[test]
+    fn test_add_with_flags_carry_edge_cases() {
+        // Adding with carry input and no overflow
+        assert_eq!(add_with_flags_carry(0, 0, true), (1, false, false));
+
+        // Unsigned overflow without signed overflow
+        assert_eq!(add_with_flags_carry(u32::MAX, 0, true), (0, true, false));
+
+        // Signed overflow without unsigned overflow
+        assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, false), (0x80000000, false, true));
+
+        // Signed overflow with carry input
+        assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, true), (0x80000001, false, true));
+    }
+
+    #[test]
+    fn test_sub_with_flags_carry_edge_cases() {
+        // Subtracting with no borrow and no overflow
+        assert_eq!(sub_with_flags_carry(1, 0, false), (1, false, false));
+
+        // Subtracting with borrow input
+        assert_eq!(sub_with_flags_carry(1, 0, true), (0, false, false));
+
+        // Unsigned underflow without signed overflow
+        assert_eq!(sub_with_flags_carry(0, 1, false), (u32::MAX, true, false));
+
+        // Signed overflow without unsigned underflow
+        assert_eq!(sub_with_flags_carry(0x80000000, 1, false), (0x7FFFFFFF, false, true));
+
+        // Subtracting large positive from large negative
+        assert_eq!(sub_with_flags_carry(0x80000000, 0x7FFFFFFF, true), (0x80000000, false, true));
     }
 }

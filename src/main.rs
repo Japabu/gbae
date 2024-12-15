@@ -1,4 +1,5 @@
 #![feature(type_alias_impl_trait)]
+#![feature(bigint_helper_methods)]
 
 mod bitutil;
 mod cartridge;

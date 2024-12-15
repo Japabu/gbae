@@ -135,18 +135,18 @@ mod tests {
 
         // Edge case: Full 32-bit value
         assert_eq!(sign_extend32(0xFFFFFFFF, 32), 0xFFFFFFFF); // No change
-        assert_eq!(sign_extend32(0x7FFFFFFF, 32), 0x7FFFFFFF); // No change
+        assert_eq!(sign_extend32(i32::MAX as u32, 32), i32::MAX as u32); // No change
     }
 
     #[test]
     fn test_arithmetic_shift_right() {
         // Test right shift on positive number
-        assert_eq!(arithmetic_shift_right(0x7FFFFFFF, 1), 0x3FFFFFFF); // Divides by 2
-        assert_eq!(arithmetic_shift_right(0x7FFFFFFF, 2), 0x1FFFFFFF); // Divides by 4
+        assert_eq!(arithmetic_shift_right(i32::MAX as u32, 1), 0x3FFFFFFF); // Divides by 2
+        assert_eq!(arithmetic_shift_right(i32::MAX as u32, 2), 0x1FFFFFFF); // Divides by 4
 
         // Test right shift on negative number
         assert_eq!(arithmetic_shift_right(0xFFFFFFFF, 1), 0xFFFFFFFF); // -1 stays -1
-        assert_eq!(arithmetic_shift_right(0x80000000, 1), 0xC0000000); // -2147483648 >> 1
+        assert_eq!(arithmetic_shift_right(i32::MIN as u32, 1), 0xC0000000); // -2147483648 >> 1
         assert_eq!(arithmetic_shift_right(0x80000001, 1), 0xC0000000); // Handles sign extension
 
         // Edge case: Shift by 0 (no change)
@@ -165,13 +165,13 @@ mod tests {
 
         // Test overflow flag (signed overflow)
         // Positive + Positive = Negative (overflow)
-        assert_eq!(add_with_flags(i32::MAX as u32, 1), (0x80000000, false, true));
+        assert_eq!(add_with_flags(i32::MAX as u32, 1), (i32::MIN as u32, false, true));
 
         // Negative + Negative = Positive (overflow)
         assert_eq!(add_with_flags(2u32.pow(31), 2u32.pow(31)), (0, true, true));
 
         // No overflow when adding numbers of different signs
-        assert_eq!(add_with_flags(0x80000000, 1), (0x80000001, false, false));
+        assert_eq!(add_with_flags(i32::MIN as u32, 1), (0x80000001, false, false));
 
         // Edge cases
         assert_eq!(add_with_flags(0, 0), (0, false, false));
@@ -187,19 +187,19 @@ mod tests {
 
         // Test overflow flag (signed overflow)
         // Positive - Negative = Negative (overflow)
-        assert_eq!(sub_with_flags(0x7FFFFFFF, 0x80000000), (0xFFFFFFFF, true, true));
+        assert_eq!(sub_with_flags(i32::MAX as u32, i32::MIN as u32), (0xFFFFFFFF, true, true));
 
         // Negative - Positive = Positive (overflow)
-        assert_eq!(sub_with_flags(0x80000000, 1), (0x7FFFFFFF, false, true));
+        assert_eq!(sub_with_flags(i32::MIN as u32, 1), (i32::MAX as u32, false, true));
 
         // No overflow when subtracting numbers of same sign
-        assert_eq!(sub_with_flags(0x80000000, 0x80000000), (0, false, false));
+        assert_eq!(sub_with_flags(i32::MIN as u32, i32::MIN as u32), (0, false, false));
         assert_eq!(sub_with_flags(1, 1), (0, false, false));
 
         // Edge cases
         assert_eq!(sub_with_flags(0, 0), (0, false, false));
-        // 0x80000000 - 0x7FFFFFFF = 1 (overflow: negative - positive = positive)
-        assert_eq!(sub_with_flags(0x80000000, 0x7FFFFFFF), (1, false, true));
+        // i32::MIN as u32 - i32::MAX as u32 = 1 (overflow: negative - positive = positive)
+        assert_eq!(sub_with_flags(i32::MIN as u32, i32::MAX as u32), (1, false, true));
     }
 
     #[test]
@@ -219,14 +219,14 @@ mod tests {
         assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, true), (0x80000001, false, true));
 
         // Negative + Negative + Carry = Positive (overflow)
-        assert_eq!(add_with_flags_carry(0x80000000, 0x80000000, true), (1, true, true));
+        assert_eq!(add_with_flags_carry(i32::MIN as u32, i32::MIN as u32, true), (1, true, true));
 
         // Edge cases
         assert_eq!(add_with_flags_carry(0, 0, false), (0, false, false));
         assert_eq!(add_with_flags_carry(0, 0, true), (1, false, false));
 
         // Test when adding numbers of different signs
-        assert_eq!(add_with_flags_carry(0x80000000, 1, true), (0x80000002, false, false));
+        assert_eq!(add_with_flags_carry(i32::MIN as u32, 1, true), (0x80000002, false, false));
 
         // Adding with carry input and no overflow
         assert_eq!(add_with_flags_carry(0, 0, true), (1, false, false));
@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(add_with_flags_carry(u32::MAX, 0, true), (0, true, false));
 
         // Signed overflow without unsigned overflow
-        assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, false), (0x80000000, false, true));
+        assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, false), (i32::MIN as u32, false, true));
 
         // Signed overflow with carry input
         assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, true), (0x80000001, false, true));
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(sub_with_flags_carry(0, 0, true), (0xFFFFFFFF, true, false));
 
         // Subtracting numbers of the same sign
-        assert_eq!(sub_with_flags_carry(0x80000000, 0x80000000, false), (0, false, false));
+        assert_eq!(sub_with_flags_carry(i32::MIN as u32, i32::MIN as u32, false), (0, false, false));
         assert_eq!(sub_with_flags_carry(1, 1, false), (0, false, false));
 
         // Subtracting with no borrow and no overflow
@@ -278,9 +278,9 @@ mod tests {
         assert_eq!(sub_with_flags_carry(0, 1, false), (u32::MAX, true, false));
 
         // Signed overflow without unsigned underflow
-        assert_eq!(sub_with_flags_carry(0x80000000, 1, false), (0x7FFFFFFF, false, true));
+        assert_eq!(sub_with_flags_carry(i32::MIN as u32, 1, false), (i32::MAX as u32, false, true));
 
         // Subtracting large positive from large negative with borrow
-        assert_eq!(sub_with_flags_carry(0x80000000, 0x7FFFFFFF, true), (0, false, true));
+        assert_eq!(sub_with_flags_carry(i32::MIN as u32, i32::MAX as u32, true), (0, false, true));
     }
 }

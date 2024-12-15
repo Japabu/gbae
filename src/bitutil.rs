@@ -1,5 +1,3 @@
-use std::ops::AddAssign;
-
 pub const fn get_bits32(data: u32, i: u8, len: u8) -> u32 {
     let mask = (1u32 << len) - 1;
     let shifted_mask = mask << i;
@@ -229,6 +227,18 @@ mod tests {
 
         // Test when adding numbers of different signs
         assert_eq!(add_with_flags_carry(0x80000000, 1, true), (0x80000002, false, false));
+
+        // Adding with carry input and no overflow
+        assert_eq!(add_with_flags_carry(0, 0, true), (1, false, false));
+
+        // Unsigned overflow without signed overflow
+        assert_eq!(add_with_flags_carry(u32::MAX, 0, true), (0, true, false));
+
+        // Signed overflow without unsigned overflow
+        assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, false), (0x80000000, false, true));
+
+        // Signed overflow with carry input
+        assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, true), (0x80000001, false, true));
     }
 
     #[test]
@@ -248,7 +258,7 @@ mod tests {
         assert_eq!(sub_with_flags_carry(i32::MAX as u32, i32::MIN as u32, true), (0xFFFFFFFE, true, true));
 
         // Negative - Positive - Borrow = Positive (overflow)
-        assert_eq!(sub_with_flags_carry(0x80000000, 1, true), (0x7FFFFFFE, true, true));
+        assert_eq!(sub_with_flags_carry(i32::MIN as u32, 1, true), (0x7FFFFFFE, false, true));
 
         // Edge cases
         assert_eq!(sub_with_flags_carry(0, 0, false), (0, false, false));
@@ -257,25 +267,7 @@ mod tests {
         // Subtracting numbers of the same sign
         assert_eq!(sub_with_flags_carry(0x80000000, 0x80000000, false), (0, false, false));
         assert_eq!(sub_with_flags_carry(1, 1, false), (0, false, false));
-    }
 
-    #[test]
-    fn test_add_with_flags_carry_edge_cases() {
-        // Adding with carry input and no overflow
-        assert_eq!(add_with_flags_carry(0, 0, true), (1, false, false));
-
-        // Unsigned overflow without signed overflow
-        assert_eq!(add_with_flags_carry(u32::MAX, 0, true), (0, true, false));
-
-        // Signed overflow without unsigned overflow
-        assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, false), (0x80000000, false, true));
-
-        // Signed overflow with carry input
-        assert_eq!(add_with_flags_carry(i32::MAX as u32, 1, true), (0x80000001, false, true));
-    }
-
-    #[test]
-    fn test_sub_with_flags_carry_edge_cases() {
         // Subtracting with no borrow and no overflow
         assert_eq!(sub_with_flags_carry(1, 0, false), (1, false, false));
 

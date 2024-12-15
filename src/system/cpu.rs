@@ -53,6 +53,8 @@ pub struct CPU {
     spsr_und: u32,
     spsr_irq: u32,
     spsr_fiq: u32,
+
+    branch_happened: bool,
 }
 
 impl CPU {
@@ -95,6 +97,10 @@ impl CPU {
             banked_registers[(r - banked_start) as usize] = value;
         } else {
             self.r[r as usize] = value;
+        }
+
+        if r == REGISTER_PC {
+            self.branch_happened = true;
         }
     }
 
@@ -147,37 +153,35 @@ impl CPU {
             spsr_und: 0,
             spsr_irq: 0,
             spsr_fiq: 0,
+
+            branch_happened: false,
         };
         cpu.reset();
         cpu
     }
 
     pub fn cycle(&mut self) {
-        // Fetch and decode
         let decoded_instruction = if self.get_thumb_state() {
             let instruction = self.fetch_thumb();
             self.r[REGISTER_PC as usize] += self.instruction_len_in_bytes();
-
             InstructionLut::decode_thumb(instruction, self.fetch_thumb())
         } else {
             let instruction = self.fetch_arm();
             self.r[REGISTER_PC as usize] += self.instruction_len_in_bytes();
-
             let cond = Condition::decode_arm(instruction);
             if !cond.check(self) {
                 return;
             }
             InstructionLut::decode_arm(instruction)
         };
-        self.r[REGISTER_PC as usize] += self.instruction_len_in_bytes();
 
-        // Execute
         // Pc should be two instructions ahead of currently executed instruction
-        let pc_before = self.r[REGISTER_PC as usize];
+        self.r[REGISTER_PC as usize] += self.instruction_len_in_bytes();
+        self.branch_happened = false;
         decoded_instruction.execute(self);
 
-        // If there was no branch (i.e. pc didn't change) set pc to the next instruction
-        if pc_before == self.r[REGISTER_PC as usize] {
+        // If there was no branch set pc to the next instruction
+        if !self.branch_happened {
             self.r[REGISTER_PC as usize] -= self.instruction_len_in_bytes();
         }
     }

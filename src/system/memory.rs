@@ -27,7 +27,7 @@ Unused Memory Area
 */
 
 macro_rules! gen_memory {
-    ($($start:literal..=$end:literal => ($region:ident, $len:expr, $writable:expr)),* $(,)?) => {
+    ($($start:literal..=$end:literal => ($region:ident, $index_fn:expr, $writable:expr)),* $(,)?) => {
         pub struct Memory {
             $(
                 $region: Vec<u8>,
@@ -35,24 +35,22 @@ macro_rules! gen_memory {
         }
 
         impl Memory {
-            pub fn read_u8(&self, address: u32) -> u8 {
+            fn _read_u8(&self, address: u32) -> u8 {
                 match address {
                     $(
                         $start..=$end => {
-                            let index = (address - $start) % $len;
-                            self.$region[index as usize]
+                            self.$region[$index_fn(address, $start)]
                         }
                     )*
                     _ => panic!("Read from unmapped address: {:#08X}", address),
                 }
             }
 
-            pub fn write_u8(&mut self, address: u32, value: u8) {
+            fn _write_u8(&mut self, address: u32, value: u8) {
                 match address {
                     $(
                         $start..=$end => {
-                            let index = (address - $start) % $len;
-                            if $writable { self.$region[index as usize] = value }
+                            if $writable { self.$region[$index_fn(address, $start)] = value }
                             else { panic!("Write to read-only address: {:#08X}", address) }
                         }
                     ,)*
@@ -63,18 +61,38 @@ macro_rules! gen_memory {
     };
 }
 
-const BIOS_LEN: u32 = 0x4_000;
 const WRAM1_LEN: u32 = 0x40_000;
 const WRAM2_LEN: u32 = 0x800;
 const IO_REGISTERS_LEN: u32 = 0x3FF;
-const GAME_PAK_ROM_LEN: u32 = 0x2_000_000;
+const PALETTE_RAM_LEN: u32 = 0x400;
+const VRAM_LEN: u32 = 0x18_000;
+
+fn normal_index() -> impl Fn(u32, u32) -> usize {
+    move |address: u32, start: u32| (address - start) as usize
+}
+
+fn wrapping_index(len: u32) -> impl Fn(u32, u32) -> usize {
+    move |address: u32, start: u32| ((address - start) % len) as usize
+}
+
+fn vram_index() -> impl Fn(u32, u32) -> usize {
+    move |mut address: u32, start: u32| {
+        address = (address - start) % 0x20_000;
+        if address >= VRAM_LEN {
+            address -= VRAM_LEN;
+        }
+        address as usize
+    }
+}
 
 gen_memory! {
-    0x00_000_000..=0x00_003_FFF => (bios, BIOS_LEN, false),
-    0x02_000_000..=0x02_FFF_FFF => (wram1, WRAM1_LEN, true),
-    0x03_000_000..=0x03_FFF_FFF => (wram2, WRAM2_LEN, true),
-    0x04_000_000..=0x04_000_3FE => (io_registers, IO_REGISTERS_LEN, true),
-    0x08_000_000..=0x09_FFF_FFF => (game_pak, GAME_PAK_ROM_LEN, false),
+    0x00_000_000..=0x00_003_FFF => (bios, normal_index(), false),
+    0x02_000_000..=0x02_FFF_FFF => (wram1, wrapping_index(WRAM1_LEN), true),
+    0x03_000_000..=0x03_FFF_FFF => (wram2, wrapping_index(WRAM2_LEN), true),
+    0x04_000_000..=0x04_000_3FE => (io_registers, normal_index(), true),
+    0x05_000_000..=0x05_FFF_FFF => (palette_ram, wrapping_index(PALETTE_RAM_LEN), true),
+    0x06_000_000..=0x06_FFF_FFF => (vram, vram_index(), true),
+    0x08_000_000..=0x09_FFF_FFF => (game_pak, normal_index(), false),
 }
 
 impl Memory {
@@ -84,8 +102,14 @@ impl Memory {
             wram1: vec![0; WRAM1_LEN as usize],
             wram2: vec![0; WRAM2_LEN as usize],
             io_registers: vec![0; IO_REGISTERS_LEN as usize],
+            palette_ram: vec![0; PALETTE_RAM_LEN as usize],
+            vram: vec![0; VRAM_LEN as usize],
             game_pak,
         }
+    }
+
+    pub fn read_u8(&self, address: u32) -> u8 {
+        self._read_u8(address)
     }
 
     pub fn read_u16(&self, address: u32) -> u16 {
@@ -100,13 +124,35 @@ impl Memory {
         (high << 16) | low
     }
 
+    pub fn write_u8(&mut self, address: u32, value: u8) {
+        if matches!(address, 0x05_000_000..=0x07_FFF_FFF) {
+            panic!("8bit writes into Video Memory are not supported");
+        }
+        self._write_u8(address, value);
+    }
+
     pub fn write_u16(&mut self, address: u32, value: u16) {
-        self.write_u8(address, value as u8);
-        self.write_u8(address + 1, (value >> 8) as u8);
+        self._write_u8(address, value as u8);
+        self._write_u8(address + 1, (value >> 8) as u8);
     }
 
     pub fn write_u32(&mut self, address: u32, value: u32) {
         self.write_u16(address, value as u16);
         self.write_u16(address + 2, (value >> 16) as u16);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vram_index() {
+        let vram_start = 0x06000000;
+        let vram = vram_index();
+
+        assert_eq!(vram(vram_start + 0x0000, vram_start), 0x0000); // Start of VRAM
+        assert_eq!(vram(vram_start + 0x18_000, vram_start), 0x0000); // Mirrored region
+        assert_eq!(vram(vram_start + 0x1F_FFF, vram_start), 0x7_FFF); // End of VRAM mirror
     }
 }

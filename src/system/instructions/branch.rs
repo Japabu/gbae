@@ -73,6 +73,12 @@ pub fn decode_conditional_branch_thumb(instruction: u16, _next_instruction: u16)
     })
 }
 
+pub fn decode_unconditional_branch_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn super::DecodedInstruction> {
+    let signed_immed_11 = get_bits16(instruction, 0, 11);
+    let offset = (sign_extend32(signed_immed_11 as u32, 11) << 1).wrapping_add(INSTRUCTION_LEN_THUMB * 2);
+    Box::new(Opcode::BOffset { l: false, x: false, offset })
+}
+
 impl DecodedInstruction for Opcode {
     fn execute(&self, cpu: &mut CPU) {
         match *self {

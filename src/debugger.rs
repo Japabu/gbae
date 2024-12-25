@@ -45,10 +45,7 @@ impl Debugger {
                 }
             }
             Some("b") | Some("break") => {
-                if let Some(addr) = parts
-                    .get(1)
-                    .and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-                {
+                if let Some(addr) = parts.get(1).and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok()) {
                     self.add_breakpoint(addr);
                     println!("Breakpoint added at 0x{:08X}", addr);
                 }
@@ -59,6 +56,11 @@ impl Debugger {
             }
             Some("q") | Some("quit") => {
                 std::process::exit(0);
+            }
+            Some("r") | Some("read") => {
+                if let Some(addr) = parts.get(1).and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok()) {
+                    println!("0x{:08X}: 0x{:08X}", addr, cpu.mem.read_u32(addr));
+                }
             }
             Some("h") | Some("help") => {
                 println!("Commands:");

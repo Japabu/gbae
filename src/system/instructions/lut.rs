@@ -121,7 +121,7 @@ impl InstructionLut {
         // data processing register
         self.add_pattern("010000 xx", Thumb(data_processing::decode_register_thumb));
         // special data processing
-        self.add_pattern("010001 xx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("010001 xx", Thumb(data_processing::decode_special_thumb));
         // branch/exchange
         self.add_pattern("010001 11", Thumb(branch::decode_branch_exchange_thumb));
         // load from literal pool

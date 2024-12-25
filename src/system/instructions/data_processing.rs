@@ -55,16 +55,47 @@ pub fn decode_shift_imm_thumb(instruction: u16, _next_instruction: u16) -> Box<d
 
 pub fn decode_register_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     let d = get_bits16(instruction, 0, 3) as u8;
-    let m = get_bits16(instruction, 3, 3) as u8;
+    let s = get_bits16(instruction, 3, 3) as u8;
     let (opcode, shifter_operand) = match get_bits16(instruction, 6, 4) {
-        0b1000 => (Opcode::TST { n: d }, ShifterOperand::Register { m }),
-        0b1111 => (Opcode::MVN { d }, ShifterOperand::Register { m }),
+        0b0000 => (Opcode::AND { d, n: d }, ShifterOperand::Register { m: s }),
+        0b0001 => (Opcode::EOR { d, n: d }, ShifterOperand::Register { m: s }),
+        0b0010 => (Opcode::MOV { d }, ShifterOperand::LogicalShiftLeftRegister { m: d, s }),
+        0b0011 => (Opcode::MOV { d }, ShifterOperand::LogicalShiftRightRegister { m: d, s }),
+        0b0100 => (Opcode::MOV { d }, ShifterOperand::ArithmeticShiftRightRegister { m: d, s }),
+        0b0101 => (Opcode::ADC { d, n: d }, ShifterOperand::Register { m: s }),
+        0b0110 => (Opcode::SBC { d, n: d }, ShifterOperand::Register { m: s }),
+        0b0111 => (Opcode::MOV { d }, ShifterOperand::RotateRightRegister { m: d, s }),
+        0b1000 => (Opcode::TST { n: d }, ShifterOperand::Register { m: s }),
+        0b1001 => (Opcode::RSB { d, n: d }, ShifterOperand::Register { m: s }),
+        0b1010 => (Opcode::CMP { n: d }, ShifterOperand::Register { m: s }),
+        0b1011 => (Opcode::CMN { n: d }, ShifterOperand::Register { m: s }),
+        0b1100 => (Opcode::ORR { d, n: d }, ShifterOperand::Register { m: s }),
+        0b1101 => panic!("decode_register_thumb: MUL is not supported"),
+        0b1110 => (Opcode::BIC { d, n: d }, ShifterOperand::Register { m: s }),
+        0b1111 => (Opcode::MVN { d }, ShifterOperand::Register { m: s }),
         x => todo!("Thumb opcode {:#04b}", x),
     };
     Box::new(DataProcessing {
         opcode,
         set_flags: true,
         shifter_operand,
+    })
+}
+
+pub fn decode_special_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+    let d = get_bits16(instruction, 0, 3) as u8 | (get_bit16(instruction, 7) as u8) << 4;
+    let s = get_bits16(instruction, 3, 4) as u8;
+    let (opcode, set_flags) = match get_bits16(instruction, 8, 2) {
+        0b00 => (Opcode::ADD { d, n: d }, false),
+        0b01 => (Opcode::CMP { n: d }, true),
+        0b10 => (Opcode::MOV { d }, false),
+        0b11 => panic!("decode_special_thumb: Should use branch decoder"),
+        _ => unreachable!(),
+    };
+    Box::new(DataProcessing {
+        opcode,
+        set_flags,
+        shifter_operand: ShifterOperand::Register { m: s },
     })
 }
 

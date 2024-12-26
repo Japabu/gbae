@@ -64,6 +64,7 @@ macro_rules! gen_memory {
 const WRAM1_LEN: u32 = 0x40_000;
 const WRAM2_LEN: u32 = 0x800;
 const IO_REGISTERS_LEN: u32 = 0x3FF;
+const IO_UNUSED_LEN: u32 = 0x1;
 const PALETTE_RAM_LEN: u32 = 0x400;
 const VRAM_LEN: u32 = 0x18_000;
 
@@ -90,6 +91,7 @@ gen_memory! {
     0x02_000_000..=0x02_FFF_FFF => (wram1, wrapping_index(WRAM1_LEN), true),
     0x03_000_000..=0x03_FFF_FFF => (wram2, wrapping_index(WRAM2_LEN), true),
     0x04_000_000..=0x04_000_3FE => (io_registers, normal_index(), true),
+    0x04_000_410..=0x04_000_410 => (io_unused, normal_index(), true),
     0x05_000_000..=0x05_FFF_FFF => (palette_ram, wrapping_index(PALETTE_RAM_LEN), true),
     0x06_000_000..=0x06_FFF_FFF => (vram, vram_index(), true),
     0x08_000_000..=0x09_FFF_FFF => (game_pak, normal_index(), false),
@@ -102,6 +104,7 @@ impl Memory {
             wram1: vec![0; WRAM1_LEN as usize],
             wram2: vec![0; WRAM2_LEN as usize],
             io_registers: vec![0; IO_REGISTERS_LEN as usize],
+            io_unused: vec![0; IO_UNUSED_LEN as usize],
             palette_ram: vec![0; PALETTE_RAM_LEN as usize],
             vram: vec![0; VRAM_LEN as usize],
             game_pak,

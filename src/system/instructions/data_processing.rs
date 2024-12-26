@@ -263,7 +263,7 @@ impl DecodedInstruction for DataProcessing {
         }
     }
 
-    fn disassemble(&self, cond: Condition) -> String {
+    fn disassemble(&self, cond: Condition, _base_address: u32) -> String {
         use Opcode::*;
         let (d, n) = match self.opcode {
             AND { d, n } | EOR { d, n } | SUB { d, n } | RSB { d, n } | ADD { d, n } | ADC { d, n } | SBC { d, n } | RSC { d, n } | ORR { d, n } | BIC { d, n } => (Some(d), Some(n)),
@@ -480,24 +480,24 @@ mod tests {
     fn test_mov() {
         let instruction = 0xe1a01000;
         let inst = decode_arm(instruction);
-        assert_eq!("MOV R1, R0", format!("{}", inst.disassemble(Condition::AL)));
+        assert_eq!("MOV R1, R0", format!("{}", inst.disassemble(Condition::AL, 0)));
     }
 
     #[test]
     fn test_cmp() {
         let instruction = 0xe1500000;
         let inst = decode_arm(instruction);
-        assert_eq!("CMPEQ R0, R0", format!("{}", inst.disassemble(Condition::EQ)));
+        assert_eq!("CMPEQ R0, R0", format!("{}", inst.disassemble(Condition::EQ, 0)));
     }
 
     #[test]
     fn test_add() {
         let instruction = 0xe0859185;
         let inst = decode_arm(instruction);
-        assert_eq!("ADD R9, R5, R5, LSL #0x3", format!("{}", inst.disassemble(Condition::AL)));
+        assert_eq!("ADD R9, R5, R5, LSL #0x3", format!("{}", inst.disassemble(Condition::AL, 0)));
 
         let instruction = 0xe2821f82;
         let inst = decode_arm(instruction);
-        assert_eq!("ADD R1, R2, #0x208", format!("{}", inst.disassemble(Condition::AL)));
+        assert_eq!("ADD R1, R2, #0x208", format!("{}", inst.disassemble(Condition::AL, 0)));
     }
 }

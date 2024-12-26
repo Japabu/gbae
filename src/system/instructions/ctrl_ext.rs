@@ -29,7 +29,7 @@ pub mod mrs {
             }
         }
 
-        fn disassemble(&self, cond: Condition) -> String {
+        fn disassemble(&self, cond: Condition, _base_address: u32) -> String {
             // MRS{<cond>} <Rd>, <CPSR|SPSR>
             format!("MRS{} R{}, {}", cond, self.d, if self.r { "SPSR" } else { "CPSR" })
         }
@@ -116,7 +116,7 @@ pub mod msr {
                 }
             }
         }
-        fn disassemble(&self, cond: Condition) -> String {
+        fn disassemble(&self, cond: Condition, _base_address: u32) -> String {
             // MSR{<cond>} {CPSR|SPSR}_<fields>, <#immediate|Rm>
             let field_mask = self.field_mask as u32;
             format!(

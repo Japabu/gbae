@@ -189,7 +189,7 @@ impl DecodedInstruction for LoadStore {
         }
     }
 
-    fn disassemble(&self, cond: Condition) -> String {
+    fn disassemble(&self, cond: Condition, _base_address: u32) -> String {
         let t = match self.adressing_mode.indexing_mode {
             IndexingMode::PostIndexed { t } => t,
             _ => false,
@@ -357,18 +357,18 @@ mod tests {
     #[test]
     fn test_strb() {
         let strb = decode_arm(0xe5c33208);
-        assert_eq!(format!("{}", strb.disassemble(Condition::EQ)), "STREQB R3, [R3, #+0x208]");
+        assert_eq!(format!("{}", strb.disassemble(Condition::EQ, 0)), "STREQB R3, [R3, #+0x208]");
     }
 
     #[test]
     fn test_ldrsd() {
         let instruction = decode_extra_arm(0xe17670f1);
-        assert_eq!(format!("{}", instruction.disassemble(Condition::EQ)), "LDREQSH R7, [R6, #-0x1]!");
+        assert_eq!(format!("{}", instruction.disassemble(Condition::EQ, 0)), "LDREQSH R7, [R6, #-0x1]!");
     }
 
     #[test]
     fn test_strh_thumb() {
         let instruction = decode_halfword_thumb(0x8021, 0);
-        assert_eq!(format!("{}", instruction.disassemble(Condition::AL)), "STRH R1, [R4, #+0x0]");
+        assert_eq!(format!("{}", instruction.disassemble(Condition::AL, 0)), "STRH R1, [R4, #+0x0]");
     }
 }

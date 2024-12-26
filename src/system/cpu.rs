@@ -311,14 +311,11 @@ impl CPU {
     }
 
     pub fn print_next_instruction(&self) {
+        let pc = self.r[REGISTER_PC as usize];
         if self.get_thumb_state() {
-            println!(
-                "Next thumb instruction at {:08X}: {}",
-                self.r[REGISTER_PC as usize],
-                format_instruction_thumb(self.fetch_thumb(), self.fetch_next_thumb())
-            );
+            println!("Next thumb instruction at {:08X}: {}", pc, format_instruction_thumb(self.fetch_thumb(), self.fetch_next_thumb(), pc));
         } else {
-            println!("Next arm instruction at {:08X}: {}", self.r[REGISTER_PC as usize], format_instruction_arm(self.fetch_arm()));
+            println!("Next arm instruction at {:08X}: {}", pc, format_instruction_arm(self.fetch_arm(), pc));
         }
     }
 }

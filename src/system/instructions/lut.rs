@@ -154,7 +154,7 @@ impl InstructionLut {
         // blx suffix
         self.add_pattern("11101 xxx", Thumb(UnknownInstruction::decode_thumb));
         // bl/blx prefix
-        self.add_pattern("11110 xxx", Thumb(branch::decode_bl_blx_prefix_thumb));
+        self.add_pattern("11110 xxx", Thumb(branch::decode_bl_thumb));
         // bl suffix
         self.add_pattern("11111 xxx", Thumb(UnknownInstruction::decode_thumb));
     }
@@ -228,7 +228,7 @@ impl DecodedInstruction for UnknownInstruction {
         }
     }
 
-    fn disassemble(&self, _cond: Condition) -> String {
+    fn disassemble(&self, _cond: Condition, _base_address: u32) -> String {
         match self {
             UnknownInstruction::Arm(instruction) => format!("???: {:#08X}", instruction),
             UnknownInstruction::Thumb(instruction, _) => format!("???: {:#04X}", instruction),

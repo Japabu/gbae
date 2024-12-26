@@ -126,7 +126,7 @@ impl DecodedInstruction for LoadStoreMultiple {
         assert_eq!(end_address, address - 4);
     }
 
-    fn disassemble(&self, cond: Condition) -> String {
+    fn disassemble(&self, cond: Condition, _base_address: u32) -> String {
         // {LDM|STM}{<cond>}<addressing_mode>{^}
         format!("{:?}{}{}{}", self.opcode, cond, self.addressing_mode, if self.s { "^" } else { "" },)
     }

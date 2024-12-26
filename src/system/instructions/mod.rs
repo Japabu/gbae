@@ -10,12 +10,12 @@ mod load_store;
 mod load_store_multiple;
 pub mod lut;
 
-pub fn format_instruction_arm(instruction: u32) -> String {
+pub fn format_instruction_arm(instruction: u32, base_address: u32) -> String {
     format!(
         "{} ({:08X})\n\
             Bit Index:   27 26 25 24 23 22 21 20   07 06 05 04\n\
             Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<4} {:<2} {:<2} {:<2} {:<2}",
-        lut::InstructionLut::decode_arm(instruction).disassemble(Condition::decode_arm(instruction)),
+        lut::InstructionLut::decode_arm(instruction).disassemble(Condition::decode_arm(instruction), base_address),
         instruction,
         get_bit(instruction, 27) as u32,
         get_bit(instruction, 26) as u32,
@@ -32,12 +32,12 @@ pub fn format_instruction_arm(instruction: u32) -> String {
     )
 }
 
-pub fn format_instruction_thumb(instruction: u16, next_instruction: u16) -> String {
+pub fn format_instruction_thumb(instruction: u16, next_instruction: u16, base_address: u32) -> String {
     format!(
-        "{} ({:08X}, next: {:08X})\n\
+        "{} ({:04X}, next: {:04X})\n\
             Bit Index:   15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00\n\
             Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2}",
-        lut::InstructionLut::decode_thumb(instruction, next_instruction).disassemble(Condition::AL),
+        lut::InstructionLut::decode_thumb(instruction, next_instruction).disassemble(Condition::AL, base_address),
         instruction,
         next_instruction,
         get_bit(instruction as u32, 15) as u32,
@@ -136,7 +136,7 @@ impl Display for Condition {
 
 pub trait DecodedInstruction: Debug {
     fn execute(&self, cpu: &mut CPU);
-    fn disassemble(&self, cond: Condition) -> String;
+    fn disassemble(&self, cond: Condition, base_address: u32) -> String;
 }
 
 #[cfg(test)]

@@ -282,7 +282,7 @@ impl CPU {
     pub fn print_registers(&self) {
         for i in (0..16u8).step_by(4) {
             println!(
-                "r{}: {:#X}  r{}: {:#X}  r{}: {:#X}  r{}: {:#X}",
+                "r{:2}: {:08X}   r{:2}: {:08X}   r{:2}: {:08X}   r{:2}: {:08X}",
                 i,
                 self.get_r(i),
                 i + 1,
@@ -297,27 +297,28 @@ impl CPU {
 
     pub fn print_status(&self) {
         println!(
-            "CPSR: 0x{:08X}{}, MODE: {}, THUMB: {}",
+            "CPSR: {:08X} [{}{}{}{}{}{}{}] MODE: {}",
             self.cpsr,
-            if self.current_mode_has_spsr() {
-                format!(" SPSR: 0x{:08X}", self.get_spsr())
-            } else {
-                String::new()
-            },
+            if self.get_negative_flag() { 'N' } else { '-' },
+            if self.get_zero_flag() { 'Z' } else { '-' },
+            if self.get_carry_flag() { 'C' } else { '-' },
+            if self.get_overflow_flag() { 'V' } else { '-' },
+            if self.get_irq_disable() { 'I' } else { '-' },
+            if self.get_fiq_disable() { 'F' } else { '-' },
+            if self.get_thumb_state() { 'T' } else { '-' },
             format_mode(self.get_mode()),
-            self.get_thumb_state(),
         );
     }
 
     pub fn print_next_instruction(&self) {
         if self.get_thumb_state() {
             println!(
-                "Next thumb instruction at 0x{:08X}: {}",
+                "Next thumb instruction at {:08X}: {}",
                 self.r[REGISTER_PC as usize],
                 format_instruction_thumb(self.fetch_thumb(), self.fetch_next_thumb())
             );
         } else {
-            println!("Next arm instruction at 0x{:08X}: {}", self.r[REGISTER_PC as usize], format_instruction_arm(self.fetch_arm()));
+            println!("Next arm instruction at {:08X}: {}", self.r[REGISTER_PC as usize], format_instruction_arm(self.fetch_arm()));
         }
     }
 }

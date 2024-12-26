@@ -332,12 +332,12 @@ impl Display for AddressingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use AddressingModeType::*;
         let rhs = match self.mode {
-            Immediate(imm) => format!("#{}{:#X}", if self.u_is_add { "+" } else { "-" }, imm),
+            Immediate(imm) => format!("#{}{:08X}", if self.u_is_add { "+" } else { "-" }, imm),
             Register { m } => format!("R{}", m),
-            LogicalShiftLeft { m, shift_imm } => format!("R{}, LSL #{:#X}", m, shift_imm),
-            LogicalShiftRight { m, shift_imm } => format!("R{}, LSR #{:#X}", m, shift_imm),
-            ArithmeticShiftRight { m, shift_imm } => format!("R{}, ASR #{:#X}", m, shift_imm),
-            RotateRight { m, shift_imm } => format!("R{}, ROR #{:#X}", m, shift_imm),
+            LogicalShiftLeft { m, shift_imm } => format!("R{}, LSL #{:08X}", m, shift_imm),
+            LogicalShiftRight { m, shift_imm } => format!("R{}, LSR #{:08X}", m, shift_imm),
+            ArithmeticShiftRight { m, shift_imm } => format!("R{}, ASR #{:08X}", m, shift_imm),
+            RotateRight { m, shift_imm } => format!("R{}, ROR #{:08X}", m, shift_imm),
             RotateRightWithExtend { m } => format!("R{}, RRX", m),
         };
 

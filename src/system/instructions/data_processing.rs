@@ -286,15 +286,15 @@ impl DecodedInstruction for DataProcessing {
 impl Display for ShifterOperand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
-            ShifterOperand::Immediate { immed, rotate_imm } => write!(f, "#{:#X}", ShifterOperand::calc_immediate(immed, rotate_imm)),
+            ShifterOperand::Immediate { immed, rotate_imm } => write!(f, "#{:08X}", ShifterOperand::calc_immediate(immed, rotate_imm)),
             ShifterOperand::Register { m } => write!(f, "R{}", m),
-            ShifterOperand::LogicalShiftLeftImmediate { m, shift_imm } => write!(f, "R{}, LSL #{:#X}", m, shift_imm),
+            ShifterOperand::LogicalShiftLeftImmediate { m, shift_imm } => write!(f, "R{}, LSL #{:08X}", m, shift_imm),
             ShifterOperand::LogicalShiftLeftRegister { m, s } => write!(f, "R{}, LSL R{}", m, s),
-            ShifterOperand::LogicalShiftRightImmediate { m, shift_imm } => write!(f, "R{}, LSR #{:#X}", m, shift_imm),
+            ShifterOperand::LogicalShiftRightImmediate { m, shift_imm } => write!(f, "R{}, LSR #{:08X}", m, shift_imm),
             ShifterOperand::LogicalShiftRightRegister { m, s } => write!(f, "R{}, LSR R{}", m, s),
-            ShifterOperand::ArithmeticShiftRightImmediate { m, shift_imm } => write!(f, "R{}, ASR #{:#X}", m, shift_imm),
+            ShifterOperand::ArithmeticShiftRightImmediate { m, shift_imm } => write!(f, "R{}, ASR #{:08X}", m, shift_imm),
             ShifterOperand::ArithmeticShiftRightRegister { m, s } => write!(f, "R{}, ASR R{}", m, s),
-            ShifterOperand::RotateRightImmediate { m, s } => write!(f, "R{}, ROR #{:#X}", m, s),
+            ShifterOperand::RotateRightImmediate { m, s } => write!(f, "R{}, ROR #{:08X}", m, s),
             ShifterOperand::RotateRightRegister { m, s } => write!(f, "R{}, ROR R{}", m, s),
             ShifterOperand::RotateRightWithExtend { m } => write!(f, "R{}, RRX", m),
         }

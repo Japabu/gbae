@@ -28,8 +28,10 @@ fn main() {
 
     loop {
         // Print current instruction before executing it
-        //cpu.print_registers();
-        //cpu.print_status();
+        println!();
+        cpu.print_registers();
+        cpu.print_status();
+        println!("{:08X}: {:08X}", 0x03007E9C, cpu.mem.read_u32(0x03007E9C));
         cpu.print_next_instruction();
 
         if !debugger.running || debugger.should_break(&cpu) {

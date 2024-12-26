@@ -112,9 +112,9 @@ impl DecodedInstruction for Opcode {
     fn disassemble(&self, cond: Condition) -> String {
         use Opcode::*;
         match *self {
-            BOffset { l, x, offset } => format!("B{}{}{} #{:#X}", if l { "L" } else { "" }, if x { "X" } else { "" }, cond, offset),
+            BOffset { l, x, offset } => format!("B{}{}{} #{:08X}", if l { "L" } else { "" }, if x { "X" } else { "" }, cond, offset),
             BRegister { l, x, m } => format!("B{}{}{} R{}", if l { "L" } else { "" }, if x { "X" } else { "" }, cond, m),
-            BCondThumb { cond, offset } => format!("B{} #{:#X}", cond, offset),
+            BCondThumb { cond, offset } => format!("B{} #{:08X}", cond, offset),
         }
     }
 }

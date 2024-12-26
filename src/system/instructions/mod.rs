@@ -12,7 +12,7 @@ pub mod lut;
 
 pub fn format_instruction_arm(instruction: u32) -> String {
     format!(
-        "{} ({:#X})\n\
+        "{} ({:08X})\n\
             Bit Index:   27 26 25 24 23 22 21 20   07 06 05 04\n\
             Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<4} {:<2} {:<2} {:<2} {:<2}",
         lut::InstructionLut::decode_arm(instruction).disassemble(Condition::decode_arm(instruction)),
@@ -34,7 +34,7 @@ pub fn format_instruction_arm(instruction: u32) -> String {
 
 pub fn format_instruction_thumb(instruction: u16, next_instruction: u16) -> String {
     format!(
-        "{} ({:#X}, next: {:#X})\n\
+        "{} ({:08X}, next: {:08X})\n\
             Bit Index:   15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00\n\
             Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2}",
         lut::InstructionLut::decode_thumb(instruction, next_instruction).disassemble(Condition::AL),

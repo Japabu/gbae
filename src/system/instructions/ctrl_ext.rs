@@ -128,7 +128,7 @@ pub mod msr {
                 if get_bit(field_mask, 2) { "s" } else { "" },
                 if get_bit(field_mask, 3) { "f" } else { "" },
                 match self.mode {
-                    MsrOperand::Immediate(imm) => format!("#{:#X}", imm),
+                    MsrOperand::Immediate(imm) => format!("#{:08X}", imm),
                     MsrOperand::Register(m) => format!("R{}", m),
                 }
             )

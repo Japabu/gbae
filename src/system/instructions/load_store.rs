@@ -58,6 +58,26 @@ pub fn decode_halfword_thumb(instruction: u16, _next_instruction: u16) -> Box<dy
     })
 }
 
+pub fn decode_word_byte_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
+    let d = get_bits16(instruction, 0, 3) as u8;
+    let b = get_bits16(instruction, 3, 3) as u8;
+    let offset = get_bits16(instruction, 6, 5);
+    let is_load = get_bit16(instruction, 11);
+    let is_byte = get_bit16(instruction, 12);
+    Box::new(LoadStore {
+        opcode: if is_load { Opcode::LDR } else { Opcode::STR },
+        length: if is_byte { Length::Byte } else { Length::Word },
+        sign_extend: false,
+        d,
+        adressing_mode: AddressingMode {
+            u_is_add: true,
+            n: b,
+            mode: AddressingModeType::Immediate(offset),
+            indexing_mode: IndexingMode::Offset,
+        },
+    })
+}
+
 pub fn decode_stack_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn DecodedInstruction> {
     let is_load = get_bit16(instruction, 11);
     Box::new(LoadStore {
@@ -332,12 +352,12 @@ impl Display for AddressingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use AddressingModeType::*;
         let rhs = match self.mode {
-            Immediate(imm) => format!("#{}{:08X}", if self.u_is_add { "+" } else { "-" }, imm),
+            Immediate(imm) => format!("#{}{:X}", if self.u_is_add { "+" } else { "-" }, imm),
             Register { m } => format!("R{}", m),
-            LogicalShiftLeft { m, shift_imm } => format!("R{}, LSL #{:08X}", m, shift_imm),
-            LogicalShiftRight { m, shift_imm } => format!("R{}, LSR #{:08X}", m, shift_imm),
-            ArithmeticShiftRight { m, shift_imm } => format!("R{}, ASR #{:08X}", m, shift_imm),
-            RotateRight { m, shift_imm } => format!("R{}, ROR #{:08X}", m, shift_imm),
+            LogicalShiftLeft { m, shift_imm } => format!("R{}, LSL #{:X}", m, shift_imm),
+            LogicalShiftRight { m, shift_imm } => format!("R{}, LSR #{:X}", m, shift_imm),
+            ArithmeticShiftRight { m, shift_imm } => format!("R{}, ASR #{:X}", m, shift_imm),
+            RotateRight { m, shift_imm } => format!("R{}, ROR #{:X}", m, shift_imm),
             RotateRightWithExtend { m } => format!("R{}, RRX", m),
         };
 

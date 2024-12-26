@@ -129,7 +129,7 @@ impl InstructionLut {
         // load/store register offset
         self.add_pattern("0101 xxxx", Thumb(load_store::decode_register_offset_thumb));
         // load/store word/byte immediate offset
-        self.add_pattern("011x xxxx", Thumb(UnknownInstruction::decode_thumb));
+        self.add_pattern("011x xxxx", Thumb(load_store::decode_word_byte_thumb));
         // load/store halfword immediate offset
         self.add_pattern("1000 xxxx", Thumb(load_store::decode_halfword_thumb));
         // load/store to/from stack

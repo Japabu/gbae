@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    bitutil::{get_bit, get_bit16, get_bits16, get_bits32},
+    bitutil::{get_bit, get_bits16, get_bits32},
     system::cpu::{self, CPU, REGISTER_LR, REGISTER_PC, REGISTER_SP},
 };
 

@@ -10,6 +10,7 @@ enum Opcode {
     BOffset { l: bool, x: bool, offset: u32 },
     BRegister { l: bool, x: bool, m: u8 },
     BCondThumb { cond: Condition, offset: u32 },
+    BLThumb { offset: u32 },
 }
 
 pub fn decode_b_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
@@ -52,7 +53,7 @@ pub fn decode_branch_exchange_thumb(instruction: u16, _next_instruction: u16) ->
     })
 }
 
-pub fn decode_bl_blx_prefix_thumb(instruction: u16, next_instruction: u16) -> Box<dyn super::DecodedInstruction> {
+pub fn decode_bl_thumb(instruction: u16, next_instruction: u16) -> Box<dyn super::DecodedInstruction> {
     assert_eq!(get_bits16(instruction, 11, 2), 0b10);
     assert_eq!(get_bits16(next_instruction, 11, 2), 0b11);
 
@@ -61,7 +62,7 @@ pub fn decode_bl_blx_prefix_thumb(instruction: u16, next_instruction: u16) -> Bo
 
     let offset = hi.wrapping_add(INSTRUCTION_LEN_THUMB * 2).wrapping_add(lo);
 
-    Box::new(Opcode::BOffset { l: true, x: false, offset })
+    Box::new(Opcode::BLThumb { offset })
 }
 
 pub fn decode_conditional_branch_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn super::DecodedInstruction> {
@@ -89,7 +90,7 @@ impl DecodedInstruction for Opcode {
                 if x {
                     cpu.set_thumb_state(true);
                 }
-                cpu.set_r(REGISTER_PC, cpu.get_r(REGISTER_PC).wrapping_add(offset.wrapping_sub(cpu.instruction_len_in_bytes() * 2)));
+                cpu.set_r(REGISTER_PC, cpu.curr_instruction_address_from_execution_stage().wrapping_add(offset));
             }
             Opcode::BRegister { l, x, m } => {
                 if l {
@@ -103,18 +104,24 @@ impl DecodedInstruction for Opcode {
             }
             Opcode::BCondThumb { cond, offset } => {
                 if cond.check(cpu) {
-                    cpu.set_r(REGISTER_PC, cpu.get_r(REGISTER_PC).wrapping_add(offset.wrapping_sub(cpu.instruction_len_in_bytes() * 2)));
+                    cpu.set_r(REGISTER_PC, cpu.curr_instruction_address_from_execution_stage().wrapping_add(offset));
                 }
+            }
+            Opcode::BLThumb { offset } => {
+                // Point LR to the next instruction after the suffix
+                cpu.set_r(REGISTER_LR, cpu.next_instruction_address_from_execution_stage() + cpu.instruction_len_in_bytes() | 1);
+                cpu.set_r(REGISTER_PC, cpu.curr_instruction_address_from_execution_stage().wrapping_add(offset));
             }
         }
     }
 
-    fn disassemble(&self, cond: Condition) -> String {
+    fn disassemble(&self, cond: Condition, base_address: u32) -> String {
         use Opcode::*;
         match *self {
-            BOffset { l, x, offset } => format!("B{}{}{} #{:08X}", if l { "L" } else { "" }, if x { "X" } else { "" }, cond, offset),
+            BOffset { l, x, offset } => format!("B{}{}{} #{:08X}", if l { "L" } else { "" }, if x { "X" } else { "" }, cond, base_address.wrapping_add(offset)),
             BRegister { l, x, m } => format!("B{}{}{} R{}", if l { "L" } else { "" }, if x { "X" } else { "" }, cond, m),
-            BCondThumb { cond, offset } => format!("B{} #{:08X}", cond, offset),
+            BCondThumb { cond, offset } => format!("B{} #{:08X}", cond, base_address.wrapping_add(offset)),
+            BLThumb { offset } => format!("BL #{:08X}", base_address.wrapping_add(offset)),
         }
     }
 }

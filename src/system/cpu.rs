@@ -218,6 +218,10 @@ impl CPU {
         self.r[REGISTER_PC as usize] - self.instruction_len_in_bytes()
     }
 
+    pub fn curr_instruction_address_from_execution_stage(&self) -> u32 {
+        self.r[REGISTER_PC as usize] - self.instruction_len_in_bytes() * 2
+    }
+
     pub fn get_negative_flag(&self) -> bool {
         get_bit(self.cpsr, 31)
     }

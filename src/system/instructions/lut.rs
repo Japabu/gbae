@@ -223,15 +223,15 @@ impl UnknownInstruction {
 impl DecodedInstruction for UnknownInstruction {
     fn execute(&self, _cpu: &mut CPU) {
         match self {
-            UnknownInstruction::Arm(instruction) => panic!("Tried to execute unknown arm instruction: {:#08X}", instruction),
-            UnknownInstruction::Thumb(instruction, next_instruction) => panic!("Tried to execute unknown thumb instruction: {:#04X}, next: {:#04X}", instruction, next_instruction),
+            UnknownInstruction::Arm(instruction) => panic!("Tried to execute unknown arm instruction: {:08X}", instruction),
+            UnknownInstruction::Thumb(instruction, next_instruction) => panic!("Tried to execute unknown thumb instruction: {:04X}, next: {:04X}", instruction, next_instruction),
         }
     }
 
     fn disassemble(&self, _cond: Condition, _base_address: u32) -> String {
         match self {
-            UnknownInstruction::Arm(instruction) => format!("???: {:#08X}", instruction),
-            UnknownInstruction::Thumb(instruction, _) => format!("???: {:#04X}", instruction),
+            UnknownInstruction::Arm(instruction) => format!("???: {:08X}", instruction),
+            UnknownInstruction::Thumb(instruction, _) => format!("???: {:04X}", instruction),
         }
     }
 }

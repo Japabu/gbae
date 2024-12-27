@@ -6,7 +6,7 @@ use winit::{
     dpi::Size,
     event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowButtons, WindowId},
+    window::{Window, WindowAttributes, WindowButtons, WindowId},
 };
 
 pub struct PPU {}
@@ -17,7 +17,12 @@ impl PPU {
         event_loop.set_control_flow(ControlFlow::Poll);
 
         let mut app = App::default();
-        event_loop.run_app(&mut app).expect("Failed to run event loop");
+
+        #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+        event_loop.run_app(&mut app).unwrap();
+
+        #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+        winit::platform::web::EventLoopExtWebSys::spawn_app(event_loop, app);
 
         PPU {}
     }
@@ -32,17 +37,16 @@ struct App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window = Rc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE)
-                        .with_resizable(false)
-                        .with_title("PPU".to_string())
-                        .with_inner_size(Size::Physical((800, 600).into())),
-                )
-                .expect("Failed to create window"),
-        );
+        let attributes = WindowAttributes::default()
+            .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE)
+            .with_resizable(false)
+            .with_title("PPU".to_string())
+            .with_inner_size(Size::Physical((800, 600).into()));
+
+        #[cfg(target_arch = "wasm32")]
+        let attributes = winit::platform::web::WindowAttributesExtWebSys::with_append(attributes, true);
+
+        let window = Rc::new(event_loop.create_window(attributes).expect("Failed to create window"));
         let context = Context::new(window.clone()).expect("Failed to create context");
         let surface = Surface::new(&context, window.clone()).expect("Failed to create surface");
 

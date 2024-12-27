@@ -151,12 +151,8 @@ impl InstructionLut {
         self.add_pattern("1101 1111", Thumb(UnknownInstruction::decode_thumb));
         // unconditional branch
         self.add_pattern("11100 xxx", Thumb(branch::decode_unconditional_branch_thumb));
-        // blx suffix
-        self.add_pattern("11101 xxx", Thumb(UnknownInstruction::decode_thumb));
-        // bl/blx prefix
+        // bl
         self.add_pattern("11110 xxx", Thumb(branch::decode_bl_thumb));
-        // bl suffix
-        self.add_pattern("11111 xxx", Thumb(UnknownInstruction::decode_thumb));
     }
 
     fn add_pattern(&mut self, pattern: &str, decoder: DecoderFn) {

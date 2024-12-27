@@ -12,7 +12,7 @@ use std::{
     fs,
     io::{stdin, stdout, Write},
 };
-use system::{cpu::CPU, memory::Memory};
+use system::{cpu::CPU, memory::Memory, ppu::PPU};
 
 fn main() {
     let bios = fs::read("gba_bios.bin").expect("Failed to read bios");
@@ -22,6 +22,7 @@ fn main() {
 
     let memory = Memory::new(bios, cartridge_data);
     let mut cpu = CPU::new(memory);
+    let mut ppu = PPU::new();
     let mut debugger = Debugger::new();
 
     println!("GBA Debugger. Type 'h' for help.");

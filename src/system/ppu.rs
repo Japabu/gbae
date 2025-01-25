@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, rc::Rc};
+use std::{num::NonZeroU32, rc::Rc, sync::Arc};
 
 use softbuffer::{Context, Surface};
 use winit::{
@@ -9,14 +9,46 @@ use winit::{
     window::{Window, WindowAttributes, WindowButtons, WindowId},
 };
 
-pub struct PPU {}
+const BUFFER_WIDTH: usize = 240;
+const BUFFER_HEIGHT: usize = 160;
+
+pub struct PPU {
+    // framebuffer[row][col][color]
+    framebuffer: Box<[[[u8; 3]; BUFFER_WIDTH]; BUFFER_HEIGHT]>,
+}
 
 impl PPU {
-    pub fn new() -> Self {
+    pub fn new() -> Arc<Self> {
+        let mut framebuffer = Box::new([[[0; 3]; BUFFER_WIDTH]; BUFFER_HEIGHT]);
+        for y in 0..BUFFER_HEIGHT {
+            for x in 0..BUFFER_WIDTH {
+                framebuffer[y][x][0] = (f32::cos(y as f32 / BUFFER_HEIGHT as f32 * std::f32::consts::PI * 2f32) * 120f32 + 120f32) as u8;
+                framebuffer[y][x][1] = (f32::cos(x as f32 / BUFFER_WIDTH as f32 * std::f32::consts::PI * 2f32) * 120f32 + 120f32) as u8;
+                framebuffer[y][x][2] = (f32::cos(y as f32 / BUFFER_HEIGHT as f32 * std::f32::consts::PI * 3f32) * 120f32 + 120f32) as u8 / 2
+                    + (f32::cos(x as f32 / BUFFER_WIDTH as f32 * std::f32::consts::PI * 3f32) * 120f32 + 120f32) as u8 / 2;
+
+                if x < 10 && y < 10 {
+                    framebuffer[y][x] = [255, 0, 0];
+                } else if x >= BUFFER_WIDTH - 10 && y < 10 {
+                    framebuffer[y][x] = [0, 255, 0];
+                } else if x < 10 && y >= BUFFER_HEIGHT - 10 {
+                    framebuffer[y][x] = [0, 0, 255];
+                }
+            }
+        }
+        let ppu = Arc::new(PPU { framebuffer });
+
         let event_loop = EventLoop::new().expect("Failed to create event loop");
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        let mut app = App::default();
+        let proxy = event_loop.create_proxy();
+
+        let mut app = App {
+            window: None,
+            context: None,
+            surface: None,
+            ppu: ppu.clone(),
+        };
 
         #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
         event_loop.run_app(&mut app).unwrap();
@@ -24,24 +56,23 @@ impl PPU {
         #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
         winit::platform::web::EventLoopExtWebSys::spawn_app(event_loop, app);
 
-        PPU {}
+        ppu
     }
 }
 
-#[derive(Default)]
 struct App {
     window: Option<Rc<Window>>,
     context: Option<Context<Rc<Window>>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
+    ppu: Arc<PPU>,
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attributes = WindowAttributes::default()
             .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE)
-            .with_resizable(false)
             .with_title("PPU".to_string())
-            .with_inner_size(Size::Physical((800, 600).into()));
+            .with_inner_size(Size::Physical((BUFFER_WIDTH as u32 * 4, BUFFER_HEIGHT as u32 * 4).into()));
 
         #[cfg(target_arch = "wasm32")]
         let attributes = winit::platform::web::WindowAttributesExtWebSys::with_append(attributes, true);
@@ -69,14 +100,15 @@ impl ApplicationHandler for App {
                 surface.resize(NonZeroU32::new(width).unwrap(), NonZeroU32::new(height).unwrap()).unwrap();
 
                 let mut buffer = surface.buffer_mut().unwrap();
-                for index in 0..(width * height) {
-                    let y = index / width;
-                    let x = index % width;
-                    let red = x % 255;
-                    let green = y % 255;
-                    let blue = (x * y) % 255;
-
-                    buffer[index as usize] = blue | (green << 8) | (red << 16);
+                for y in 0..height {
+                    for x in 0..width {
+                        let fy = y as usize * BUFFER_HEIGHT / height as usize;
+                        let fx = x as usize * BUFFER_WIDTH / width as usize;
+                        let red = self.ppu.framebuffer[fy][fx][0] as u32;
+                        let green = self.ppu.framebuffer[fy][fx][1] as u32;
+                        let blue = self.ppu.framebuffer[fy][fx][2] as u32;
+                        buffer[(y * width + x) as usize] = blue | (green << 8) | (red << 16);
+                    }
                 }
 
                 buffer.present().unwrap();

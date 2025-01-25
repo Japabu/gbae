@@ -1,25 +1,32 @@
-use std::{num::NonZeroU32, rc::Rc, sync::Arc};
+use std::{
+    num::NonZeroU32,
+    rc::Rc,
+    sync::{Arc, RwLock},
+};
 
 use softbuffer::{Context, Surface};
 use winit::{
     application::ApplicationHandler,
     dpi::Size,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     window::{Window, WindowAttributes, WindowButtons, WindowId},
 };
 
 const BUFFER_WIDTH: usize = 240;
 const BUFFER_HEIGHT: usize = 160;
 
+type Framebuffer = [[[u8; 3]; BUFFER_WIDTH]; BUFFER_HEIGHT];
+
 pub struct PPU {
     // framebuffer[row][col][color]
-    framebuffer: Box<[[[u8; 3]; BUFFER_WIDTH]; BUFFER_HEIGHT]>,
+    framebuffer: Arc<RwLock<Framebuffer>>,
+    event_loop_proxy: EventLoopProxy<()>,
 }
 
 impl PPU {
-    pub fn new() -> Arc<Self> {
-        let mut framebuffer = Box::new([[[0; 3]; BUFFER_WIDTH]; BUFFER_HEIGHT]);
+    pub fn new() -> PPU {
+        let mut framebuffer = [[[0; 3]; BUFFER_WIDTH]; BUFFER_HEIGHT];
         for y in 0..BUFFER_HEIGHT {
             for x in 0..BUFFER_WIDTH {
                 framebuffer[y][x][0] = (f32::cos(y as f32 / BUFFER_HEIGHT as f32 * std::f32::consts::PI * 2f32) * 120f32 + 120f32) as u8;
@@ -36,18 +43,20 @@ impl PPU {
                 }
             }
         }
-        let ppu = Arc::new(PPU { framebuffer });
 
         let event_loop = EventLoop::new().expect("Failed to create event loop");
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        let proxy = event_loop.create_proxy();
+        let ppu = PPU {
+            framebuffer: Arc::new(RwLock::new(framebuffer)),
+            event_loop_proxy: event_loop.create_proxy(),
+        };
 
         let mut app = App {
             window: None,
             context: None,
             surface: None,
-            ppu: ppu.clone(),
+            framebuffer: Arc::new(RwLock::new(framebuffer.clone())),
         };
 
         #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
@@ -64,7 +73,7 @@ struct App {
     window: Option<Rc<Window>>,
     context: Option<Context<Rc<Window>>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
-    ppu: Arc<PPU>,
+    framebuffer: Arc<RwLock<Framebuffer>>,
 }
 
 impl ApplicationHandler for App {
@@ -100,13 +109,14 @@ impl ApplicationHandler for App {
                 surface.resize(NonZeroU32::new(width).unwrap(), NonZeroU32::new(height).unwrap()).unwrap();
 
                 let mut buffer = surface.buffer_mut().unwrap();
+                let framebuffer = &self.framebuffer.read().unwrap();
                 for y in 0..height {
                     for x in 0..width {
                         let fy = y as usize * BUFFER_HEIGHT / height as usize;
                         let fx = x as usize * BUFFER_WIDTH / width as usize;
-                        let red = self.ppu.framebuffer[fy][fx][0] as u32;
-                        let green = self.ppu.framebuffer[fy][fx][1] as u32;
-                        let blue = self.ppu.framebuffer[fy][fx][2] as u32;
+                        let red = framebuffer[fy][fx][0] as u32;
+                        let green = framebuffer[fy][fx][1] as u32;
+                        let blue = framebuffer[fy][fx][2] as u32;
                         buffer[(y * width + x) as usize] = blue | (green << 8) | (red << 16);
                     }
                 }

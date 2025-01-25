@@ -1,4 +1,4 @@
-use crate::system::cpu::CPU;
+use crate::system::{cpu::CPU, memory::Memory};
 
 pub struct Debugger {
     breakpoints: Vec<u32>,
@@ -23,7 +23,7 @@ impl Debugger {
         self.step_mode || self.breakpoints.contains(&cpu.get_r(15))
     }
 
-    pub fn handle_command(&mut self, cpu: &mut CPU, command: &str) {
+    pub fn handle_command(&mut self, command: &str, cpu: &mut CPU, mem: &mut Memory) {
         let parts: Vec<&str> = command.trim().split_whitespace().collect();
         match parts.get(0).map(|s| *s) {
             Some("c") | Some("continue") => {
@@ -36,7 +36,7 @@ impl Debugger {
                     self.running = true;
                     self.step_mode = true;
                     for _ in 0..n - 1 {
-                        cpu.cycle();
+                        cpu.cycle(mem);
                     }
                 } else {
                     // Single step
@@ -59,7 +59,7 @@ impl Debugger {
             }
             Some("r") | Some("read") => {
                 if let Some(addr) = parts.get(1).and_then(|s| u32::from_str_radix(s, 16).ok()) {
-                    println!("{:08X}: {:08X}", addr, cpu.mem.read_u32(addr));
+                    println!("{:08X}: {:08X}", addr, mem.read_u32(addr));
                 }
             }
             Some("h") | Some("help") => {

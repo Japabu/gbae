@@ -4,6 +4,7 @@ pub mod mrs {
         system::{
             cpu::CPU,
             instructions::{Condition, DecodedInstruction},
+            memory::Memory,
         },
     };
 
@@ -21,7 +22,7 @@ pub mod mrs {
     }
 
     impl DecodedInstruction for Mrs {
-        fn execute(&self, cpu: &mut CPU) {
+        fn execute(&self, cpu: &mut CPU, _mem: &mut Memory) {
             if self.r {
                 cpu.set_r(self.d, cpu.get_spsr());
             } else {
@@ -42,6 +43,7 @@ pub mod msr {
         system::{
             cpu::CPU,
             instructions::{Condition, DecodedInstruction},
+            memory::Memory,
         },
     };
 
@@ -79,7 +81,7 @@ pub mod msr {
     }
 
     impl DecodedInstruction for Msr {
-        fn execute(&self, cpu: &mut CPU) {
+        fn execute(&self, cpu: &mut CPU, _mem: &mut Memory) {
             let operand = match self.mode {
                 MsrOperand::Immediate(imm) => imm,
                 MsrOperand::Register(m) => cpu.get_r(m),

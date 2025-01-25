@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use super::cpu::CPU;
+use super::{cpu::CPU, memory::Memory};
 use crate::bitutil::{get_bit, get_bits32};
 
 mod branch;
@@ -135,7 +135,7 @@ impl Display for Condition {
 }
 
 pub trait DecodedInstruction: Debug {
-    fn execute(&self, cpu: &mut CPU);
+    fn execute(&self, cpu: &mut CPU, mem: &mut Memory);
     fn disassemble(&self, cond: Condition, base_address: u32) -> String;
 }
 

@@ -2,7 +2,10 @@ use std::fmt::Display;
 
 use crate::{
     bitutil::{self, arithmetic_shift_right, get_bit, get_bit16, get_bits16, get_bits32, rotate_right_with_extend},
-    system::cpu::{CPU, REGISTER_SP},
+    system::{
+        cpu::{CPU, REGISTER_SP},
+        memory::Memory,
+    },
 };
 
 use super::{Condition, DecodedInstruction};
@@ -198,7 +201,7 @@ enum ShifterOperand {
 }
 
 impl DecodedInstruction for DataProcessing {
-    fn execute(&self, cpu: &mut CPU) {
+    fn execute(&self, cpu: &mut CPU, _mem: &mut Memory) {
         use Opcode::*;
 
         let process_result = |cpu: &mut CPU, d: Option<u8>, result: u32, carry: bool, overflow: Option<bool>| {

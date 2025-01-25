@@ -38,7 +38,6 @@ pub fn format_mode(mode: u8) -> &'static str {
 
 pub struct CPU {
     pub cpsr: u32, /* current program status register */
-    pub mem: Memory,
 
     /* r13: stack pointer, r14: link register, r15: pc */
     r: [u32; 16],    // unbanked
@@ -55,6 +54,7 @@ pub struct CPU {
     spsr_fiq: u32,
 
     branch_happened: bool,
+    cycles: u64,
 }
 
 impl CPU {
@@ -134,12 +134,11 @@ impl CPU {
         }
     }
 
-    pub fn new(mem: Memory) -> Self {
+    pub fn new() -> Self {
         InstructionLut::initialize();
 
         let mut cpu = CPU {
             cpsr: 0,
-            mem,
 
             r: [0; 16],    // unbanked
             r_svc: [0; 2], // banked in svc mode
@@ -155,18 +154,20 @@ impl CPU {
             spsr_fiq: 0,
 
             branch_happened: false,
+
+            cycles: 0,
         };
         cpu.reset();
         cpu
     }
 
-    pub fn cycle(&mut self) {
+    pub fn cycle(&mut self, mem: &mut Memory) {
         let decoded_instruction = if self.get_thumb_state() {
-            let instruction = self.fetch_thumb();
+            let instruction = self.fetch_thumb(mem);
             self.r[REGISTER_PC as usize] += self.instruction_len_in_bytes();
-            InstructionLut::decode_thumb(instruction, self.fetch_thumb())
+            InstructionLut::decode_thumb(instruction, self.fetch_thumb(mem))
         } else {
-            let instruction = self.fetch_arm();
+            let instruction = self.fetch_arm(mem);
             self.r[REGISTER_PC as usize] += self.instruction_len_in_bytes();
             let cond = Condition::decode_arm(instruction);
             if !cond.check(self) {
@@ -178,12 +179,15 @@ impl CPU {
         // Pc should be two instructions ahead of currently executed instruction
         self.r[REGISTER_PC as usize] += self.instruction_len_in_bytes();
         self.branch_happened = false;
-        decoded_instruction.execute(self);
+        decoded_instruction.execute(self, mem);
 
         // If there was no branch set pc to the next instruction
         if !self.branch_happened {
             self.r[REGISTER_PC as usize] -= self.instruction_len_in_bytes();
         }
+
+        // approximate cycle count for now
+        self.cycles += 2;
     }
 
     fn reset(&mut self) {
@@ -194,16 +198,16 @@ impl CPU {
         self.r[REGISTER_PC as usize] = 0x00000000;
     }
 
-    fn fetch_arm(&self) -> u32 {
-        self.mem.read_u32(self.r[REGISTER_PC as usize])
+    fn fetch_arm(&self, mem: &Memory) -> u32 {
+        mem.read_u32(self.r[REGISTER_PC as usize])
     }
 
-    fn fetch_thumb(&self) -> u16 {
-        self.mem.read_u16(self.r[REGISTER_PC as usize])
+    fn fetch_thumb(&self, mem: &Memory) -> u16 {
+        mem.read_u16(self.r[REGISTER_PC as usize])
     }
 
-    fn fetch_next_thumb(&self) -> u16 {
-        self.mem.read_u16(self.r[REGISTER_PC as usize] + INSTRUCTION_LEN_THUMB)
+    fn fetch_next_thumb(&self, mem: &Memory) -> u16 {
+        mem.read_u16(self.r[REGISTER_PC as usize] + INSTRUCTION_LEN_THUMB)
     }
 
     pub fn instruction_len_in_bytes(&self) -> u32 {
@@ -314,12 +318,12 @@ impl CPU {
         );
     }
 
-    pub fn print_next_instruction(&self) {
+    pub fn print_next_instruction(&self, mem: &Memory) {
         let pc = self.r[REGISTER_PC as usize];
         if self.get_thumb_state() {
-            println!("Next thumb instruction at {:08X}: {}", pc, format_instruction_thumb(self.fetch_thumb(), self.fetch_next_thumb(), pc));
+            println!("Next thumb instruction at {:08X}: {}", pc, format_instruction_thumb(self.fetch_thumb(mem), self.fetch_next_thumb(mem), pc));
         } else {
-            println!("Next arm instruction at {:08X}: {}", pc, format_instruction_arm(self.fetch_arm(), pc));
+            println!("Next arm instruction at {:08X}: {}", pc, format_instruction_arm(self.fetch_arm(mem), pc));
         }
     }
 }

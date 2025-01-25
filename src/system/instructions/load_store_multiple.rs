@@ -2,7 +2,10 @@ use std::fmt::Display;
 
 use crate::{
     bitutil::{get_bit, get_bits16, get_bits32},
-    system::cpu::{self, CPU, REGISTER_LR, REGISTER_PC, REGISTER_SP},
+    system::{
+        cpu::{self, CPU, REGISTER_LR, REGISTER_PC, REGISTER_SP},
+        memory::Memory,
+    },
 };
 
 use super::{Condition, DecodedInstruction};
@@ -96,7 +99,7 @@ pub fn decode_pop_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn sup
 }
 
 impl DecodedInstruction for LoadStoreMultiple {
-    fn execute(&self, cpu: &mut CPU) {
+    fn execute(&self, cpu: &mut CPU, mem: &mut Memory) {
         let registers = self.addressing_mode.registers as u32;
         let (start_address, end_address) = self.addressing_mode.execute(cpu);
 
@@ -109,7 +112,7 @@ impl DecodedInstruction for LoadStoreMultiple {
                 }
                 for i in 0..=15 {
                     if get_bit(registers, i) {
-                        cpu.set_r_in_mode(i, cpu_mode, cpu.mem.read_u32(address));
+                        cpu.set_r_in_mode(i, cpu_mode, mem.read_u32(address));
                         address += 4;
                     }
                 }
@@ -117,7 +120,7 @@ impl DecodedInstruction for LoadStoreMultiple {
             Opcode::STM => {
                 for i in 0..=15 {
                     if get_bit(registers, i) {
-                        cpu.mem.write_u32(address, cpu.get_r_in_mode(i, cpu_mode));
+                        mem.write_u32(address, cpu.get_r_in_mode(i, cpu_mode));
                         address += 4;
                     }
                 }

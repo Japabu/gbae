@@ -1,4 +1,5 @@
 use crate::system::instructions::{branch, data_processing, load_store};
+use crate::system::memory::Memory;
 use crate::{bitutil::get_bits32, system::cpu::CPU};
 
 use super::{ctrl_ext, load_store_multiple, Condition, DecodedInstruction};
@@ -217,7 +218,7 @@ impl UnknownInstruction {
     }
 }
 impl DecodedInstruction for UnknownInstruction {
-    fn execute(&self, _cpu: &mut CPU) {
+    fn execute(&self, _cpu: &mut CPU, _mem: &mut Memory) {
         match self {
             UnknownInstruction::Arm(instruction) => panic!("Tried to execute unknown arm instruction: {:08X}", instruction),
             UnknownInstruction::Thumb(instruction, next_instruction) => panic!("Tried to execute unknown thumb instruction: {:04X}, next: {:04X}", instruction, next_instruction),

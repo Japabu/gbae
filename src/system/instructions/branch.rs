@@ -1,6 +1,9 @@
 use crate::{
     bitutil::{get_bit, get_bit16, get_bits16, get_bits32, sign_extend32},
-    system::cpu::{CPU, INSTRUCTION_LEN_ARM, INSTRUCTION_LEN_THUMB, REGISTER_LR, REGISTER_PC},
+    system::{
+        cpu::{CPU, INSTRUCTION_LEN_ARM, INSTRUCTION_LEN_THUMB, REGISTER_LR, REGISTER_PC},
+        memory::Memory,
+    },
 };
 
 use super::{Condition, DecodedInstruction};
@@ -81,7 +84,7 @@ pub fn decode_unconditional_branch_thumb(instruction: u16, _next_instruction: u1
 }
 
 impl DecodedInstruction for Opcode {
-    fn execute(&self, cpu: &mut CPU) {
+    fn execute(&self, cpu: &mut CPU, _mem: &mut Memory) {
         match *self {
             Opcode::BOffset { l, x, offset } => {
                 if l {

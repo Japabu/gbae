@@ -2,7 +2,10 @@ use std::fmt::Display;
 
 use crate::{
     bitutil::{arithmetic_shift_right, get_bit, get_bit16, get_bits16, get_bits32, rotate_right_with_extend, sign_extend32},
-    system::cpu::{CPU, REGISTER_SP},
+    system::{
+        cpu::{CPU, REGISTER_SP},
+        memory::Memory,
+    },
 };
 
 use super::{Condition, DecodedInstruction};
@@ -178,7 +181,7 @@ enum IndexingMode {
 }
 
 impl DecodedInstruction for LoadStore {
-    fn execute(&self, cpu: &mut CPU) {
+    fn execute(&self, cpu: &mut CPU, mem: &mut Memory) {
         if self.d == 15 {
             todo!("d == 15");
         }
@@ -187,23 +190,23 @@ impl DecodedInstruction for LoadStore {
 
         match self.opcode {
             Opcode::LDR => match self.length {
-                Length::Byte if self.sign_extend => cpu.set_r(self.d, sign_extend32(cpu.mem.read_u8(address) as u32, 8)),
-                Length::Byte => cpu.set_r(self.d, cpu.mem.read_u8(address) as u32),
-                Length::Halfword if self.sign_extend => cpu.set_r(self.d, sign_extend32(cpu.mem.read_u16(address) as u32, 16)),
-                Length::Halfword => cpu.set_r(self.d, cpu.mem.read_u16(address) as u32),
-                Length::Word => cpu.set_r(self.d, cpu.mem.read_u32(address)),
+                Length::Byte if self.sign_extend => cpu.set_r(self.d, sign_extend32(mem.read_u8(address) as u32, 8)),
+                Length::Byte => cpu.set_r(self.d, mem.read_u8(address) as u32),
+                Length::Halfword if self.sign_extend => cpu.set_r(self.d, sign_extend32(mem.read_u16(address) as u32, 16)),
+                Length::Halfword => cpu.set_r(self.d, mem.read_u16(address) as u32),
+                Length::Word => cpu.set_r(self.d, mem.read_u32(address)),
                 Length::Doubleword => {
-                    cpu.set_r(self.d, cpu.mem.read_u32(address));
-                    cpu.set_r(self.d + 1, cpu.mem.read_u32(address + 4));
+                    cpu.set_r(self.d, mem.read_u32(address));
+                    cpu.set_r(self.d + 1, mem.read_u32(address + 4));
                 }
             },
             Opcode::STR => match self.length {
-                Length::Byte => cpu.mem.write_u8(address, cpu.get_r(self.d) as u8),
-                Length::Halfword => cpu.mem.write_u16(address, cpu.get_r(self.d) as u16),
-                Length::Word => cpu.mem.write_u32(address, cpu.get_r(self.d)),
+                Length::Byte => mem.write_u8(address, cpu.get_r(self.d) as u8),
+                Length::Halfword => mem.write_u16(address, cpu.get_r(self.d) as u16),
+                Length::Word => mem.write_u32(address, cpu.get_r(self.d)),
                 Length::Doubleword => {
-                    cpu.mem.write_u32(address, cpu.get_r(self.d));
-                    cpu.mem.write_u32(address + 4, cpu.get_r(self.d + 1));
+                    mem.write_u32(address, cpu.get_r(self.d));
+                    mem.write_u32(address + 4, cpu.get_r(self.d + 1));
                 }
             },
         }

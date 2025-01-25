@@ -1,7 +1,7 @@
 use std::{
     num::NonZeroU32,
     rc::Rc,
-    sync::{Arc, RwLock},
+    sync::{mpsc, Arc, RwLock},
 };
 
 use softbuffer::{Context, Surface};
@@ -44,28 +44,34 @@ impl PPU {
             }
         }
 
-        let event_loop = EventLoop::new().expect("Failed to create event loop");
-        event_loop.set_control_flow(ControlFlow::Poll);
+        let (tx, rx) = mpsc::channel::<EventLoopProxy<()>>();
 
-        let ppu = PPU {
-            framebuffer: Arc::new(RwLock::new(framebuffer)),
-            event_loop_proxy: event_loop.create_proxy(),
-        };
+        let framebuffer = Arc::new(RwLock::new(framebuffer));
+        let framebuffer_clone = framebuffer.clone();
+        std::thread::spawn(move || {
+            let mut app = App {
+                window: None,
+                context: None,
+                surface: None,
+                framebuffer: framebuffer_clone,
+            };
 
-        let mut app = App {
-            window: None,
-            context: None,
-            surface: None,
-            framebuffer: Arc::new(RwLock::new(framebuffer.clone())),
-        };
+            let event_loop = EventLoop::new().expect("Failed to create event loop");
+            event_loop.set_control_flow(ControlFlow::Poll);
 
-        #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
-        event_loop.run_app(&mut app).unwrap();
+            tx.send(event_loop.create_proxy()).unwrap();
 
-        #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
-        winit::platform::web::EventLoopExtWebSys::spawn_app(event_loop, app);
+            #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+            event_loop.run_app(&mut app).unwrap();
 
-        ppu
+            #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+            winit::platform::web::EventLoopExtWebSys::spawn_app(event_loop, app);
+        });
+
+        PPU {
+            framebuffer,
+            event_loop_proxy: rx.recv().unwrap(),
+        }
     }
 }
 

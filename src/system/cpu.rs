@@ -1,3 +1,5 @@
+use std::{thread::sleep, time::Duration};
+
 use crate::{
     bitutil::{get_bit, get_bits32, set_bit32, set_bits32},
     system::instructions::{format_instruction_arm, format_instruction_thumb},
@@ -22,6 +24,9 @@ pub const REGISTER_PC: u8 = 15;
 
 pub const INSTRUCTION_LEN_ARM: u32 = 4;
 pub const INSTRUCTION_LEN_THUMB: u32 = 2;
+
+pub const CPU_FREQUENCY: u64 = 16_776_000;
+pub const INSTRUCTION_TIME: Duration = Duration::from_nanos(1_000_000_000 / CPU_FREQUENCY);
 
 pub fn format_mode(mode: u8) -> &'static str {
     match mode {
@@ -188,6 +193,8 @@ impl CPU {
 
         // approximate cycle count for now
         self.cycles += 2;
+
+        sleep(INSTRUCTION_TIME);
     }
 
     fn reset(&mut self) {

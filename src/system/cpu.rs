@@ -286,6 +286,9 @@ impl CPU {
     pub fn in_a_privileged_mode(&self) -> bool {
         self.get_mode() != MODE_USR
     }
+    pub fn get_cycles(&self) -> u64 {
+        self.cycles
+    }
 
     pub fn print_registers(&self) {
         for i in (0..16u8).step_by(4) {
@@ -321,7 +324,11 @@ impl CPU {
     pub fn print_next_instruction(&self, mem: &Memory) {
         let pc = self.r[REGISTER_PC as usize];
         if self.get_thumb_state() {
-            println!("Next thumb instruction at {:08X}: {}", pc, format_instruction_thumb(self.fetch_thumb(mem), self.fetch_next_thumb(mem), pc));
+            println!(
+                "Next thumb instruction at {:08X}: {}",
+                pc,
+                format_instruction_thumb(self.fetch_thumb(mem), self.fetch_next_thumb(mem), pc)
+            );
         } else {
             println!("Next arm instruction at {:08X}: {}", pc, format_instruction_arm(self.fetch_arm(mem), pc));
         }

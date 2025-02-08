@@ -1,6 +1,5 @@
-use softbuffer::{Context, Surface};
+use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
 use std::{
-    num::NonZeroU32,
     rc::Rc,
     sync::{Arc, RwLock},
 };
@@ -15,9 +14,8 @@ use winit::{
 use super::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 
 pub struct Display {
-    window: Option<Rc<Window>>,
-    context: Option<Context<Rc<Window>>>,
-    surface: Option<Surface<Rc<Window>, Rc<Window>>>,
+    window: Option<Arc<Window>>,
+    pixels: Option<Pixels<'static>>,
     framebuffer: Arc<RwLock<Framebuffer>>,
 }
 
@@ -34,8 +32,7 @@ impl Display {
         (
             Self {
                 window: None,
-                context: None,
-                surface: None,
+                pixels: None,
                 framebuffer,
             },
             event_loop,
@@ -53,13 +50,14 @@ impl ApplicationHandler<DisplayEvent> for Display {
         #[cfg(target_arch = "wasm32")]
         let attributes = winit::platform::web::WindowAttributesExtWebSys::with_append(attributes, true);
 
-        let window = Rc::new(event_loop.create_window(attributes).expect("Failed to create window"));
-        let context = Context::new(window.clone()).expect("Failed to create context");
-        let surface = Surface::new(&context, window.clone()).expect("Failed to create surface");
+        let window = Arc::new(event_loop.create_window(attributes).expect("Failed to create window"));
 
-        self.window = Some(window);
-        self.context = Some(context);
-        self.surface = Some(surface);
+        let window_size = window.inner_size();
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, window.clone());
+        let pixels = Pixels::new(FRAMEBUFFER_WIDTH as u32, FRAMEBUFFER_HEIGHT as u32, surface_texture).expect("Failed to create pixels buffer");
+
+        self.window = Some(window.clone());
+        self.pixels = Some(pixels);
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: DisplayEvent) {
@@ -74,29 +72,29 @@ impl ApplicationHandler<DisplayEvent> for Display {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
-                let surface = self.surface.as_mut().unwrap();
+                let pixels = self.pixels.as_mut().unwrap();
                 let window = self.window.as_ref().unwrap();
 
                 let (width, height) = {
                     let size = window.inner_size();
                     (size.width, size.height)
                 };
-                surface.resize(NonZeroU32::new(width).unwrap(), NonZeroU32::new(height).unwrap()).unwrap();
 
-                let mut buffer = surface.buffer_mut().unwrap();
+                pixels.resize_surface(width, height).expect("Failed to resize surface");
+
                 let framebuffer = &self.framebuffer.read().unwrap();
-                for y in 0..height {
-                    for x in 0..width {
-                        let fy = y as usize * FRAMEBUFFER_HEIGHT / height as usize;
-                        let fx = x as usize * FRAMEBUFFER_WIDTH / width as usize;
-                        let red = framebuffer[fy][fx][0] as u32;
-                        let green = framebuffer[fy][fx][1] as u32;
-                        let blue = framebuffer[fy][fx][2] as u32;
-                        buffer[(y * width + x) as usize] = blue | (green << 8) | (red << 16);
-                    }
+                let frame = pixels.frame_mut();
+
+                for (i, pixel) in frame.chunks_exact_mut(4).enumerate() {
+                    let x = (i % FRAMEBUFFER_WIDTH) as usize;
+                    let y = (i / FRAMEBUFFER_WIDTH) as usize;
+                    pixel[0] = framebuffer[y][x][0]; // R
+                    pixel[1] = framebuffer[y][x][1]; // G
+                    pixel[2] = framebuffer[y][x][2]; // B
+                    pixel[3] = 255; // A
                 }
 
-                buffer.present().unwrap();
+                pixels.render().expect("Failed to render frame");
             }
             _ => (),
         }

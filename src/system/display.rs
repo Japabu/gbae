@@ -12,7 +12,7 @@ use winit::{
     window::{Window, WindowAttributes, WindowButtons, WindowId},
 };
 
-type Framebuffer = [[[u8; 3]; BUFFER_WIDTH]; BUFFER_HEIGHT];
+use super::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 
 pub struct Display {
     window: Option<Rc<Window>>,
@@ -48,7 +48,7 @@ impl ApplicationHandler<DisplayEvent> for Display {
         let attributes = WindowAttributes::default()
             .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE)
             .with_title("GBA Display".to_string())
-            .with_inner_size(Size::Physical((BUFFER_WIDTH as u32 * 4, BUFFER_HEIGHT as u32 * 4).into()));
+            .with_inner_size(Size::Physical((FRAMEBUFFER_WIDTH as u32 * 4, FRAMEBUFFER_HEIGHT as u32 * 4).into()));
 
         #[cfg(target_arch = "wasm32")]
         let attributes = winit::platform::web::WindowAttributesExtWebSys::with_append(attributes, true);
@@ -87,8 +87,8 @@ impl ApplicationHandler<DisplayEvent> for Display {
                 let framebuffer = &self.framebuffer.read().unwrap();
                 for y in 0..height {
                     for x in 0..width {
-                        let fy = y as usize * BUFFER_HEIGHT / height as usize;
-                        let fx = x as usize * BUFFER_WIDTH / width as usize;
+                        let fy = y as usize * FRAMEBUFFER_HEIGHT / height as usize;
+                        let fx = x as usize * FRAMEBUFFER_WIDTH / width as usize;
                         let red = framebuffer[fy][fx][0] as u32;
                         let green = framebuffer[fy][fx][1] as u32;
                         let blue = framebuffer[fy][fx][2] as u32;

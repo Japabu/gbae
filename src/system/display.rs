@@ -1,8 +1,5 @@
-use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
-use std::{
-    rc::Rc,
-    sync::{Arc, RwLock},
-};
+use pixels::{Pixels, SurfaceTexture};
+use std::sync::{Arc, RwLock};
 use winit::{
     application::ApplicationHandler,
     dpi::Size,
@@ -58,6 +55,7 @@ impl ApplicationHandler<DisplayEvent> for Display {
 
         self.window = Some(window.clone());
         self.pixels = Some(pixels);
+        window.request_redraw();
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: DisplayEvent) {
@@ -71,6 +69,9 @@ impl ApplicationHandler<DisplayEvent> for Display {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(_) => {
+                self.window.as_ref().unwrap().request_redraw();
+            }
             WindowEvent::RedrawRequested => {
                 let pixels = self.pixels.as_mut().unwrap();
                 let window = self.window.as_ref().unwrap();

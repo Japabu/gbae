@@ -29,7 +29,12 @@ impl SaveType {
     }
 }
 
-pub enum Backup {
+pub struct Backup {
+    medium: Medium,
+    dirty: bool,
+}
+
+enum Medium {
     None,
     Sram(Vec<u8>),
     Flash(Flash),
@@ -40,94 +45,94 @@ const SRAM_LEN: usize = 0x8000;
 
 impl Backup {
     pub fn new(save_type: SaveType) -> Backup {
-        match save_type {
-            SaveType::None => Backup::None,
-            SaveType::Sram => Backup::Sram(vec![0xFF; SRAM_LEN]),
-            SaveType::Flash64K => Backup::Flash(Flash::new(0x1_0000, [0x32, 0x1B])),
-            SaveType::Flash128K => Backup::Flash(Flash::new(0x2_0000, [0xC2, 0x09])),
-            SaveType::Eeprom => Backup::Eeprom(Eeprom::new()),
-        }
+        let medium = match save_type {
+            SaveType::None => Medium::None,
+            SaveType::Sram => Medium::Sram(vec![0xFF; SRAM_LEN]),
+            SaveType::Flash64K => Medium::Flash(Flash::new(0x1_0000, [0x32, 0x1B])),
+            SaveType::Flash128K => Medium::Flash(Flash::new(0x2_0000, [0xC2, 0x09])),
+            SaveType::Eeprom => Medium::Eeprom(Eeprom::new()),
+        };
+        Backup { medium, dirty: false }
     }
 
     pub fn save_type(&self) -> SaveType {
-        match self {
-            Backup::None => SaveType::None,
-            Backup::Sram(_) => SaveType::Sram,
-            Backup::Flash(flash) if flash.data.len() == 0x1_0000 => SaveType::Flash64K,
-            Backup::Flash(_) => SaveType::Flash128K,
-            Backup::Eeprom(_) => SaveType::Eeprom,
+        match &self.medium {
+            Medium::None => SaveType::None,
+            Medium::Sram(_) => SaveType::Sram,
+            Medium::Flash(flash) if flash.data.len() == 0x1_0000 => SaveType::Flash64K,
+            Medium::Flash(_) => SaveType::Flash128K,
+            Medium::Eeprom(_) => SaveType::Eeprom,
         }
     }
 
     pub fn read(&self, address: u32) -> u8 {
-        match self {
-            Backup::None | Backup::Eeprom(_) => 0xFF,
-            Backup::Sram(data) => data[address as usize & (SRAM_LEN - 1)],
-            Backup::Flash(flash) => flash.read(address),
+        match &self.medium {
+            Medium::None | Medium::Eeprom(_) => 0xFF,
+            Medium::Sram(data) => data[address as usize & (SRAM_LEN - 1)],
+            Medium::Flash(flash) => flash.read(address),
         }
     }
 
     pub fn write(&mut self, address: u32, value: u8) {
-        match self {
-            Backup::None | Backup::Eeprom(_) => {}
-            Backup::Sram(data) => data[address as usize & (SRAM_LEN - 1)] = value,
-            Backup::Flash(flash) => flash.write(address, value),
-        }
-        if let Backup::Sram(_) = self {
-            DIRTY.with(|dirty| dirty.set(true));
-        }
+        let changed = match &mut self.medium {
+            Medium::None | Medium::Eeprom(_) => false,
+            Medium::Sram(data) => {
+                let slot = &mut data[address as usize & (SRAM_LEN - 1)];
+                let changed = *slot != value;
+                *slot = value;
+                changed
+            }
+            Medium::Flash(flash) => flash.write(address, value),
+        };
+        self.dirty |= changed;
     }
 
     pub fn is_eeprom(&self) -> bool {
-        matches!(self, Backup::Eeprom(_))
+        matches!(self.medium, Medium::Eeprom(_))
     }
 
     pub fn eeprom_begin_transfer(&mut self, length: u32) {
-        if let Backup::Eeprom(eeprom) = self {
+        if let Medium::Eeprom(eeprom) = &mut self.medium {
             eeprom.begin_transfer(length);
         }
     }
 
     pub fn eeprom_read(&self) -> u16 {
-        match self {
-            Backup::Eeprom(eeprom) => eeprom.read(),
+        match &self.medium {
+            Medium::Eeprom(eeprom) => eeprom.read(),
             _ => 1,
         }
     }
 
     pub fn eeprom_write(&mut self, value: u16) {
-        if let Backup::Eeprom(eeprom) = self {
-            eeprom.write(value & 1 != 0);
+        if let Medium::Eeprom(eeprom) = &mut self.medium {
+            self.dirty |= eeprom.write(value & 1 != 0);
         }
     }
 
     pub fn data(&self) -> &[u8] {
-        match self {
-            Backup::None => &[],
-            Backup::Sram(data) => data,
-            Backup::Flash(flash) => &flash.data,
-            Backup::Eeprom(eeprom) => &eeprom.data,
+        match &self.medium {
+            Medium::None => &[],
+            Medium::Sram(data) => data,
+            Medium::Flash(flash) => &flash.data,
+            Medium::Eeprom(eeprom) => &eeprom.data,
         }
     }
 
     pub fn load(&mut self, bytes: &[u8]) {
-        let data = match self {
-            Backup::None => return,
-            Backup::Sram(data) => data,
-            Backup::Flash(flash) => &mut flash.data,
-            Backup::Eeprom(eeprom) => &mut eeprom.data,
+        let data = match &mut self.medium {
+            Medium::None => return,
+            Medium::Sram(data) => data,
+            Medium::Flash(flash) => &mut flash.data,
+            Medium::Eeprom(eeprom) => &mut eeprom.data,
         };
         let length = bytes.len().min(data.len());
         data[..length].copy_from_slice(&bytes[..length]);
     }
 
     pub fn take_dirty(&mut self) -> bool {
-        DIRTY.with(|dirty| dirty.replace(false))
+        std::mem::replace(&mut self.dirty, false)
     }
-}
-
-thread_local! {
-    static DIRTY: Cell<bool> = const { Cell::new(false) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,8 +182,9 @@ impl Flash {
         }
     }
 
-    fn write(&mut self, offset: u32, value: u8) {
+    fn write(&mut self, offset: u32, value: u8) -> bool {
         let offset = offset & 0xFFFF;
+        let mut changed = false;
         match self.command {
             FlashCommand::None if offset == 0x5555 && value == 0xAA => self.command = FlashCommand::Prefix1,
             FlashCommand::Prefix1 if offset == 0x2AAA && value == 0x55 => self.command = FlashCommand::Prefix2,
@@ -200,17 +206,18 @@ impl Flash {
             FlashCommand::ErasePrefix3 => {
                 if offset == 0x5555 && value == 0x10 {
                     self.data.fill(0xFF);
+                    changed = true;
                 } else if value == 0x30 {
                     let start = self.bank * 0x10000 + (offset & 0xF000) as usize;
                     self.data[start..start + 0x1000].fill(0xFF);
+                    changed = true;
                 }
-                DIRTY.with(|dirty| dirty.set(true));
                 self.command = FlashCommand::None;
             }
             FlashCommand::Program => {
                 let address = self.address(offset);
+                changed = self.data[address] & value != self.data[address];
                 self.data[address] &= value;
-                DIRTY.with(|dirty| dirty.set(true));
                 self.command = FlashCommand::None;
             }
             FlashCommand::BankSwitch => {
@@ -221,6 +228,7 @@ impl Flash {
             }
             _ => self.command = FlashCommand::None,
         }
+        changed
     }
 }
 
@@ -269,7 +277,8 @@ impl Eeprom {
         }
     }
 
-    fn write(&mut self, bit: bool) {
+    fn write(&mut self, bit: bool) -> bool {
+        let mut changed = false;
         if self.state != EepromState::Receiving {
             self.state = EepromState::Receiving;
             self.received_bits = 0;
@@ -292,11 +301,12 @@ impl Eeprom {
                 } else {
                     let value = (self.request >> 1) as u64;
                     self.data[block].copy_from_slice(&value.to_be_bytes());
-                    DIRTY.with(|dirty| dirty.set(true));
+                    changed = true;
                     self.state = EepromState::Idle;
                 }
             }
         }
+        changed
     }
 
     fn read(&self) -> u16 {

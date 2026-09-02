@@ -2,6 +2,7 @@ use super::{
     cpu::CPU,
     memory::{DmaTiming, Key, Memory},
     ppu::{Framebuffer, PPU},
+    save::SaveType,
 };
 
 pub const CYCLES_PER_SCANLINE: u64 = 1232;
@@ -149,6 +150,26 @@ impl Gba {
 
     pub fn set_pressed_keys(&mut self, keys: u16) {
         self.mem.get_io_registers_mut().set_pressed_keys(keys);
+    }
+
+    pub fn save_type(&self) -> SaveType {
+        self.mem.save_type()
+    }
+
+    pub fn save_data(&self) -> &[u8] {
+        self.mem.save_data()
+    }
+
+    pub fn load_save_data(&mut self, bytes: &[u8]) {
+        self.mem.load_save_data(bytes);
+    }
+
+    pub fn take_save_dirty(&mut self) -> bool {
+        self.mem.take_save_dirty()
+    }
+
+    pub fn set_time(&mut self, unix_seconds: u64) {
+        self.mem.set_time(unix_seconds);
     }
 
     pub fn framebuffer(&self) -> &Framebuffer {

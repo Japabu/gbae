@@ -28,13 +28,18 @@ Unused Memory Area
 
 use std::fmt::Display;
 
+use super::{
+    rtc::Gpio,
+    save::{Backup, SaveType},
+};
+
 pub const BIOS_LEN: usize = 0x4000;
 pub const WRAM1_LEN: usize = 0x4_0000;
 pub const WRAM2_LEN: usize = 0x8000;
 pub const PALETTE_RAM_LEN: usize = 0x400;
 pub const VRAM_LEN: usize = 0x1_8000;
 pub const OAM_LEN: usize = 0x400;
-pub const FLASH_LEN: usize = 0x2_0000;
+const GAME_PAK_MASK: usize = 0x01FF_FFFF;
 
 #[inline(always)]
 fn read_halfword(buffer: &[u8], offset: usize) -> u16 {
@@ -68,96 +73,6 @@ fn vram_offset(address: u32) -> usize {
 
 fn boxed_zeroed<const N: usize>() -> Box<[u8; N]> {
     vec![0u8; N].into_boxed_slice().try_into().unwrap()
-}
-
-#[derive(PartialEq)]
-enum FlashCommand {
-    None,
-    Prefix1,
-    Prefix2,
-    ErasePrefix1,
-    ErasePrefix2,
-    ErasePrefix3,
-    Program,
-    BankSwitch,
-}
-
-pub struct FlashRegion {
-    data: Vec<u8>,
-    bank: usize,
-    id_mode: bool,
-    command: FlashCommand,
-}
-
-impl FlashRegion {
-    pub fn new(size: usize) -> Self {
-        Self {
-            data: vec![0xFF; size],
-            bank: 0,
-            id_mode: false,
-            command: FlashCommand::None,
-        }
-    }
-
-    fn address(&self, offset: u32) -> usize {
-        self.bank * 0x10000 + (offset & 0xFFFF) as usize
-    }
-
-    fn read_u8(&self, offset: u32) -> u8 {
-        if self.id_mode {
-            match offset & 0xFFFF {
-                0 => 0xC2,
-                1 => 0x09,
-                _ => 0,
-            }
-        } else {
-            self.data[self.address(offset)]
-        }
-    }
-
-    fn write_u8(&mut self, offset: u32, value: u8) {
-        let offset = offset & 0xFFFF;
-        match self.command {
-            FlashCommand::None if offset == 0x5555 && value == 0xAA => self.command = FlashCommand::Prefix1,
-            FlashCommand::Prefix1 if offset == 0x2AAA && value == 0x55 => self.command = FlashCommand::Prefix2,
-            FlashCommand::Prefix2 if offset == 0x5555 => {
-                self.command = match value {
-                    0x80 => FlashCommand::ErasePrefix1,
-                    0xA0 => FlashCommand::Program,
-                    0xB0 => FlashCommand::BankSwitch,
-                    _ => FlashCommand::None,
-                };
-                match value {
-                    0x90 => self.id_mode = true,
-                    0xF0 => self.id_mode = false,
-                    _ => {}
-                }
-            }
-            FlashCommand::ErasePrefix1 if offset == 0x5555 && value == 0xAA => self.command = FlashCommand::ErasePrefix2,
-            FlashCommand::ErasePrefix2 if offset == 0x2AAA && value == 0x55 => self.command = FlashCommand::ErasePrefix3,
-            FlashCommand::ErasePrefix3 => {
-                if offset == 0x5555 && value == 0x10 {
-                    self.data.fill(0xFF);
-                } else if value == 0x30 {
-                    let start = self.bank * 0x10000 + (offset & 0xF000) as usize;
-                    self.data[start..start + 0x1000].fill(0xFF);
-                }
-                self.command = FlashCommand::None;
-            }
-            FlashCommand::Program => {
-                let address = self.address(offset);
-                self.data[address] &= value;
-                self.command = FlashCommand::None;
-            }
-            FlashCommand::BankSwitch => {
-                if offset == 0 {
-                    self.bank = value as usize % (self.data.len() / 0x10000);
-                }
-                self.command = FlashCommand::None;
-            }
-            _ => self.command = FlashCommand::None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -684,7 +599,9 @@ enum RegionKey {
     Vram(usize),
     Oam(usize),
     GamePak(usize),
-    Flash(u32),
+    Gpio(u32),
+    Eeprom,
+    Backup(u32),
     Unmapped,
 }
 
@@ -697,8 +614,8 @@ pub struct Memory {
     vram: Box<[u8; VRAM_LEN]>,
     oam: Box<[u8; OAM_LEN]>,
     game_pak: Vec<u8>,
-    game_pak_mask: usize,
-    flash: FlashRegion,
+    backup: Backup,
+    gpio: Gpio,
     dma: [DmaChannel; 4],
     dma_active: bool,
     bios_last_opcode: u32,
@@ -743,15 +660,7 @@ impl Memory {
         let bios_len = bios.len().min(BIOS_LEN);
         bios_buffer[..bios_len].copy_from_slice(&bios[..bios_len]);
 
-        let rom_len = game_pak.len();
-        let padded_len = rom_len.max(4).next_power_of_two();
-        let mut game_pak = game_pak;
-        game_pak.resize(padded_len, 0);
-        let mut offset = (rom_len + 1) & !1;
-        while offset < padded_len {
-            write_halfword(&mut game_pak, offset, (offset >> 1) as u16);
-            offset += 2;
-        }
+        let backup = Backup::new(SaveType::detect(&game_pak));
 
         Self {
             bios: bios_buffer,
@@ -762,8 +671,8 @@ impl Memory {
             vram: boxed_zeroed(),
             oam: boxed_zeroed(),
             game_pak,
-            game_pak_mask: padded_len - 1,
-            flash: FlashRegion::new(FLASH_LEN),
+            backup,
+            gpio: Gpio::new(),
             dma: [DmaChannel::default(); 4],
             dma_active: false,
             bios_last_opcode: 0,
@@ -963,8 +872,10 @@ impl Memory {
             0x05 => RegionKey::PaletteRam(offset & (PALETTE_RAM_LEN - 1)),
             0x06 => RegionKey::Vram(vram_offset(address)),
             0x07 => RegionKey::Oam(offset & (OAM_LEN - 1)),
-            0x08..=0x0D => RegionKey::GamePak(offset & self.game_pak_mask),
-            0x0E | 0x0F => RegionKey::Flash(address),
+            0x08 if (0x0800_00C4..0x0800_00CA).contains(&address) => RegionKey::Gpio(address - 0x0800_00C4),
+            0x0D if self.backup.is_eeprom() && (self.game_pak.len() <= 0x100_0000 || address >= 0x0DFF_FF00) => RegionKey::Eeprom,
+            0x08..=0x0D => RegionKey::GamePak(offset & GAME_PAK_MASK),
+            0x0E | 0x0F => RegionKey::Backup(address),
             _ => RegionKey::Unmapped,
         }
     }
@@ -979,8 +890,10 @@ impl Memory {
             RegionKey::PaletteRam(offset) => self.palette_ram[offset],
             RegionKey::Vram(offset) => self.vram[offset],
             RegionKey::Oam(offset) => self.oam[offset],
-            RegionKey::GamePak(offset) => self.game_pak[offset],
-            RegionKey::Flash(address) => self.flash.read_u8(address),
+            RegionKey::GamePak(offset) => self.rom_u8(offset),
+            RegionKey::Gpio(offset) => (self.gpio_or_rom_u16(address & !0b1, offset & !0b1) >> (8 * (offset & 1))) as u8,
+            RegionKey::Eeprom => self.backup.eeprom_read() as u8,
+            RegionKey::Backup(address) => self.backup.read(address),
             RegionKey::Unmapped => 0,
         }
     }
@@ -995,8 +908,10 @@ impl Memory {
             RegionKey::PaletteRam(offset) => read_halfword(&self.palette_ram[..], offset),
             RegionKey::Vram(offset) => read_halfword(&self.vram[..], offset),
             RegionKey::Oam(offset) => read_halfword(&self.oam[..], offset),
-            RegionKey::GamePak(offset) => read_halfword(&self.game_pak, offset),
-            RegionKey::Flash(address) => self.flash.read_u8(address) as u16 * 0x0101,
+            RegionKey::GamePak(offset) => self.rom_u16(offset),
+            RegionKey::Gpio(offset) => self.gpio_or_rom_u16(address & !0b1, offset),
+            RegionKey::Eeprom => self.backup.eeprom_read(),
+            RegionKey::Backup(address) => self.backup.read(address) as u16 * 0x0101,
             RegionKey::Unmapped => 0,
         }
     }
@@ -1011,9 +926,46 @@ impl Memory {
             RegionKey::PaletteRam(offset) => read_word(&self.palette_ram[..], offset),
             RegionKey::Vram(offset) => read_word(&self.vram[..], offset),
             RegionKey::Oam(offset) => read_word(&self.oam[..], offset),
-            RegionKey::GamePak(offset) => read_word(&self.game_pak, offset),
-            RegionKey::Flash(address) => self.flash.read_u8(address) as u32 * 0x0101_0101,
+            RegionKey::GamePak(offset) => self.rom_u32(offset),
+            RegionKey::Gpio(offset) => self.gpio_or_rom_u16(address & !0b11, offset) as u32 | (self.gpio_or_rom_u16((address & !0b11) + 2, offset + 2) as u32) << 16,
+            RegionKey::Eeprom => self.backup.eeprom_read() as u32 | (self.backup.eeprom_read() as u32) << 16,
+            RegionKey::Backup(address) => self.backup.read(address) as u32 * 0x0101_0101,
             RegionKey::Unmapped => 0,
+        }
+    }
+
+    fn gpio_or_rom_u16(&self, address: u32, offset: u32) -> u16 {
+        if self.gpio.readable() && offset < 6 {
+            self.gpio.read(offset)
+        } else {
+            self.rom_u16((address as usize) & GAME_PAK_MASK)
+        }
+    }
+
+    #[inline(always)]
+    fn rom_u8(&self, offset: usize) -> u8 {
+        if offset < self.game_pak.len() {
+            self.game_pak[offset]
+        } else {
+            ((offset >> 1) >> (8 * (offset & 1))) as u8
+        }
+    }
+
+    #[inline(always)]
+    fn rom_u16(&self, offset: usize) -> u16 {
+        if offset + 2 <= self.game_pak.len() {
+            read_halfword(&self.game_pak, offset)
+        } else {
+            self.rom_u8(offset) as u16 | (self.rom_u8(offset + 1) as u16) << 8
+        }
+    }
+
+    #[inline(always)]
+    fn rom_u32(&self, offset: usize) -> u32 {
+        if offset + 4 <= self.game_pak.len() {
+            read_word(&self.game_pak, offset)
+        } else {
+            self.rom_u16(offset) as u32 | (self.rom_u16(offset + 2) as u32) << 16
         }
     }
 
@@ -1025,14 +977,16 @@ impl Memory {
             RegionKey::IoRegisters(offset) => self.io_registers.write_u8(offset, value),
             RegionKey::PaletteRam(offset) => write_halfword(&mut self.palette_ram[..], offset & !0b1, value as u16 * 0x0101),
             RegionKey::Vram(offset) => write_halfword(&mut self.vram[..], offset & !0b1, value as u16 * 0x0101),
-            RegionKey::Flash(address) => self.flash.write_u8(address, value),
-            RegionKey::Bios(_) | RegionKey::Oam(_) | RegionKey::GamePak(_) | RegionKey::Unmapped => {}
+            RegionKey::Backup(address) => self.backup.write(address, value),
+            RegionKey::Bios(_) | RegionKey::Oam(_) | RegionKey::GamePak(_) | RegionKey::Gpio(_) | RegionKey::Eeprom | RegionKey::Unmapped => {}
         }
     }
 
     #[inline]
     pub fn write_u16(&mut self, address: u32, value: u16) {
-        match self.decode_address(address & !0b1) {
+        let selected_byte = (value >> (8 * (address & 0b1))) as u8;
+        let aligned = address & !0b1;
+        match self.decode_address(aligned) {
             RegionKey::Wram1(offset) => write_halfword(&mut self.wram1[..], offset, value),
             RegionKey::Wram2(offset) => write_halfword(&mut self.wram2[..], offset, value),
             RegionKey::IoRegisters(offset) => {
@@ -1042,14 +996,18 @@ impl Memory {
             RegionKey::PaletteRam(offset) => write_halfword(&mut self.palette_ram[..], offset, value),
             RegionKey::Vram(offset) => write_halfword(&mut self.vram[..], offset, value),
             RegionKey::Oam(offset) => write_halfword(&mut self.oam[..], offset, value),
-            RegionKey::Flash(address) => self.flash.write_u8(address, value as u8),
+            RegionKey::Gpio(offset) => self.gpio.write(offset, value),
+            RegionKey::Eeprom => self.backup.eeprom_write(value),
+            RegionKey::Backup(_) => self.backup.write(address, selected_byte),
             RegionKey::Bios(_) | RegionKey::GamePak(_) | RegionKey::Unmapped => {}
         }
     }
 
     #[inline]
     pub fn write_u32(&mut self, address: u32, value: u32) {
-        match self.decode_address(address & !0b11) {
+        let selected_byte = (value >> (8 * (address & 0b11))) as u8;
+        let aligned = address & !0b11;
+        match self.decode_address(aligned) {
             RegionKey::Wram1(offset) => write_word(&mut self.wram1[..], offset, value),
             RegionKey::Wram2(offset) => write_word(&mut self.wram2[..], offset, value),
             RegionKey::IoRegisters(offset) => {
@@ -1059,9 +1017,34 @@ impl Memory {
             RegionKey::PaletteRam(offset) => write_word(&mut self.palette_ram[..], offset, value),
             RegionKey::Vram(offset) => write_word(&mut self.vram[..], offset, value),
             RegionKey::Oam(offset) => write_word(&mut self.oam[..], offset, value),
-            RegionKey::Flash(address) => self.flash.write_u8(address, value as u8),
+            RegionKey::Gpio(offset) => {
+                self.gpio.write(offset, value as u16);
+                self.gpio.write(offset + 2, (value >> 16) as u16);
+            }
+            RegionKey::Eeprom => self.backup.eeprom_write(value as u16),
+            RegionKey::Backup(_) => self.backup.write(address, selected_byte),
             RegionKey::Bios(_) | RegionKey::GamePak(_) | RegionKey::Unmapped => {}
         }
+    }
+
+    pub fn save_type(&self) -> SaveType {
+        self.backup.save_type()
+    }
+
+    pub fn save_data(&self) -> &[u8] {
+        self.backup.data()
+    }
+
+    pub fn load_save_data(&mut self, bytes: &[u8]) {
+        self.backup.load(bytes);
+    }
+
+    pub fn take_save_dirty(&mut self) -> bool {
+        self.backup.take_dirty()
+    }
+
+    pub fn set_time(&mut self, unix_seconds: u64) {
+        self.gpio.rtc.set_time(unix_seconds);
     }
 
     pub fn print_io_registers(&self) {
@@ -1144,6 +1127,9 @@ impl Memory {
         let source_control = (control >> 7) & 3;
         let destination_control = (control >> 5) & 3;
         let DmaChannel { count, mut source, mut destination, .. } = self.dma[channel];
+        if self.decode_address(destination) == RegionKey::Eeprom {
+            self.backup.eeprom_begin_transfer(count);
+        }
         let mut cycles = if is_rom(source) && is_rom(destination) { 4 } else { 2 };
 
         for i in 0..count {
@@ -1202,7 +1188,7 @@ mod tests {
         assert_eq!(mem.decode_address(0x0400_0208), RegionKey::IoRegisters(0x208));
         assert_eq!(mem.decode_address(0x0601_8000), RegionKey::Vram(0x1_0000));
         assert_eq!(mem.decode_address(0x0A00_0010), RegionKey::GamePak(0x10));
-        assert_eq!(mem.decode_address(0x0E00_5555), RegionKey::Flash(0x0E00_5555));
+        assert_eq!(mem.decode_address(0x0E00_5555), RegionKey::Backup(0x0E00_5555));
         assert_eq!(mem.decode_address(0x0100_0000), RegionKey::Unmapped);
     }
 
@@ -1228,13 +1214,16 @@ mod tests {
     }
 
     #[test]
-    fn test_rom_mirrors_and_open_bus_padding() {
+    fn test_rom_wait_state_mirrors_and_open_bus() {
         let mut rom = vec![0u8; 0x100];
         rom[0] = 0xAA;
         let mem = Memory::new(vec![], rom);
         assert_eq!(mem.read_u8(0x0800_0000), 0xAA);
         assert_eq!(mem.read_u8(0x0A00_0000), 0xAA);
-        assert_eq!(mem.read_u8(0x0800_0100), 0xAA);
+        assert_eq!(mem.read_u8(0x0C00_0000), 0xAA);
+        assert_eq!(mem.read_u16(0x0800_0100), 0x0080);
+        assert_eq!(mem.read_u8(0x0800_0201), 0x01);
+        assert_eq!(mem.read_u32(0x0900_0000), 0x0001_0000);
         let mem = Memory::new(vec![], vec![0; 0x102]);
         assert_eq!(mem.read_u16(0x0800_0102), 0x81);
     }

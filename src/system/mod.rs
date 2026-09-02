@@ -3,3 +3,5 @@ pub mod gba;
 pub mod instructions;
 pub mod memory;
 pub mod ppu;
+pub mod rtc;
+pub mod save;

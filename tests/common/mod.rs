@@ -18,6 +18,14 @@ pub fn gba_without_rom() -> Gba {
     Gba::new(bios, vec![0; 0x100])
 }
 
+pub fn gba_with_save_marker(marker: &str) -> Gba {
+    let mut bios = vec![0; BIOS_LEN];
+    bios[..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
+    let mut rom = vec![0; 0x100];
+    rom[0xC0..0xC0 + marker.len()].copy_from_slice(marker.as_bytes());
+    Gba::new(bios, rom)
+}
+
 pub fn gba_from_files() -> Option<Gba> {
     Some(Gba::new(read_project_file("gba_bios.bin")?, read_project_file("rom.gba")?))
 }

@@ -122,3 +122,27 @@ fn fuzzarm_thumb_any() {
 fn fuzzarm_all() {
     fuzzarm("FuzzARM");
 }
+
+#[test]
+#[ignore = "needs tests/roms, run with cargo test --release --test roms -- --ignored"]
+fn jsmolka_flash64() {
+    jsmolka("flash64");
+}
+
+#[test]
+#[ignore = "needs tests/roms, run with cargo test --release --test roms -- --ignored"]
+fn jsmolka_flash128() {
+    jsmolka("flash128");
+}
+
+#[test]
+#[ignore = "needs tests/roms, run with cargo test --release --test roms -- --ignored"]
+fn jsmolka_sram() {
+    jsmolka("sram");
+}
+
+#[test]
+#[ignore = "needs tests/roms, run with cargo test --release --test roms -- --ignored"]
+fn jsmolka_none() {
+    jsmolka("none");
+}

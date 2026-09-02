@@ -20,7 +20,7 @@ fn program(gba: &mut Gba, address: u32, value: u8) {
 
 #[test]
 fn id_command_returns_macronix_128k_id() {
-    let mut gba = gba_without_rom();
+    let mut gba = gba_with_save_marker("FLASH1M_V");
     command(&mut gba, 0x90);
     assert_eq!(gba.mem.read_u8(FLASH), 0xC2);
     assert_eq!(gba.mem.read_u8(FLASH + 1), 0x09);
@@ -30,14 +30,14 @@ fn id_command_returns_macronix_128k_id() {
 
 #[test]
 fn plain_write_does_not_change_flash() {
-    let mut gba = gba_without_rom();
+    let mut gba = gba_with_save_marker("FLASH1M_V");
     gba.mem.write_u8(FLASH + 0x10, 0x12);
     assert_eq!(gba.mem.read_u8(FLASH + 0x10), 0xFF);
 }
 
 #[test]
 fn program_and_sector_erase() {
-    let mut gba = gba_without_rom();
+    let mut gba = gba_with_save_marker("FLASH1M_V");
     program(&mut gba, FLASH + 0x1234, 0x12);
     assert_eq!(gba.mem.read_u8(FLASH + 0x1234), 0x12);
     assert_eq!(gba.mem.read_u16(FLASH + 0x1234), 0x1212);
@@ -50,7 +50,7 @@ fn program_and_sector_erase() {
 
 #[test]
 fn chip_erase_clears_everything() {
-    let mut gba = gba_without_rom();
+    let mut gba = gba_with_save_marker("FLASH1M_V");
     program(&mut gba, FLASH + 0x10, 0x00);
     command(&mut gba, 0x80);
     command(&mut gba, 0x10);
@@ -59,7 +59,7 @@ fn chip_erase_clears_everything() {
 
 #[test]
 fn bank_switch_selects_second_64k() {
-    let mut gba = gba_without_rom();
+    let mut gba = gba_with_save_marker("FLASH1M_V");
     program(&mut gba, FLASH + 0x10, 0x12);
     command(&mut gba, 0xB0);
     gba.mem.write_u8(FLASH, 1);

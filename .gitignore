@@ -1,8 +1,11 @@
 /target
 *.gba
+*.bin
+*.sav
+*.log
+*.txt
 .vscode
 .aider*
 .env
-*.log
-*.txt
-*.bin
+.claude/
+/tests/roms/

@@ -1,201 +1,209 @@
 use std::fmt::Display;
 
 use crate::{
-    bitutil::{get_bit, get_bits16, get_bits32},
+    bitutil::{get_bit, get_bit16, get_bits16, get_bits32},
     system::{
         cpu::{self, CPU, REGISTER_LR, REGISTER_PC, REGISTER_SP},
         memory::Memory,
     },
 };
 
-use super::{Condition, DecodedInstruction};
+use super::{Condition, Instruction};
 
-#[derive(Debug)]
-struct LoadStoreMultiple {
-    opcode: Opcode,
-    addressing_mode: AddressingMode,
-    s: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadStoreMultiple {
+    pub opcode: Opcode,
+    pub n: u8,
+    pub w: bool,
+    pub s: bool,
+    pub registers: u16,
+    pub addressing_mode: AddressingMode,
 }
 
-#[derive(Debug)]
-enum Opcode {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opcode {
     LDM,
     STM,
 }
 
-#[derive(Debug)]
-struct AddressingMode {
-    n: u8,
-    w: bool,
-    registers: u16,
-    typ: AddressingModeType,
-}
-
-#[derive(Debug)]
-enum AddressingModeType {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressingMode {
     DecrementAfter,
     IncrementAfter,
     DecrementBefore,
     IncrementBefore,
 }
 
-pub fn decode_arm(instruction: u32) -> Box<dyn super::DecodedInstruction> {
-    let registers = get_bits32(instruction, 0, 16) as u16;
-    let n = get_bits32(instruction, 16, 4) as u8;
-    let l = get_bit(instruction, 20);
-    let w = get_bit(instruction, 21);
-    let s = get_bit(instruction, 22);
-    let pu = get_bits32(instruction, 23, 2) as u8;
-
-    Box::new(LoadStoreMultiple {
-        opcode: match l {
-            true => Opcode::LDM,
-            false => Opcode::STM,
+#[inline(always)]
+pub fn decode_arm(instruction: u32) -> Instruction {
+    Instruction::LoadStoreMultiple(LoadStoreMultiple {
+        opcode: if get_bit(instruction, 20) { Opcode::LDM } else { Opcode::STM },
+        n: get_bits32(instruction, 16, 4) as u8,
+        w: get_bit(instruction, 21),
+        s: get_bit(instruction, 22),
+        registers: get_bits32(instruction, 0, 16) as u16,
+        addressing_mode: match get_bits32(instruction, 23, 2) {
+            0b00 => AddressingMode::DecrementAfter,
+            0b01 => AddressingMode::IncrementAfter,
+            0b10 => AddressingMode::DecrementBefore,
+            _ => AddressingMode::IncrementBefore,
         },
-        addressing_mode: AddressingMode {
-            n,
-            w,
-            registers,
-            typ: match pu {
-                0b00 => AddressingModeType::DecrementAfter,
-                0b01 => AddressingModeType::IncrementAfter,
-                0b10 => AddressingModeType::DecrementBefore,
-                0b11 => AddressingModeType::IncrementBefore,
-                _ => unreachable!(),
-            },
-        },
-        s,
     })
 }
 
-pub fn decode_push_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn super::DecodedInstruction> {
+#[inline(always)]
+pub fn decode_push_thumb(instruction: u16) -> Instruction {
     let is_lr = get_bits16(instruction, 8, 1);
-    let registers = get_bits16(instruction, 0, 8) | is_lr << REGISTER_LR;
-    Box::new(LoadStoreMultiple {
+    Instruction::LoadStoreMultiple(LoadStoreMultiple {
         opcode: Opcode::STM,
-        addressing_mode: AddressingMode {
-            n: REGISTER_SP,
-            w: true,
-            registers,
-            typ: AddressingModeType::DecrementBefore,
-        },
+        n: REGISTER_SP,
+        w: true,
         s: false,
+        registers: get_bits16(instruction, 0, 8) | is_lr << REGISTER_LR,
+        addressing_mode: AddressingMode::DecrementBefore,
     })
 }
 
-pub fn decode_pop_thumb(instruction: u16, _next_instruction: u16) -> Box<dyn super::DecodedInstruction> {
+#[inline(always)]
+pub fn decode_pop_thumb(instruction: u16) -> Instruction {
     let is_pc = get_bits16(instruction, 8, 1);
-    let registers = get_bits16(instruction, 0, 8) | is_pc << REGISTER_PC;
-    Box::new(LoadStoreMultiple {
+    Instruction::LoadStoreMultiple(LoadStoreMultiple {
         opcode: Opcode::LDM,
-        addressing_mode: AddressingMode {
-            n: REGISTER_SP,
-            w: true,
-            registers,
-            typ: AddressingModeType::IncrementAfter,
-        },
+        n: REGISTER_SP,
+        w: true,
         s: false,
+        registers: get_bits16(instruction, 0, 8) | is_pc << REGISTER_PC,
+        addressing_mode: AddressingMode::IncrementAfter,
     })
 }
 
-impl DecodedInstruction for LoadStoreMultiple {
-    fn execute(&self, cpu: &mut CPU, mem: &mut Memory) {
-        let registers = self.addressing_mode.registers as u32;
-        let (start_address, end_address) = self.addressing_mode.execute(cpu);
+#[inline(always)]
+pub fn decode_ldm_stm_thumb(instruction: u16) -> Instruction {
+    let is_load = get_bit16(instruction, 11);
+    let n = get_bits16(instruction, 8, 3) as u8;
+    let registers = get_bits16(instruction, 0, 8);
+    Instruction::LoadStoreMultiple(LoadStoreMultiple {
+        opcode: if is_load { Opcode::LDM } else { Opcode::STM },
+        n,
+        w: !(is_load && get_bit16(registers, n)),
+        s: false,
+        registers,
+        addressing_mode: AddressingMode::IncrementAfter,
+    })
+}
 
+impl LoadStoreMultiple {
+    #[inline(always)]
+    pub fn execute(self, cpu: &mut CPU, mem: &mut Memory) {
+        let (registers, size) = if self.registers == 0 { (1 << REGISTER_PC, 16 * 4) } else { (self.registers as u32, self.registers.count_ones() * 4) };
+        let r_n = cpu.get_r(self.n);
+        let start_address = match self.addressing_mode {
+            AddressingMode::DecrementAfter => r_n.wrapping_sub(size).wrapping_add(4),
+            AddressingMode::IncrementAfter => r_n,
+            AddressingMode::DecrementBefore => r_n.wrapping_sub(size),
+            AddressingMode::IncrementBefore => r_n.wrapping_add(4),
+        };
+        let new_base = match self.addressing_mode {
+            AddressingMode::IncrementAfter | AddressingMode::IncrementBefore => r_n.wrapping_add(size),
+            AddressingMode::DecrementAfter | AddressingMode::DecrementBefore => r_n.wrapping_sub(size),
+        };
+
+        let pc_in_list = get_bit(registers, REGISTER_PC);
+        let user_bank = self.s && !(self.opcode == Opcode::LDM && pc_in_list);
         let mut address = start_address;
-        let cpu_mode = if self.s { cpu::MODE_USR } else { cpu.get_mode() };
         match self.opcode {
             Opcode::LDM => {
-                if get_bit(registers, 15) {
-                    todo!("ldm with destination register 15 not implemented");
+                if self.w {
+                    cpu.set_r(self.n, new_base);
                 }
-                for i in 0..=15 {
+                for i in 0..REGISTER_PC {
                     if get_bit(registers, i) {
-                        cpu.set_r_in_mode(i, cpu_mode, mem.read_u32(address));
-                        address += 4;
+                        let value = mem.read_u32(address);
+                        if user_bank {
+                            cpu.set_r_in_mode(i, cpu::MODE_USR, value);
+                        } else {
+                            cpu.set_r(i, value);
+                        }
+                        address = address.wrapping_add(4);
                     }
+                }
+                if pc_in_list {
+                    let value = mem.read_u32(address);
+                    if self.s && cpu.current_mode_has_spsr() {
+                        cpu.set_cpsr(cpu.get_spsr());
+                    }
+                    cpu.set_pc(value);
                 }
             }
             Opcode::STM => {
-                for i in 0..=15 {
+                let first = registers.trailing_zeros() as u8;
+                for i in 0..=REGISTER_PC {
                     if get_bit(registers, i) {
-                        mem.write_u32(address, cpu.get_r_in_mode(i, cpu_mode));
-                        address += 4;
+                        let value = if i == self.n && i != first && self.w {
+                            new_base
+                        } else if user_bank {
+                            cpu.get_r_in_mode(i, cpu::MODE_USR)
+                        } else if i == REGISTER_PC {
+                            cpu.get_r(REGISTER_PC).wrapping_add(4)
+                        } else {
+                            cpu.get_r(i)
+                        };
+                        mem.write_u32(address, value);
+                        address = address.wrapping_add(4);
                     }
+                }
+                if self.w {
+                    cpu.set_r(self.n, new_base);
                 }
             }
         }
-        assert_eq!(end_address, address - 4);
     }
 
-    fn disassemble(&self, cond: Condition, _base_address: u32) -> String {
-        // {LDM|STM}{<cond>}<addressing_mode>{^}
-        format!("{:?}{}{}{}", self.opcode, cond, self.addressing_mode, if self.s { "^" } else { "" },)
+    pub fn disassemble(self, cond: Condition) -> String {
+        let mut registers = String::new();
+        for i in 0..=15 {
+            if get_bit(self.registers as u32, i) {
+                if !registers.is_empty() {
+                    registers.push_str(", ");
+                }
+                registers.push_str(&format!("r{}", i));
+            }
+        }
+        format!(
+            "{:?}{}{} R{}{}, {{{}}}{}",
+            self.opcode,
+            cond,
+            self.addressing_mode,
+            self.n,
+            if self.w { "!" } else { "" },
+            registers,
+            if self.s { "^" } else { "" }
+        )
     }
 }
 
 impl Display for AddressingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // {DA|IA|DB|IB} Rn{!}, registers
-
-        write!(
-            f,
-            "{} R{}{}, {{",
-            match self.typ {
-                AddressingModeType::DecrementAfter => "DA",
-                AddressingModeType::IncrementAfter => "IA",
-                AddressingModeType::DecrementBefore => "DB",
-                AddressingModeType::IncrementBefore => "IB",
-            },
-            self.n,
-            if self.w { "!" } else { "" }
-        )?;
-
-        let mut is_first = true;
-        for i in 0..=15 {
-            if get_bit(self.registers as u32, i) {
-                if !is_first {
-                    write!(f, ", ")?;
-                }
-                is_first = false;
-                write!(f, "r{}", i)?;
-            }
+        match self {
+            AddressingMode::DecrementAfter => write!(f, "DA"),
+            AddressingMode::IncrementAfter => write!(f, "IA"),
+            AddressingMode::DecrementBefore => write!(f, "DB"),
+            AddressingMode::IncrementBefore => write!(f, "IB"),
         }
-        write!(f, "}}")
     }
 }
 
-impl AddressingMode {
-    pub fn execute(&self, cpu: &mut CPU) -> (u32, u32) {
-        let r_n = cpu.get_r(self.n);
-        let registers_count = self.registers.count_ones();
-        let start_address = match self.typ {
-            AddressingModeType::DecrementAfter => r_n - registers_count * 4 + 4,
-            AddressingModeType::IncrementAfter => r_n,
-            AddressingModeType::DecrementBefore => r_n - registers_count * 4,
-            AddressingModeType::IncrementBefore => r_n + 4,
-        };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let end_address = match self.typ {
-            AddressingModeType::DecrementAfter => r_n,
-            AddressingModeType::IncrementAfter => r_n + registers_count * 4 - 4,
-            AddressingModeType::DecrementBefore => r_n - 4,
-            AddressingModeType::IncrementBefore => r_n + registers_count * 4,
-        };
+    #[test]
+    fn test_pop_pc() {
+        assert_eq!(Instruction::decode_thumb(0xBD10).disassemble(Condition::AL, 0), "LDMIA R13!, {r4, r15}");
+    }
 
-        if self.w {
-            cpu.set_r(
-                self.n,
-                match self.typ {
-                    AddressingModeType::DecrementAfter => r_n - registers_count * 4,
-                    AddressingModeType::IncrementAfter => r_n + registers_count * 4,
-                    AddressingModeType::DecrementBefore => r_n - registers_count * 4,
-                    AddressingModeType::IncrementBefore => r_n + registers_count * 4,
-                },
-            );
-        };
-
-        (start_address, end_address)
+    #[test]
+    fn test_stmfd_with_user_bank() {
+        assert_eq!(Instruction::decode_arm(0xE96D4003).disassemble(Condition::AL, 0), "STMDB R13!, {r0, r1, r14}^");
     }
 }

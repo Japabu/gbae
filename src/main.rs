@@ -1,16 +1,16 @@
-#![feature(type_alias_impl_trait)]
-#![feature(bigint_helper_methods)]
-
-mod bitutil;
-mod cartridge;
 mod debugger;
+mod display;
 mod mcp;
-mod system;
 
-use cartridge::CartridgeInfo;
 use debugger::Debugger;
+use display::{Display, DisplayEvent};
+use gbae::cartridge::CartridgeInfo;
+use gbae::system::cpu::CPU_FREQUENCY;
+use gbae::system::gba::{Gba, CYCLES_PER_SCANLINE, SCANLINES_PER_FRAME};
+use gbae::system::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 use std::fs;
-use system::{cpu::CPU, display::{Display, DisplayEvent}, memory::Memory, ppu::PPU};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 use winit::event_loop::ControlFlow;
 
 fn main() {
@@ -29,7 +29,7 @@ fn main() {
         .unwrap_or(3000);
 
     // Create display and event loop
-    let (ppu, framebuffer) = PPU::new();
+    let framebuffer: Arc<RwLock<Framebuffer>> = Arc::new(RwLock::new([[[0; 3]; FRAMEBUFFER_WIDTH]; FRAMEBUFFER_HEIGHT]));
     let (mut display, event_loop) = Display::new(framebuffer.clone());
     let event_loop_proxy = event_loop.create_proxy();
 
@@ -124,7 +124,7 @@ fn main() {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                run_emulator(bios, cartridge_data, command_rx, ppu, event_loop_proxy, framebuffer).await;
+                run_emulator(bios, cartridge_data, command_rx, event_loop_proxy, framebuffer).await;
             });
         }));
 
@@ -135,7 +135,7 @@ fn main() {
     });
 
     // Run display on main thread
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut display).unwrap();
 }
 
@@ -143,110 +143,85 @@ async fn run_emulator(
     bios: Vec<u8>,
     cartridge_data: Vec<u8>,
     command_rx: mcp::CommandReceiver,
-    mut ppu: PPU,
     event_loop_proxy: winit::event_loop::EventLoopProxy<DisplayEvent>,
-    framebuffer: std::sync::Arc<std::sync::RwLock<system::ppu::Framebuffer>>,
+    framebuffer: Arc<RwLock<Framebuffer>>,
 ) {
-    let mut mem = Memory::new(bios, cartridge_data);
-    let mut cpu = CPU::new();
-    let mut debugger = Debugger::new()
-        .with_mcp(command_rx)
-        .with_framebuffer(framebuffer);
+    let mut gba = Gba::new(bios, cartridge_data);
+    let mut debugger = Debugger::new().with_mcp(command_rx);
+    let frame_duration = Duration::from_secs_f64(CYCLES_PER_SCANLINE as f64 * SCANLINES_PER_FRAME as f64 / CPU_FREQUENCY as f64);
+    let turbo = std::env::var_os("GBA_TURBO").is_some();
 
     // Start HALTED - user must type 'c' or use MCP to start
     debugger.running = false;
     eprintln!("Emulator started in HALTED state. Type 'c' to continue or 'help' for commands.");
 
-    let mut scanline_counter = 0;
-    let mut last_progress_log = std::time::Instant::now();
-    let mut instruction_count: u64 = 0;
+    let mut last_progress_log = Instant::now();
+    let mut step_count: u64 = 0;
+    let mut frames_since_log: u64 = 0;
+    let mut next_frame_deadline = Instant::now();
 
     loop {
         // Handle MCP commands
-        debugger.handle_mcp_commands(&mut cpu, &mut mem).await;
+        debugger.handle_mcp_commands(&mut gba).await;
 
         if debugger.running {
-            const CYCLES_PER_SCANLINE: u64 = 1232;
-            const INSTRUCTIONS_PER_BATCH: u32 = 100000; // Execute many instructions per batch
-            const INTERRUPT_CHECK_INTERVAL: u32 = 100; // Check interrupts every 100 instructions
+            let frame = gba.frame_count();
+            let has_breakpoints = debugger.has_breakpoints();
 
-            // Execute a batch of instructions before checking MCP commands again
-            for i in 0..INSTRUCTIONS_PER_BATCH {
-                instruction_count += 1;
+            // Run one frame before checking MCP commands again
+            while gba.frame_count() == frame && debugger.running {
+                step_count += 1;
+                gba.step();
 
-                // Only check timing/interrupts periodically to reduce overhead
-                if i % INTERRUPT_CHECK_INTERVAL == 0 {
-                    // Update v_count BEFORE cpu.cycle() so it sees the current value
-                    let target_scanline = cpu.get_cycles() / CYCLES_PER_SCANLINE;
-                    let current_v_count = (target_scanline % 228) as u16;
-                    let prev_v_count = mem.get_io_registers().v_count;
-                    mem.get_io_registers_mut().v_count = current_v_count;
-
-                    // Generate VBlank interrupt when transitioning from line 159 to 160
-                    if prev_v_count < 160 && current_v_count >= 160 {
-                        // Set VBlank bit (bit 0) in IRF register
-                        let io = mem.get_io_registers_mut();
-                        io.irf |= 0x0001;  // VBlank interrupt
-
-                        // Also update BIOS interrupt flags at 0x03007FF8
-                        let bios_if = mem.read_u16(0x03007FF8);
-                        mem.write_u16(0x03007FF8, bios_if | 0x0001);
-                    }
-
-                    // Handle interrupts
-                    cpu.handle_interrupts(&mut mem);
-                }
-
-                cpu.cycle(&mut mem);
-
-                // Check for breakpoints
-                let pc = cpu.get_r(15);
-                if debugger.check_breakpoint(pc) {
-                    break; // Exit batch loop to handle debugger commands
-                }
-
-                // Stop batch if no longer running (halted via breakpoint or command)
-                if !debugger.running {
-                    break;
+                if has_breakpoints && debugger.check_breakpoint(gba.cpu.get_r(15)) {
+                    break; // Exit to handle debugger commands
                 }
             }
 
-            // Draw scanlines AFTER the instruction batch to reduce per-instruction overhead
-            let target_scanline = cpu.get_cycles() / CYCLES_PER_SCANLINE;
-            while target_scanline > scanline_counter {
-                scanline_counter += 1;
-                let v_count = (scanline_counter % 228) as u16;
-
-                // Update v_count register BEFORE drawing so PPU sees correct value
-                mem.get_io_registers_mut().v_count = v_count;
-
-                if v_count < 160 {
-                    ppu.draw_scanline(&mut mem);
+            if gba.frame_count() != frame {
+                frames_since_log += 1;
+                if let Ok(mut fb) = framebuffer.write() {
+                    *fb = *gba.framebuffer();
                 }
+                let _ = event_loop_proxy.send_event(DisplayEvent::RedrawRequested);
 
-                // Only request redraw every 4 frames to reduce overhead during BIOS
-                if v_count == 159 && (scanline_counter / 228) % 4 == 0 {
-                    let _ = event_loop_proxy.send_event(DisplayEvent::RedrawRequested);
+                // Pace to real time unless GBA_TURBO is set
+                if !turbo {
+                    let now = Instant::now();
+                    if next_frame_deadline + frame_duration * 4 < now {
+                        next_frame_deadline = now;
+                    }
+                    next_frame_deadline += frame_duration;
+                    if next_frame_deadline > now {
+                        tokio::time::sleep_until(next_frame_deadline.into()).await;
+                    }
                 }
             }
 
             // Log progress every 5 seconds
             if last_progress_log.elapsed().as_secs() >= 5 {
-                let pc = cpu.get_r(15);
-                eprintln!("[Progress] PC: 0x{:08X}, Instructions: {}, Rate: {:.1}M instr/sec",
-                    pc, instruction_count, instruction_count as f64 / last_progress_log.elapsed().as_secs_f64() / 1_000_000.0);
+                let elapsed = last_progress_log.elapsed().as_secs_f64();
+                let pc = gba.cpu.get_r(15);
+                eprintln!(
+                    "[Progress] PC: 0x{:08X}, Steps: {}, Rate: {:.1}M steps/sec, Speed: {:.2}x realtime",
+                    pc,
+                    step_count,
+                    step_count as f64 / elapsed / 1_000_000.0,
+                    frames_since_log as f64 * frame_duration.as_secs_f64() / elapsed
+                );
 
                 // Check if we've reached ROM
                 if pc >= 0x08000000 && pc < 0x0A000000 {
                     eprintln!("*** BIOS INITIALIZATION COMPLETE - ROM REACHED! ***");
                 }
 
-                last_progress_log = std::time::Instant::now();
-                instruction_count = 0;
+                last_progress_log = Instant::now();
+                step_count = 0;
+                frames_since_log = 0;
             }
         } else {
             // Sleep briefly when halted to avoid spinning
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 }

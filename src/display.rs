@@ -8,7 +8,7 @@ use winit::{
     window::{Window, WindowAttributes, WindowButtons, WindowId},
 };
 
-use super::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
+use gbae::system::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 
 pub struct Display {
     window: Option<Arc<Window>>,
@@ -24,7 +24,7 @@ pub enum DisplayEvent {
 impl Display {
     pub fn new(framebuffer: Arc<RwLock<Framebuffer>>) -> (Self, EventLoop<DisplayEvent>) {
         let event_loop = EventLoop::<DisplayEvent>::with_user_event().build().expect("Failed to create event loop");
-        event_loop.set_control_flow(ControlFlow::Poll);
+        event_loop.set_control_flow(ControlFlow::Wait);
 
         (
             Self {

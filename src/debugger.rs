@@ -1,12 +1,11 @@
 use crate::mcp::{CommandReceiver, DebugCommand, DebugResponse};
-use crate::system::{cpu::CPU, memory::Memory, ppu::Framebuffer};
+use gbae::system::gba::Gba;
+use gbae::system::ppu::Framebuffer;
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
 
 pub struct Debugger {
     pub running: bool,
     command_rx: Option<CommandReceiver>,
-    framebuffer: Option<Arc<RwLock<Framebuffer>>>,
     breakpoints: HashSet<u32>,
 }
 
@@ -15,7 +14,6 @@ impl Debugger {
         Self {
             running: false, // Start halted
             command_rx: None,
-            framebuffer: None,
             breakpoints: HashSet::new(),
         }
     }
@@ -25,13 +23,8 @@ impl Debugger {
         self
     }
 
-    pub fn with_framebuffer(mut self, fb: Arc<RwLock<Framebuffer>>) -> Self {
-        self.framebuffer = Some(fb);
-        self
-    }
-
     /// Handle pending MCP commands (non-blocking)
-    pub async fn handle_mcp_commands(&mut self, cpu: &mut CPU, mem: &mut Memory) {
+    pub async fn handle_mcp_commands(&mut self, gba: &mut Gba) {
         // Collect all requests first to avoid borrow issues
         let mut requests = Vec::new();
         if let Some(rx) = &mut self.command_rx {
@@ -42,16 +35,16 @@ impl Debugger {
 
         // Process requests
         for req in requests {
-            let response = self.execute_command(req.command, cpu, mem);
+            let response = self.execute_command(req.command, gba);
             let _ = req.response_tx.send(response);
         }
     }
 
-    fn execute_command(&mut self, command: DebugCommand, cpu: &mut CPU, mem: &mut Memory) -> DebugResponse {
+    fn execute_command(&mut self, command: DebugCommand, gba: &mut Gba) -> DebugResponse {
         match command {
             DebugCommand::Step { count } => {
                 for _ in 0..count {
-                    cpu.cycle(mem);
+                    gba.step();
                 }
                 DebugResponse::StepComplete { instructions: count }
             }
@@ -61,20 +54,20 @@ impl Debugger {
             }
             DebugCommand::Halt => {
                 self.running = false;
-                let pc = cpu.get_r(15);
+                let pc = gba.cpu.get_r(15);
                 eprintln!("Execution halted at PC: 0x{:08X}", pc);
                 DebugResponse::HaltComplete { pc }
             }
             DebugCommand::ReadMemory { address, length } => {
                 let mut data = Vec::with_capacity(length as usize);
                 for i in 0..length {
-                    data.push(mem.read_u8(address + i));
+                    data.push(gba.mem.read_u8(address + i));
                 }
                 DebugResponse::MemoryData { address, data }
             }
             DebugCommand::ReadRegister { register } => {
                 if register < 16 {
-                    let value = cpu.get_r(register);
+                    let value = gba.cpu.get_r(register);
                     DebugResponse::RegisterValue { register, value }
                 } else {
                     DebugResponse::Error {
@@ -85,39 +78,29 @@ impl Debugger {
             DebugCommand::GetCpuState => {
                 let mut registers = [0u32; 16];
                 for i in 0..16 {
-                    registers[i as usize] = cpu.get_r(i);
+                    registers[i as usize] = gba.cpu.get_r(i);
                 }
                 DebugResponse::CpuState {
                     registers,
-                    cpsr: cpu.cpsr,
-                    pc: cpu.get_r(15),
+                    cpsr: gba.cpu.get_cpsr(),
+                    pc: gba.cpu.get_r(15),
                 }
             }
             DebugCommand::GetPalette => {
                 let mut data = Vec::with_capacity(256);
                 for i in 0..256 {
-                    data.push(mem.read_u16(0x05000000 + i * 2));
+                    data.push(gba.mem.read_u16(0x05000000 + i * 2));
                 }
                 DebugResponse::PaletteData { data }
             }
-            DebugCommand::GetScreenshot => {
-                if let Some(fb) = &self.framebuffer {
-                    match self.encode_framebuffer_as_png(fb) {
-                        Ok((width, height, rgba_data)) => {
-                            DebugResponse::Screenshot { width, height, rgba_data }
-                        }
-                        Err(e) => DebugResponse::Error {
-                            message: format!("Failed to encode screenshot: {}", e),
-                        },
-                    }
-                } else {
-                    DebugResponse::Error {
-                        message: "Framebuffer not available".to_string(),
-                    }
-                }
-            }
+            DebugCommand::GetScreenshot => match self.encode_framebuffer_as_png(gba.framebuffer()) {
+                Ok((width, height, rgba_data)) => DebugResponse::Screenshot { width, height, rgba_data },
+                Err(e) => DebugResponse::Error {
+                    message: format!("Failed to encode screenshot: {}", e),
+                },
+            },
             DebugCommand::Disassemble { address, count, mode } => {
-                use crate::system::instructions::format_instruction_arm;
+                use gbae::system::instructions::{format_instruction_arm, format_instruction_thumb};
 
                 let mut instructions = Vec::new();
 
@@ -125,23 +108,23 @@ impl Debugger {
                 let is_thumb = match mode.as_deref() {
                     Some("thumb") => true,
                     Some("arm") => false,
-                    Some("auto") | None => cpu.get_thumb_state(),
-                    _ => cpu.get_thumb_state(), // Default to auto for invalid modes
+                    Some("auto") | None => gba.cpu.get_thumb_state(),
+                    _ => gba.cpu.get_thumb_state(), // Default to auto for invalid modes
                 };
 
                 if is_thumb {
                     // THUMB mode: 2 bytes per instruction
                     for i in 0..count {
                         let addr = address + i * 2;
-                        let instruction = mem.read_u16(addr);
-                        let next = mem.read_u16(addr + 2);
-                        instructions.push(crate::system::instructions::format_instruction_thumb(instruction, next, addr));
+                        let instruction = gba.mem.read_u16(addr);
+                        let next = gba.mem.read_u16(addr + 2);
+                        instructions.push(format_instruction_thumb(instruction, next, addr));
                     }
                 } else {
                     // ARM mode: 4 bytes per instruction
                     for i in 0..count {
                         let addr = address + i * 4;
-                        let instruction = mem.read_u32(addr);
+                        let instruction = gba.mem.read_u32(addr);
                         instructions.push(format_instruction_arm(instruction, addr));
                     }
                 }
@@ -169,6 +152,10 @@ impl Debugger {
         }
     }
 
+    pub fn has_breakpoints(&self) -> bool {
+        !self.breakpoints.is_empty()
+    }
+
     pub fn check_breakpoint(&mut self, pc: u32) -> bool {
         if self.breakpoints.contains(&pc) {
             self.running = false;
@@ -179,10 +166,9 @@ impl Debugger {
         }
     }
 
-    fn encode_framebuffer_as_png(&self, fb: &Arc<RwLock<Framebuffer>>) -> Result<(u32, u32, Vec<u8>), String> {
+    fn encode_framebuffer_as_png(&self, framebuffer: &Framebuffer) -> Result<(u32, u32, Vec<u8>), String> {
         use image::{ImageBuffer, ImageEncoder, Rgba};
 
-        let framebuffer = fb.read().unwrap();
         let width = framebuffer[0].len() as u32;
         let height = framebuffer.len() as u32;
 

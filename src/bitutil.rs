@@ -48,35 +48,29 @@ pub const fn rotate_right_with_extend(c_flag: bool, data: u32) -> u32 {
 }
 
 pub const fn add_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
-    let unsigned_result_64 = (a as u64).wrapping_add(b as u64);
-    let signed_result_64 = (a as i32 as i64).wrapping_add(b as i32 as i64);
-    let unsigned_overflow = unsigned_result_64 > u32::MAX as u64;
-    let signed_overflow = signed_result_64 > i32::MAX as i64 || signed_result_64 < i32::MIN as i64;
-    (unsigned_result_64 as u32, unsigned_overflow, signed_overflow)
+    let (result, carry) = a.overflowing_add(b);
+    let overflow = ((a ^ result) & (b ^ result)) >> 31 != 0;
+    (result, carry, overflow)
 }
 
 pub const fn sub_with_flags(a: u32, b: u32) -> (u32, bool, bool) {
-    let unsigned_result_64 = (a as u64).wrapping_sub(b as u64);
-    let signed_result_64 = (a as i32 as i64).wrapping_sub(b as i32 as i64);
-    let unsigned_underflow = unsigned_result_64 > u32::MAX as u64;
-    let signed_overflow = signed_result_64 > i32::MAX as i64 || signed_result_64 < i32::MIN as i64;
-    (unsigned_result_64 as u32, unsigned_underflow, signed_overflow)
+    let (result, borrow) = a.overflowing_sub(b);
+    let overflow = ((a ^ b) & (a ^ result)) >> 31 != 0;
+    (result, borrow, overflow)
 }
 
-pub fn add_with_flags_carry(a: u32, b: u32, carry: bool) -> (u32, bool, bool) {
-    let unsigned_result_64 = (a as u64).wrapping_add(b as u64).wrapping_add(carry as u64);
-    let signed_result_64 = (a as i32 as i64).wrapping_add(b as i32 as i64).wrapping_add(carry as i32 as i64);
-    let unsigned_overflow = unsigned_result_64 > u32::MAX as u64;
-    let signed_overflow = signed_result_64 > i32::MAX as i64 || signed_result_64 < i32::MIN as i64;
-    (unsigned_result_64 as u32, unsigned_overflow, signed_overflow)
+pub const fn add_with_flags_carry(a: u32, b: u32, carry: bool) -> (u32, bool, bool) {
+    let (partial, carry1) = a.overflowing_add(b);
+    let (result, carry2) = partial.overflowing_add(carry as u32);
+    let overflow = ((a ^ result) & (b ^ result)) >> 31 != 0;
+    (result, carry1 | carry2, overflow)
 }
 
-pub fn sub_with_flags_carry(a: u32, b: u32, carry: bool) -> (u32, bool, bool) {
-    let unsigned_result_64 = (a as u64).wrapping_sub(b as u64).wrapping_sub(carry as u64);
-    let signed_result_64 = (a as i32 as i64).wrapping_sub(b as i32 as i64).wrapping_sub(carry as i32 as i64);
-    let unsigned_overflow = unsigned_result_64 > u32::MAX as u64;
-    let signed_overflow = signed_result_64 > i32::MAX as i64 || signed_result_64 < i32::MIN as i64;
-    (unsigned_result_64 as u32, unsigned_overflow, signed_overflow)
+pub const fn sub_with_flags_carry(a: u32, b: u32, borrow: bool) -> (u32, bool, bool) {
+    let (partial, borrow1) = a.overflowing_sub(b);
+    let (result, borrow2) = partial.overflowing_sub(borrow as u32);
+    let overflow = ((a ^ b) & (a ^ result)) >> 31 != 0;
+    (result, borrow1 | borrow2, overflow)
 }
 
 #[cfg(test)]

@@ -173,7 +173,7 @@ async fn run_emulator(
                 step_count += 1;
                 gba.step();
 
-                if has_breakpoints && debugger.check_breakpoint(gba.cpu.get_r(15)) {
+                if has_breakpoints && debugger.check_breakpoint(gba.cpu.pc()) {
                     break; // Exit to handle debugger commands
                 }
             }
@@ -201,7 +201,7 @@ async fn run_emulator(
             // Log progress every 5 seconds
             if last_progress_log.elapsed().as_secs() >= 5 {
                 let elapsed = last_progress_log.elapsed().as_secs_f64();
-                let pc = gba.cpu.get_r(15);
+                let pc = gba.cpu.pc();
                 eprintln!(
                     "[Progress] PC: 0x{:08X}, Steps: {}, Rate: {:.1}M steps/sec, Speed: {:.2}x realtime",
                     pc,

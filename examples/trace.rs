@@ -45,7 +45,7 @@ fn main() {
 
     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
         while steps < max_steps {
-            let pc = gba.cpu.get_r(15);
+            let pc = gba.cpu.pc();
             if let Some((start, end)) = profile {
                 if steps >= start && steps < end {
                     *profile_counts.entry(pc).or_insert(0) += 1;

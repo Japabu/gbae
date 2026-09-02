@@ -39,6 +39,7 @@ impl Gba {
             next_event_cycles: HDRAW_CYCLES,
             in_hblank: false,
         };
+        gba.cpu.reset(&mut gba.mem);
         gba.start_scanline();
         gba
     }

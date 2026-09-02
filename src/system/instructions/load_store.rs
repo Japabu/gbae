@@ -190,7 +190,7 @@ pub fn decode_register_offset_thumb(instruction: u16) -> Instruction {
 impl LoadStore {
     #[inline(always)]
     pub fn execute(self, cpu: &mut CPU, mem: &mut Memory) {
-        let value = cpu.get_r(self.d).wrapping_add(if self.d == REGISTER_PC { 4 } else { 0 });
+        let value = cpu.get_r(self.d).wrapping_add(if self.d == REGISTER_PC { cpu.instruction_len_in_bytes() } else { 0 });
         let address = self.addressing_mode.execute(cpu);
         match (self.opcode, self.length, self.sign_extend) {
             (Opcode::LDR, Length::Word, _) => {

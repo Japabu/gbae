@@ -76,6 +76,7 @@ pub struct CPU {
     banked: [[u32; 7]; BANK_COUNT],
     spsr: [u32; BANK_COUNT],
     bank: usize,
+    pipeline: [u32; 2],
     branch_happened: bool,
     cycles: u64,
 }
@@ -88,16 +89,35 @@ impl CPU {
             banked: [[0; 7]; BANK_COUNT],
             spsr: [0; BANK_COUNT],
             bank: BANK_SVC,
+            pipeline: [0; 2],
             branch_happened: false,
             cycles: 0,
         };
-        cpu.reset();
+        cpu.set_cpsr(MODE_SVC as u32 | FLAG_I | FLAG_F);
         cpu
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self, mem: &mut Memory) {
         self.set_cpsr(MODE_SVC as u32 | FLAG_I | FLAG_F);
         self.r[REGISTER_PC as usize] = 0x00000000;
+        self.flush_pipeline(mem);
+    }
+
+    pub fn flush_pipeline(&mut self, mem: &mut Memory) {
+        let pc = self.r[REGISTER_PC as usize];
+        if self.get_thumb_state() {
+            self.pipeline = [mem.fetch_u16(pc) as u32, mem.fetch_u16(pc.wrapping_add(INSTRUCTION_LEN_THUMB)) as u32];
+            self.r[REGISTER_PC as usize] = pc.wrapping_add(INSTRUCTION_LEN_THUMB * 2);
+        } else {
+            self.pipeline = [mem.fetch_u32(pc), mem.fetch_u32(pc.wrapping_add(INSTRUCTION_LEN_ARM))];
+            self.r[REGISTER_PC as usize] = pc.wrapping_add(INSTRUCTION_LEN_ARM * 2);
+        }
+        self.branch_happened = false;
+    }
+
+    #[inline(always)]
+    pub fn pc(&self) -> u32 {
+        self.curr_instruction_address_from_execution_stage()
     }
 
     #[inline(always)]
@@ -184,39 +204,27 @@ impl CPU {
     #[inline(always)]
     pub fn cycle(&mut self, mem: &mut Memory) {
         let pc = self.r[REGISTER_PC as usize];
+        let instruction = self.pipeline[0];
+        self.pipeline[0] = self.pipeline[1];
         self.branch_happened = false;
 
         if self.get_thumb_state() {
-            let instruction = mem.read_u16(pc);
-            self.r[REGISTER_PC as usize] = pc.wrapping_add(INSTRUCTION_LEN_THUMB * 2);
-            THUMB_LUT[index_thumb(instruction)](self, mem, instruction);
-            if !self.branch_happened {
-                self.r[REGISTER_PC as usize] = pc.wrapping_add(INSTRUCTION_LEN_THUMB);
-            }
+            self.pipeline[1] = mem.fetch_u16(pc) as u32;
+            THUMB_LUT[index_thumb(instruction as u16)](self, mem, instruction as u16);
         } else {
-            let instruction = mem.read_u32(pc);
-            self.r[REGISTER_PC as usize] = pc.wrapping_add(INSTRUCTION_LEN_ARM * 2);
+            self.pipeline[1] = mem.fetch_u32(pc);
             if condition_passed(instruction >> 28, self.cpsr) {
                 ARM_LUT[index_arm(instruction)](self, mem, instruction);
             }
-            if !self.branch_happened {
-                self.r[REGISTER_PC as usize] = pc.wrapping_add(INSTRUCTION_LEN_ARM);
-            }
+        }
+
+        if self.branch_happened {
+            self.flush_pipeline(mem);
+        } else {
+            self.r[REGISTER_PC as usize] = pc.wrapping_add(self.instruction_len_in_bytes());
         }
 
         self.cycles += 2;
-    }
-
-    fn fetch_arm(&self, mem: &Memory) -> u32 {
-        mem.read_u32(self.r[REGISTER_PC as usize])
-    }
-
-    fn fetch_thumb(&self, mem: &Memory) -> u16 {
-        mem.read_u16(self.r[REGISTER_PC as usize])
-    }
-
-    fn fetch_next_thumb(&self, mem: &Memory) -> u16 {
-        mem.read_u16(self.r[REGISTER_PC as usize] + INSTRUCTION_LEN_THUMB)
     }
 
     #[inline(always)]
@@ -331,11 +339,11 @@ impl CPU {
             self.set_mode(MODE_IRQ);
             self.set_spsr(old_cpsr);
             self.set_irq_disable(true);
-            let return_addr = self.r[REGISTER_PC as usize].wrapping_add(4);
+            let return_addr = self.pc().wrapping_add(4);
             self.set_r(REGISTER_LR, return_addr);
             self.set_thumb_state(false);
             self.r[REGISTER_PC as usize] = 0x18;
-            self.branch_happened = true;
+            self.flush_pipeline(mem);
         }
     }
 
@@ -370,16 +378,16 @@ impl CPU {
         );
     }
 
-    pub fn print_next_instruction(&self, mem: &Memory) {
-        let pc = self.r[REGISTER_PC as usize];
+    pub fn print_next_instruction(&self) {
+        let pc = self.pc();
         if self.get_thumb_state() {
             println!(
                 "Next thumb instruction at {:08X}: {}",
                 pc,
-                format_instruction_thumb(self.fetch_thumb(mem), self.fetch_next_thumb(mem), pc)
+                format_instruction_thumb(self.pipeline[0] as u16, self.pipeline[1] as u16, pc)
             );
         } else {
-            println!("Next arm instruction at {:08X}: {}", pc, format_instruction_arm(self.fetch_arm(mem), pc));
+            println!("Next arm instruction at {:08X}: {}", pc, format_instruction_arm(self.pipeline[0], pc));
         }
     }
 }

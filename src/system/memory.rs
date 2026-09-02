@@ -610,6 +610,8 @@ pub struct Memory {
     flash: FlashRegion,
     dma: [DmaChannel; 4],
     dma_active: bool,
+    bios_last_opcode: u32,
+    executing_from_bios: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -668,6 +670,37 @@ impl Memory {
             flash: FlashRegion::new(FLASH_LEN),
             dma: [DmaChannel::default(); 4],
             dma_active: false,
+            bios_last_opcode: 0,
+            executing_from_bios: true,
+        }
+    }
+
+    #[inline]
+    pub fn fetch_u32(&mut self, address: u32) -> u32 {
+        self.executing_from_bios = address < BIOS_LEN as u32;
+        let opcode = self.read_u32(address);
+        if self.executing_from_bios {
+            self.bios_last_opcode = opcode;
+        }
+        opcode
+    }
+
+    #[inline]
+    pub fn fetch_u16(&mut self, address: u32) -> u16 {
+        self.executing_from_bios = address < BIOS_LEN as u32;
+        let opcode = self.read_u16(address);
+        if self.executing_from_bios {
+            self.bios_last_opcode = self.read_u32(address);
+        }
+        opcode
+    }
+
+    #[inline(always)]
+    fn bios_read(&self, offset: usize) -> u32 {
+        if self.executing_from_bios {
+            read_word(&self.bios[..], offset & !0b11)
+        } else {
+            self.bios_last_opcode
         }
     }
 
@@ -691,7 +724,7 @@ impl Memory {
     #[inline]
     pub fn read_u8(&self, address: u32) -> u8 {
         match self.decode_address(address) {
-            RegionKey::Bios(offset) => self.bios[offset],
+            RegionKey::Bios(offset) => (self.bios_read(offset) >> (8 * (offset & 0b11))) as u8,
             RegionKey::Wram1(offset) => self.wram1[offset],
             RegionKey::Wram2(offset) => self.wram2[offset],
             RegionKey::IoRegisters(offset) => self.io_registers.read_u8(offset),
@@ -707,7 +740,7 @@ impl Memory {
     #[inline]
     pub fn read_u16(&self, address: u32) -> u16 {
         match self.decode_address(address & !0b1) {
-            RegionKey::Bios(offset) => read_halfword(&self.bios[..], offset),
+            RegionKey::Bios(offset) => (self.bios_read(offset) >> (8 * (offset & 0b10))) as u16,
             RegionKey::Wram1(offset) => read_halfword(&self.wram1[..], offset),
             RegionKey::Wram2(offset) => read_halfword(&self.wram2[..], offset),
             RegionKey::IoRegisters(offset) => self.io_registers.read_u16(offset),
@@ -723,7 +756,7 @@ impl Memory {
     #[inline]
     pub fn read_u32(&self, address: u32) -> u32 {
         match self.decode_address(address & !0b11) {
-            RegionKey::Bios(offset) => read_word(&self.bios[..], offset),
+            RegionKey::Bios(offset) => self.bios_read(offset),
             RegionKey::Wram1(offset) => read_word(&self.wram1[..], offset),
             RegionKey::Wram2(offset) => read_word(&self.wram2[..], offset),
             RegionKey::IoRegisters(offset) => self.io_registers.read_u32(offset),
@@ -1005,6 +1038,19 @@ mod tests {
         io.write_u8(0x300, 1);
         assert!(!io.halted);
         assert_eq!(io.read_u16(0x300), 1);
+    }
+
+    #[test]
+    fn test_bios_reads_outside_bios_return_last_fetched_opcode() {
+        let mut bios = vec![0u8; BIOS_LEN];
+        bios[0x100..0x104].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        let mut mem = Memory::new(bios, vec![]);
+        assert_eq!(mem.fetch_u32(0x100), 0x1234_5678);
+        assert_eq!(mem.read_u32(0x200), 0);
+        mem.fetch_u32(0x0800_0000);
+        assert_eq!(mem.read_u32(0x200), 0x1234_5678);
+        assert_eq!(mem.read_u16(0x202), 0x1234);
+        assert_eq!(mem.read_u8(0x201), 0x56);
     }
 
     #[test]

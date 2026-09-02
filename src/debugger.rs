@@ -54,7 +54,7 @@ impl Debugger {
             }
             DebugCommand::Halt => {
                 self.running = false;
-                let pc = gba.cpu.get_r(15);
+                let pc = gba.cpu.pc();
                 eprintln!("Execution halted at PC: 0x{:08X}", pc);
                 DebugResponse::HaltComplete { pc }
             }
@@ -83,7 +83,7 @@ impl Debugger {
                 DebugResponse::CpuState {
                     registers,
                     cpsr: gba.cpu.get_cpsr(),
-                    pc: gba.cpu.get_r(15),
+                    pc: gba.cpu.pc(),
                 }
             }
             DebugCommand::GetPalette => {

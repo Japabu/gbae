@@ -62,6 +62,10 @@ pub fn frame_hash(framebuffer: &Framebuffer) -> u64 {
 }
 
 pub fn assert_matches_golden(framebuffer: &Framebuffer, name: &str) {
+    assert_matches_golden_as(framebuffer, name, name);
+}
+
+pub fn assert_matches_golden_as(framebuffer: &Framebuffer, name: &str, actual_name: &str) {
     let actual = to_image(framebuffer);
     let golden_path = project_dir().join("tests").join("golden").join(format!("{}.png", name));
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
@@ -76,7 +80,7 @@ pub fn assert_matches_golden(framebuffer: &Framebuffer, name: &str) {
     if expected.as_raw() == actual.as_raw() {
         return;
     }
-    let actual_path = project_dir().join("target").join("golden_actual").join(format!("{}.png", name));
+    let actual_path = project_dir().join("target").join("golden_actual").join(format!("{}.png", actual_name));
     std::fs::create_dir_all(actual_path.parent().unwrap()).unwrap();
     actual.save(&actual_path).unwrap();
     for y in 0..FRAMEBUFFER_HEIGHT as u32 {

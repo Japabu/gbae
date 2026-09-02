@@ -270,10 +270,14 @@ impl DataProcessing {
             Opcode::MVN => (!shifter_operand, shifter_carry, None),
         };
 
-        if self.opcode.writes_result() && self.d == REGISTER_PC {
-            if self.set_flags && cpu.current_mode_has_spsr() {
+        if self.d == REGISTER_PC && self.set_flags {
+            if cpu.current_mode_has_spsr() {
                 cpu.set_cpsr(cpu.get_spsr());
             }
+            if self.opcode.writes_result() {
+                cpu.set_pc(result);
+            }
+        } else if self.opcode.writes_result() && self.d == REGISTER_PC {
             cpu.set_pc(result);
         } else {
             if self.opcode.writes_result() {

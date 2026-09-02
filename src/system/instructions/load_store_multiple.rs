@@ -144,7 +144,7 @@ impl LoadStoreMultiple {
                         } else if user_bank {
                             cpu.get_r_in_mode(i, cpu::MODE_USR)
                         } else if i == REGISTER_PC {
-                            cpu.get_r(REGISTER_PC).wrapping_add(4)
+                            cpu.get_r(REGISTER_PC).wrapping_add(cpu.instruction_len_in_bytes())
                         } else {
                             cpu.get_r(i)
                         };

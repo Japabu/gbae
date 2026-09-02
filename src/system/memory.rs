@@ -29,9 +29,12 @@ Unused Memory Area
 use std::fmt::Display;
 
 use super::{
+    apu::{Apu, FIFO_A, FIFO_B},
     rtc::Gpio,
     save::{Backup, SaveType},
 };
+
+const APU_REGISTERS: std::ops::Range<u32> = 0x060..0x0A8;
 
 pub const BIOS_LEN: usize = 0x4000;
 pub const WRAM1_LEN: usize = 0x4_0000;
@@ -115,14 +118,6 @@ pub struct IoRegisters {
     pub blend_cnt: u16,
     pub blend_alpha: u16,
     pub blend_y: u16,
-    sound3_cnt_l: u16,
-    sound_cnt_l: u16,
-    sound_cnt_h: u16,
-    sound_cnt_x: u16,
-    soundbias: u16,
-    wave_ram: [u8; 16],
-    fifo_a: u32,
-    fifo_b: u32,
     pub dma_sad: [u32; 4],
     pub dma_dad: [u32; 4],
     pub dma_cnt_l: [u16; 4],
@@ -131,6 +126,7 @@ pub struct IoRegisters {
     tm_control: [u16; 4],
     tm_counter: [u16; 4],
     tm_cycles: [u32; 4],
+    timer_overflows: u8,
     sio_data32: u32,
     sio_multi2: u16,
     sio_multi3: u16,
@@ -171,14 +167,6 @@ impl IoRegisters {
             blend_cnt: 0,
             blend_alpha: 0,
             blend_y: 0,
-            sound3_cnt_l: 0,
-            sound_cnt_l: 0,
-            sound_cnt_h: 0,
-            sound_cnt_x: 0,
-            soundbias: 0x0200,
-            wave_ram: [0; 16],
-            fifo_a: 0,
-            fifo_b: 0,
             dma_sad: [0; 4],
             dma_dad: [0; 4],
             dma_cnt_l: [0; 4],
@@ -187,6 +175,7 @@ impl IoRegisters {
             tm_control: [0; 4],
             tm_counter: [0; 4],
             tm_cycles: [0; 4],
+            timer_overflows: 0,
             sio_data32: 0,
             sio_multi2: 0,
             sio_multi3: 0,
@@ -225,12 +214,6 @@ impl IoRegisters {
             0x04A => self.win_out,
             0x050 => self.blend_cnt,
             0x052 => self.blend_alpha,
-            0x070 => self.sound3_cnt_l,
-            0x080 => self.sound_cnt_l,
-            0x082 => self.sound_cnt_h,
-            0x084 => self.sound_cnt_x,
-            0x088 => self.soundbias,
-            0x090..=0x09F => read_halfword(&self.wave_ram, (offset & 0xF) as usize),
             0x0B8 => self.dma_cnt_l[0],
             0x0BA => self.dma_cnt_h[0],
             0x0C4 => self.dma_cnt_l[1],
@@ -273,8 +256,6 @@ impl IoRegisters {
 
     pub fn read_u32(&self, offset: u32) -> u32 {
         match offset {
-            0x0A0 => self.fifo_a,
-            0x0A4 => self.fifo_b,
             0x0B0 => self.dma_sad[0],
             0x0B4 => self.dma_dad[0],
             0x0BC => self.dma_sad[1],
@@ -336,16 +317,6 @@ impl IoRegisters {
             0x050 => self.blend_cnt = value,
             0x052 => self.blend_alpha = value,
             0x054 => self.blend_y = value,
-            0x070 => self.sound3_cnt_l = value,
-            0x080 => self.sound_cnt_l = value,
-            0x082 => self.sound_cnt_h = value,
-            0x084 => self.sound_cnt_x = value,
-            0x088 => self.soundbias = value,
-            0x090..=0x09F => write_halfword(&mut self.wave_ram, (offset & 0xF) as usize, value),
-            0x0A0 => self.fifo_a = self.fifo_a & 0xFFFF_0000 | value as u32,
-            0x0A2 => self.fifo_a = self.fifo_a & 0x0000_FFFF | (value as u32) << 16,
-            0x0A4 => self.fifo_b = self.fifo_b & 0xFFFF_0000 | value as u32,
-            0x0A6 => self.fifo_b = self.fifo_b & 0x0000_FFFF | (value as u32) << 16,
             0x0B0 => self.dma_sad[0] = self.dma_sad[0] & 0xFFFF_0000 | value as u32,
             0x0B2 => self.dma_sad[0] = self.dma_sad[0] & 0x0000_FFFF | (value as u32) << 16,
             0x0B4 => self.dma_dad[0] = self.dma_dad[0] & 0xFFFF_0000 | value as u32,
@@ -447,13 +418,16 @@ impl IoRegisters {
     }
 
     #[inline(always)]
-    pub fn tick_timers(&mut self, cycles: u32) {
+    pub fn tick_timers(&mut self, cycles: u32) -> u8 {
         if (self.tm_control[0] | self.tm_control[1] | self.tm_control[2] | self.tm_control[3]) & 0x80 != 0 {
-            self.tick_enabled_timers(cycles);
+            self.tick_enabled_timers(cycles)
+        } else {
+            0
         }
     }
 
-    fn tick_enabled_timers(&mut self, cycles: u32) {
+    fn tick_enabled_timers(&mut self, cycles: u32) -> u8 {
+        self.timer_overflows = 0;
         for channel in 0..4 {
             let control = self.tm_control[channel];
             if control & 0x80 == 0 || (channel != 0 && control & 0x4 != 0) {
@@ -469,6 +443,7 @@ impl IoRegisters {
             self.tm_cycles[channel] = accumulated & ((1 << shift) - 1);
             self.increment_timer(channel, accumulated >> shift);
         }
+        self.timer_overflows
     }
 
     fn increment_timer(&mut self, channel: usize, ticks: u32) {
@@ -487,6 +462,7 @@ impl IoRegisters {
     }
 
     fn timer_overflowed(&mut self, channel: usize) {
+        self.timer_overflows |= 1 << channel;
         if self.tm_control[channel] & 0x40 != 0 {
             self.irf |= 1 << (3 + channel);
         }
@@ -610,6 +586,7 @@ pub struct Memory {
     wram1: Box<[u8; WRAM1_LEN]>,
     wram2: Box<[u8; WRAM2_LEN]>,
     io_registers: IoRegisters,
+    pub apu: Apu,
     palette_ram: Box<[u8; PALETTE_RAM_LEN]>,
     vram: Box<[u8; VRAM_LEN]>,
     oam: Box<[u8; OAM_LEN]>,
@@ -667,6 +644,7 @@ impl Memory {
             wram1: boxed_zeroed(),
             wram2: boxed_zeroed(),
             io_registers: IoRegisters::new(),
+            apu: Apu::new(),
             palette_ram: boxed_zeroed(),
             vram: boxed_zeroed(),
             oam: boxed_zeroed(),
@@ -886,7 +864,7 @@ impl Memory {
             RegionKey::Bios(offset) => (self.bios_read(offset) >> (8 * (offset & 0b11))) as u8,
             RegionKey::Wram1(offset) => self.wram1[offset],
             RegionKey::Wram2(offset) => self.wram2[offset],
-            RegionKey::IoRegisters(offset) => self.io_registers.read_u8(offset),
+            RegionKey::IoRegisters(offset) => (self.io_read_u16(offset & !0b1) >> (8 * (offset & 1))) as u8,
             RegionKey::PaletteRam(offset) => self.palette_ram[offset],
             RegionKey::Vram(offset) => self.vram[offset],
             RegionKey::Oam(offset) => self.oam[offset],
@@ -904,7 +882,7 @@ impl Memory {
             RegionKey::Bios(offset) => (self.bios_read(offset) >> (8 * (offset & 0b10))) as u16,
             RegionKey::Wram1(offset) => read_halfword(&self.wram1[..], offset),
             RegionKey::Wram2(offset) => read_halfword(&self.wram2[..], offset),
-            RegionKey::IoRegisters(offset) => self.io_registers.read_u16(offset),
+            RegionKey::IoRegisters(offset) => self.io_read_u16(offset),
             RegionKey::PaletteRam(offset) => read_halfword(&self.palette_ram[..], offset),
             RegionKey::Vram(offset) => read_halfword(&self.vram[..], offset),
             RegionKey::Oam(offset) => read_halfword(&self.oam[..], offset),
@@ -922,7 +900,7 @@ impl Memory {
             RegionKey::Bios(offset) => self.bios_read(offset),
             RegionKey::Wram1(offset) => read_word(&self.wram1[..], offset),
             RegionKey::Wram2(offset) => read_word(&self.wram2[..], offset),
-            RegionKey::IoRegisters(offset) => self.io_registers.read_u32(offset),
+            RegionKey::IoRegisters(offset) => self.io_read_u16(offset) as u32 | (self.io_read_u16(offset + 2) as u32) << 16,
             RegionKey::PaletteRam(offset) => read_word(&self.palette_ram[..], offset),
             RegionKey::Vram(offset) => read_word(&self.vram[..], offset),
             RegionKey::Oam(offset) => read_word(&self.oam[..], offset),
@@ -931,6 +909,38 @@ impl Memory {
             RegionKey::Eeprom => self.backup.eeprom_read() as u32 | (self.backup.eeprom_read() as u32) << 16,
             RegionKey::Backup(address) => self.backup.read(address) as u32 * 0x0101_0101,
             RegionKey::Unmapped => 0,
+        }
+    }
+
+    fn io_read_u16(&self, offset: u32) -> u16 {
+        if APU_REGISTERS.contains(&offset) {
+            self.apu.read_u16(offset)
+        } else {
+            self.io_registers.read_u16(offset)
+        }
+    }
+
+    pub fn tick(&mut self, cycles: u32) {
+        let overflowed = self.io_registers.tick_timers(cycles);
+        self.apu.run(cycles);
+        for timer in 0..2u8 {
+            if overflowed & (1 << timer) != 0 {
+                let refill = self.apu.timer_overflow(timer);
+                for (fifo, address) in [(0, FIFO_A), (1, FIFO_B)] {
+                    if refill[fifo] {
+                        self.refill_fifo(address);
+                    }
+                }
+            }
+        }
+    }
+
+    fn refill_fifo(&mut self, fifo_address: u32) {
+        for channel in 1..=2 {
+            let control = self.io_registers.dma_cnt_h[channel];
+            if self.dma[channel].armed && DmaTiming::decode(control) == DmaTiming::Special && self.io_registers.dma_dad[channel] == fifo_address {
+                self.run_dma(channel);
+            }
         }
     }
 
@@ -974,7 +984,15 @@ impl Memory {
         match self.decode_address(address) {
             RegionKey::Wram1(offset) => self.wram1[offset] = value,
             RegionKey::Wram2(offset) => self.wram2[offset] = value,
-            RegionKey::IoRegisters(offset) => self.io_registers.write_u8(offset, value),
+            RegionKey::IoRegisters(offset) => {
+                if APU_REGISTERS.contains(&offset) {
+                    let old = self.apu.read_u16(offset & !0b1);
+                    let new = if offset & 1 == 0 { old & 0xFF00 | value as u16 } else { old & 0x00FF | (value as u16) << 8 };
+                    self.apu.write_u16(offset & !0b1, new);
+                } else {
+                    self.io_registers.write_u8(offset, value);
+                }
+            }
             RegionKey::PaletteRam(offset) => write_halfword(&mut self.palette_ram[..], offset & !0b1, value as u16 * 0x0101),
             RegionKey::Vram(offset) => write_halfword(&mut self.vram[..], offset & !0b1, value as u16 * 0x0101),
             RegionKey::Backup(address) => self.backup.write(address, value),
@@ -990,8 +1008,12 @@ impl Memory {
             RegionKey::Wram1(offset) => write_halfword(&mut self.wram1[..], offset, value),
             RegionKey::Wram2(offset) => write_halfword(&mut self.wram2[..], offset, value),
             RegionKey::IoRegisters(offset) => {
-                self.io_registers.write_u16(offset, value);
-                self.after_io_write();
+                if APU_REGISTERS.contains(&offset) {
+                    self.apu.write_u16(offset, value);
+                } else {
+                    self.io_registers.write_u16(offset, value);
+                    self.after_io_write();
+                }
             }
             RegionKey::PaletteRam(offset) => write_halfword(&mut self.palette_ram[..], offset, value),
             RegionKey::Vram(offset) => write_halfword(&mut self.vram[..], offset, value),
@@ -1010,10 +1032,18 @@ impl Memory {
         match self.decode_address(aligned) {
             RegionKey::Wram1(offset) => write_word(&mut self.wram1[..], offset, value),
             RegionKey::Wram2(offset) => write_word(&mut self.wram2[..], offset, value),
-            RegionKey::IoRegisters(offset) => {
-                self.io_registers.write_u32(offset, value);
-                self.after_io_write();
-            }
+            RegionKey::IoRegisters(offset) => match offset {
+                0x0A0 => self.apu.write_fifo(0, value),
+                0x0A4 => self.apu.write_fifo(1, value),
+                _ if APU_REGISTERS.contains(&offset) => {
+                    self.apu.write_u16(offset, value as u16);
+                    self.apu.write_u16(offset + 2, (value >> 16) as u16);
+                }
+                _ => {
+                    self.io_registers.write_u32(offset, value);
+                    self.after_io_write();
+                }
+            },
             RegionKey::PaletteRam(offset) => write_word(&mut self.palette_ram[..], offset, value),
             RegionKey::Vram(offset) => write_word(&mut self.vram[..], offset, value),
             RegionKey::Oam(offset) => write_word(&mut self.oam[..], offset, value),
@@ -1123,10 +1153,12 @@ impl Memory {
         self.dma_active = true;
 
         let control = self.io_registers.dma_cnt_h[channel];
-        let unit_size = if control & 0x400 != 0 { 4 } else { 2 };
+        let fifo_transfer = DmaTiming::decode(control) == DmaTiming::Special && (1..=2).contains(&channel);
+        let unit_size = if control & 0x400 != 0 || fifo_transfer { 4 } else { 2 };
         let source_control = (control >> 7) & 3;
-        let destination_control = (control >> 5) & 3;
+        let destination_control = if fifo_transfer { 2 } else { (control >> 5) & 3 };
         let DmaChannel { count, mut source, mut destination, .. } = self.dma[channel];
+        let count = if fifo_transfer { 4 } else { count };
         if self.decode_address(destination) == RegionKey::Eeprom {
             self.backup.eeprom_begin_transfer(count);
         }

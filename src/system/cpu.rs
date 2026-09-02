@@ -25,7 +25,7 @@ pub const REGISTER_PC: u8 = 15;
 pub const INSTRUCTION_LEN_ARM: u32 = 4;
 pub const INSTRUCTION_LEN_THUMB: u32 = 2;
 
-pub const CPU_FREQUENCY: u64 = 16_776_000;
+pub const CPU_FREQUENCY: u64 = 16_777_216;
 pub const INSTRUCTION_TIME: Duration = Duration::from_nanos(1_000_000_000 / CPU_FREQUENCY);
 
 const BANK_USR: usize = 0;

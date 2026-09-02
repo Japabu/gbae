@@ -52,19 +52,19 @@ impl Gba {
         }
         let stalled = self.mem.take_cycles() as u64;
         self.cpu.add_cycles(stalled);
+        self.mem.tick(stalled as u32);
         let io = self.mem.get_io_registers_mut();
-        io.tick_timers(stalled as u32);
         if io.halted && io.ie & io.irf == 0 {
             let skipped = self.next_event_cycles.saturating_sub(self.cpu.get_cycles());
-            io.tick_timers(skipped as u32);
             self.cpu.add_cycles(skipped);
+            self.mem.tick(skipped as u32);
         } else {
             io.halted = false;
             self.cpu.handle_interrupts(&mut self.mem);
             let cycles_before = self.cpu.get_cycles();
             self.cpu.cycle(&mut self.mem);
             let elapsed = (self.cpu.get_cycles() - cycles_before) as u32;
-            self.mem.get_io_registers_mut().tick_timers(elapsed);
+            self.mem.tick(elapsed);
         }
     }
 
@@ -170,6 +170,10 @@ impl Gba {
 
     pub fn set_time(&mut self, unix_seconds: u64) {
         self.mem.set_time(unix_seconds);
+    }
+
+    pub fn take_audio_samples(&mut self) -> Vec<i16> {
+        self.mem.apu.take_samples()
     }
 
     pub fn framebuffer(&self) -> &Framebuffer {

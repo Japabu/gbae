@@ -105,6 +105,7 @@ impl CPU {
 
     pub fn flush_pipeline(&mut self, mem: &mut Memory) {
         let pc = self.r[REGISTER_PC as usize];
+        mem.invalidate_fetch_sequence();
         if self.get_thumb_state() {
             self.pipeline = [mem.fetch_u16(pc) as u32, mem.fetch_u16(pc.wrapping_add(INSTRUCTION_LEN_THUMB)) as u32];
             self.r[REGISTER_PC as usize] = pc.wrapping_add(INSTRUCTION_LEN_THUMB * 2);
@@ -224,7 +225,7 @@ impl CPU {
             self.r[REGISTER_PC as usize] = pc.wrapping_add(self.instruction_len_in_bytes());
         }
 
-        self.cycles += 2;
+        self.cycles += mem.take_cycles() as u64;
     }
 
     #[inline(always)]

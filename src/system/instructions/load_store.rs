@@ -4,7 +4,7 @@ use crate::{
     bitutil::{get_bit, get_bit16, get_bits16, get_bits32, sign_extend32},
     system::{
         cpu::{CPU, REGISTER_PC, REGISTER_SP},
-        memory::Memory,
+        memory::{Access, Memory},
     },
 };
 
@@ -194,27 +194,30 @@ impl LoadStore {
         let address = self.addressing_mode.execute(cpu);
         match (self.opcode, self.length, self.sign_extend) {
             (Opcode::LDR, Length::Word, _) => {
-                let value = mem.read_u32(address).rotate_right((address & 0b11) * 8);
+                let value = mem.load_u32(address, Access::Nonsequential).rotate_right((address & 0b11) * 8);
                 if self.d == REGISTER_PC {
                     cpu.set_pc(value);
                 } else {
                     cpu.set_r(self.d, value);
                 }
             }
-            (Opcode::LDR, Length::Halfword, false) => cpu.set_r(self.d, (mem.read_u16(address) as u32).rotate_right((address & 0b1) * 8)),
+            (Opcode::LDR, Length::Halfword, false) => cpu.set_r(self.d, (mem.load_u16(address, Access::Nonsequential) as u32).rotate_right((address & 0b1) * 8)),
             (Opcode::LDR, Length::Halfword, true) => {
                 let value = if address & 0b1 != 0 {
-                    sign_extend32(mem.read_u8(address) as u32, 8)
+                    sign_extend32(mem.load_u8(address, Access::Nonsequential) as u32, 8)
                 } else {
-                    sign_extend32(mem.read_u16(address) as u32, 16)
+                    sign_extend32(mem.load_u16(address, Access::Nonsequential) as u32, 16)
                 };
                 cpu.set_r(self.d, value);
             }
-            (Opcode::LDR, Length::Byte, false) => cpu.set_r(self.d, mem.read_u8(address) as u32),
-            (Opcode::LDR, Length::Byte, true) => cpu.set_r(self.d, sign_extend32(mem.read_u8(address) as u32, 8)),
-            (Opcode::STR, Length::Word, _) => mem.write_u32(address, value),
-            (Opcode::STR, Length::Halfword, _) => mem.write_u16(address, value as u16),
-            (Opcode::STR, Length::Byte, _) => mem.write_u8(address, value as u8),
+            (Opcode::LDR, Length::Byte, false) => cpu.set_r(self.d, mem.load_u8(address, Access::Nonsequential) as u32),
+            (Opcode::LDR, Length::Byte, true) => cpu.set_r(self.d, sign_extend32(mem.load_u8(address, Access::Nonsequential) as u32, 8)),
+            (Opcode::STR, Length::Word, _) => mem.store_u32(address, value, Access::Nonsequential),
+            (Opcode::STR, Length::Halfword, _) => mem.store_u16(address, value as u16, Access::Nonsequential),
+            (Opcode::STR, Length::Byte, _) => mem.store_u8(address, value as u8, Access::Nonsequential),
+        }
+        if self.opcode == Opcode::LDR {
+            mem.idle(1);
         }
     }
 
@@ -241,14 +244,15 @@ impl Swap {
         let address = cpu.get_r(self.n);
         let r_m = cpu.get_r(self.m);
         if self.byte {
-            let old = mem.read_u8(address);
-            mem.write_u8(address, r_m as u8);
+            let old = mem.load_u8(address, Access::Nonsequential);
+            mem.store_u8(address, r_m as u8, Access::Nonsequential);
             cpu.set_r(self.d, old as u32);
         } else {
-            let old = mem.read_u32(address).rotate_right((address & 0b11) * 8);
-            mem.write_u32(address, r_m);
+            let old = mem.load_u32(address, Access::Nonsequential).rotate_right((address & 0b11) * 8);
+            mem.store_u32(address, r_m, Access::Nonsequential);
             cpu.set_r(self.d, old);
         }
+        mem.idle(1);
     }
 
     pub fn disassemble(self, cond: Condition) -> String {

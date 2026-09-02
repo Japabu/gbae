@@ -139,18 +139,18 @@ impl Instruction {
     #[inline(always)]
     pub fn execute(self, cpu: &mut CPU, mem: &mut Memory) {
         match self {
-            Instruction::DataProcessing(instruction) => instruction.execute(cpu),
-            Instruction::Multiply(instruction) => instruction.execute(cpu),
+            Instruction::DataProcessing(instruction) => instruction.execute(cpu, mem),
+            Instruction::Multiply(instruction) => instruction.execute(cpu, mem),
             Instruction::LoadStore(instruction) => instruction.execute(cpu, mem),
             Instruction::Swap(instruction) => instruction.execute(cpu, mem),
             Instruction::LoadStoreMultiple(instruction) => instruction.execute(cpu, mem),
-            Instruction::Branch(instruction) => instruction.execute(cpu),
-            Instruction::BranchExchange(instruction) => instruction.execute(cpu),
-            Instruction::BranchLinkPrefix(instruction) => instruction.execute(cpu),
-            Instruction::BranchLinkSuffix(instruction) => instruction.execute(cpu),
-            Instruction::Mrs(instruction) => instruction.execute(cpu),
-            Instruction::Msr(instruction) => instruction.execute(cpu),
-            Instruction::SoftwareInterrupt(instruction) => instruction.execute(cpu),
+            Instruction::Branch(instruction) => instruction.execute(cpu, mem),
+            Instruction::BranchExchange(instruction) => instruction.execute(cpu, mem),
+            Instruction::BranchLinkPrefix(instruction) => instruction.execute(cpu, mem),
+            Instruction::BranchLinkSuffix(instruction) => instruction.execute(cpu, mem),
+            Instruction::Mrs(instruction) => instruction.execute(cpu, mem),
+            Instruction::Msr(instruction) => instruction.execute(cpu, mem),
+            Instruction::SoftwareInterrupt(instruction) => instruction.execute(cpu, mem),
             Instruction::Unknown(encoding) => panic!("Tried to execute unknown instruction {:08X} at {:08X}", encoding, cpu.curr_instruction_address_from_execution_stage()),
         }
     }

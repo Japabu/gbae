@@ -49,9 +49,12 @@ impl Gba {
         while self.cpu.get_cycles() >= self.next_event_cycles {
             self.advance_event();
         }
+        let stalled = self.mem.take_cycles() as u64;
+        self.cpu.add_cycles(stalled);
         let io = self.mem.get_io_registers_mut();
+        io.tick_timers(stalled as u32);
         if io.halted && io.ie & io.irf == 0 {
-            let skipped = self.next_event_cycles - self.cpu.get_cycles();
+            let skipped = self.next_event_cycles.saturating_sub(self.cpu.get_cycles());
             io.tick_timers(skipped as u32);
             self.cpu.add_cycles(skipped);
         } else {

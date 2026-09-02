@@ -230,7 +230,7 @@ pub struct IoRegisters {
     joy_stat: u16,
     pub ie: u16,
     pub irf: u16,
-    wait_cnt: u16,
+    pub wait_cnt: u16,
     pub ime: bool,
     post_flg: bool,
     pub halted: bool,
@@ -629,6 +629,52 @@ impl Display for IoRegisters {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    Nonsequential,
+    Sequential,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WaitStates {
+    rom_nonsequential: [u32; 3],
+    rom_sequential: [u32; 3],
+    sram: u32,
+    prefetch: bool,
+}
+
+impl WaitStates {
+    fn decode(wait_cnt: u16) -> WaitStates {
+        let first = |bits: u16| match bits & 0b11 {
+            0 => 5,
+            1 => 4,
+            2 => 3,
+            _ => 9,
+        };
+        let second = |bit: u16, slow: u32| if bit & 1 != 0 { 2 } else { slow };
+        WaitStates {
+            rom_nonsequential: [first(wait_cnt >> 2), first(wait_cnt >> 5), first(wait_cnt >> 8)],
+            rom_sequential: [second(wait_cnt >> 4, 3), second(wait_cnt >> 7, 5), second(wait_cnt >> 10, 9)],
+            sram: first(wait_cnt),
+            prefetch: wait_cnt & 0x4000 != 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Prefetch {
+    active: bool,
+    start: u32,
+    buffered: u32,
+    progress: u32,
+}
+
+const PREFETCH_CAPACITY: u32 = 8;
+
+fn is_rom(address: u32) -> bool {
+    (0x08..=0x0D).contains(&(address >> 24))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RegionKey {
     Bios(usize),
     Wram1(usize),
@@ -657,6 +703,11 @@ pub struct Memory {
     dma_active: bool,
     bios_last_opcode: u32,
     executing_from_bios: bool,
+    wait: WaitStates,
+    prefetch: Prefetch,
+    cycles: u32,
+    next_fetch_sequential: bool,
+    next_fetch_address: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -717,12 +768,128 @@ impl Memory {
             dma_active: false,
             bios_last_opcode: 0,
             executing_from_bios: true,
+            wait: WaitStates::decode(0),
+            prefetch: Prefetch::default(),
+            cycles: 0,
+            next_fetch_sequential: false,
+            next_fetch_address: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub fn take_cycles(&mut self) -> u32 {
+        std::mem::replace(&mut self.cycles, 0)
+    }
+
+    #[inline(always)]
+    pub fn idle(&mut self, cycles: u32) {
+        self.cycles += cycles;
+        self.advance_prefetch(cycles);
+    }
+
+    #[inline(always)]
+    pub fn invalidate_fetch_sequence(&mut self) {
+        self.next_fetch_sequential = false;
+    }
+
+    fn access_cycles(&self, address: u32, bytes: u32, access: Access) -> u32 {
+        let word = bytes == 4;
+        match address >> 24 {
+            0x02 => if word { 6 } else { 3 },
+            0x05 | 0x06 => if word { 2 } else { 1 },
+            0x08..=0x0D => {
+                let wait_state = ((address >> 25) - 4) as usize;
+                let sequential = access == Access::Sequential && address & 0x1_FFFF != 0;
+                let first = if sequential { self.wait.rom_sequential[wait_state] } else { self.wait.rom_nonsequential[wait_state] };
+                if word {
+                    first + self.wait.rom_sequential[wait_state]
+                } else {
+                    first
+                }
+            }
+            0x0E | 0x0F => self.wait.sram,
+            _ => 1,
+        }
+    }
+
+    fn rom_sequential_cycles(&self, address: u32) -> u32 {
+        self.wait.rom_sequential[((address >> 25) - 4) as usize]
+    }
+
+    fn advance_prefetch(&mut self, cycles: u32) {
+        if self.prefetch.active && self.prefetch.buffered < PREFETCH_CAPACITY {
+            let sequential = self.rom_sequential_cycles(self.prefetch.start);
+            self.prefetch.progress += cycles;
+            while self.prefetch.progress >= sequential && self.prefetch.buffered < PREFETCH_CAPACITY {
+                self.prefetch.progress -= sequential;
+                self.prefetch.buffered += 1;
+            }
+            if self.prefetch.buffered == PREFETCH_CAPACITY {
+                self.prefetch.progress = 0;
+            }
+        }
+    }
+
+    fn prefetched_fetch_cycles(&mut self, address: u32, bytes: u32) -> u32 {
+        let mut cycles = 0;
+        for halfword in (address..address + bytes).step_by(2) {
+            if self.prefetch.active && halfword == self.prefetch.start {
+                if self.prefetch.buffered > 0 {
+                    self.prefetch.buffered -= 1;
+                    self.prefetch.start += 2;
+                    cycles += 1;
+                    self.advance_prefetch(1);
+                } else {
+                    let remaining = self.rom_sequential_cycles(halfword) - self.prefetch.progress;
+                    self.prefetch.progress = 0;
+                    self.prefetch.start += 2;
+                    cycles += remaining;
+                }
+            } else {
+                cycles += self.access_cycles(halfword, 2, Access::Nonsequential);
+                self.prefetch = Prefetch {
+                    active: true,
+                    start: halfword + 2,
+                    buffered: 0,
+                    progress: 0,
+                };
+            }
+        }
+        cycles
+    }
+
+    #[inline]
+    fn charge_fetch(&mut self, address: u32, bytes: u32) {
+        let access = if self.next_fetch_sequential && address == self.next_fetch_address { Access::Sequential } else { Access::Nonsequential };
+        let cycles = if is_rom(address) && self.wait.prefetch {
+            self.prefetched_fetch_cycles(address, bytes)
+        } else {
+            if !is_rom(address) {
+                self.prefetch.active = false;
+            }
+            self.access_cycles(address, bytes, access)
+        };
+        self.cycles += cycles;
+        self.next_fetch_sequential = true;
+        self.next_fetch_address = address.wrapping_add(bytes);
+        self.executing_from_bios = address < BIOS_LEN as u32;
+    }
+
+    #[inline]
+    fn charge_data_access(&mut self, address: u32, bytes: u32, access: Access) {
+        let cycles = self.access_cycles(address, bytes, access);
+        self.cycles += cycles;
+        self.next_fetch_sequential = false;
+        if is_rom(address) {
+            self.prefetch.active = false;
+        } else {
+            self.advance_prefetch(cycles);
         }
     }
 
     #[inline]
     pub fn fetch_u32(&mut self, address: u32) -> u32 {
-        self.executing_from_bios = address < BIOS_LEN as u32;
+        self.charge_fetch(address, 4);
         let opcode = self.read_u32(address);
         if self.executing_from_bios {
             self.bios_last_opcode = opcode;
@@ -732,12 +899,48 @@ impl Memory {
 
     #[inline]
     pub fn fetch_u16(&mut self, address: u32) -> u16 {
-        self.executing_from_bios = address < BIOS_LEN as u32;
+        self.charge_fetch(address, 2);
         let opcode = self.read_u16(address);
         if self.executing_from_bios {
             self.bios_last_opcode = self.read_u32(address);
         }
         opcode
+    }
+
+    #[inline]
+    pub fn load_u8(&mut self, address: u32, access: Access) -> u8 {
+        self.charge_data_access(address, 1, access);
+        self.read_u8(address)
+    }
+
+    #[inline]
+    pub fn load_u16(&mut self, address: u32, access: Access) -> u16 {
+        self.charge_data_access(address, 2, access);
+        self.read_u16(address)
+    }
+
+    #[inline]
+    pub fn load_u32(&mut self, address: u32, access: Access) -> u32 {
+        self.charge_data_access(address, 4, access);
+        self.read_u32(address)
+    }
+
+    #[inline]
+    pub fn store_u8(&mut self, address: u32, value: u8, access: Access) {
+        self.charge_data_access(address, 1, access);
+        self.write_u8(address, value);
+    }
+
+    #[inline]
+    pub fn store_u16(&mut self, address: u32, value: u16, access: Access) {
+        self.charge_data_access(address, 2, access);
+        self.write_u16(address, value);
+    }
+
+    #[inline]
+    pub fn store_u32(&mut self, address: u32, value: u32, access: Access) {
+        self.charge_data_access(address, 4, access);
+        self.write_u32(address, value);
     }
 
     #[inline(always)]
@@ -834,7 +1037,7 @@ impl Memory {
             RegionKey::Wram2(offset) => write_halfword(&mut self.wram2[..], offset, value),
             RegionKey::IoRegisters(offset) => {
                 self.io_registers.write_u16(offset, value);
-                self.arm_dma_channels();
+                self.after_io_write();
             }
             RegionKey::PaletteRam(offset) => write_halfword(&mut self.palette_ram[..], offset, value),
             RegionKey::Vram(offset) => write_halfword(&mut self.vram[..], offset, value),
@@ -851,7 +1054,7 @@ impl Memory {
             RegionKey::Wram2(offset) => write_word(&mut self.wram2[..], offset, value),
             RegionKey::IoRegisters(offset) => {
                 self.io_registers.write_u32(offset, value);
-                self.arm_dma_channels();
+                self.after_io_write();
             }
             RegionKey::PaletteRam(offset) => write_word(&mut self.palette_ram[..], offset, value),
             RegionKey::Vram(offset) => write_word(&mut self.vram[..], offset, value),
@@ -885,6 +1088,11 @@ impl Memory {
 
     pub fn oam(&self) -> &[u8; OAM_LEN] {
         &self.oam
+    }
+
+    fn after_io_write(&mut self) {
+        self.wait = WaitStates::decode(self.io_registers.wait_cnt);
+        self.arm_dma_channels();
     }
 
     fn dma_length(&self, channel: usize) -> u32 {
@@ -936,8 +1144,11 @@ impl Memory {
         let source_control = (control >> 7) & 3;
         let destination_control = (control >> 5) & 3;
         let DmaChannel { count, mut source, mut destination, .. } = self.dma[channel];
+        let mut cycles = if is_rom(source) && is_rom(destination) { 4 } else { 2 };
 
-        for _ in 0..count {
+        for i in 0..count {
+            let access = if i == 0 { Access::Nonsequential } else { Access::Sequential };
+            cycles += self.access_cycles(source, unit_size, access) + self.access_cycles(destination, unit_size, access);
             if unit_size == 4 {
                 let value = self.read_u32(source);
                 self.write_u32(destination, value);
@@ -971,6 +1182,9 @@ impl Memory {
             self.io_registers.irf |= 1 << (8 + channel);
         }
 
+        self.cycles += cycles;
+        self.prefetch.active = false;
+        self.next_fetch_sequential = false;
         self.dma_active = false;
     }
 }
@@ -1096,6 +1310,55 @@ mod tests {
         assert_eq!(mem.read_u32(0x200), 0x1234_5678);
         assert_eq!(mem.read_u16(0x202), 0x1234);
         assert_eq!(mem.read_u8(0x201), 0x56);
+    }
+
+    #[test]
+    fn test_wait_state_decoding() {
+        let default = WaitStates::decode(0);
+        assert_eq!(default.rom_nonsequential, [5, 5, 5]);
+        assert_eq!(default.rom_sequential, [3, 5, 9]);
+        assert_eq!(default.sram, 5);
+        assert!(!default.prefetch);
+        let bios_setting = WaitStates::decode(0x4317);
+        assert_eq!(bios_setting.rom_nonsequential[0], 4);
+        assert_eq!(bios_setting.rom_sequential[0], 2);
+        assert_eq!(bios_setting.sram, 9);
+        assert!(bios_setting.prefetch);
+    }
+
+    #[test]
+    fn test_access_cycles_per_region() {
+        let mem = Memory::new(vec![], vec![0; 0x100]);
+        assert_eq!(mem.access_cycles(0x0300_0000, 4, Access::Nonsequential), 1);
+        assert_eq!(mem.access_cycles(0x0200_0000, 2, Access::Sequential), 3);
+        assert_eq!(mem.access_cycles(0x0200_0000, 4, Access::Sequential), 6);
+        assert_eq!(mem.access_cycles(0x0600_0000, 4, Access::Sequential), 2);
+        assert_eq!(mem.access_cycles(0x0800_0000, 2, Access::Nonsequential), 5);
+        assert_eq!(mem.access_cycles(0x0800_0002, 2, Access::Sequential), 3);
+        assert_eq!(mem.access_cycles(0x0800_0000, 4, Access::Nonsequential), 8);
+        assert_eq!(mem.access_cycles(0x0802_0000, 2, Access::Sequential), 5);
+        assert_eq!(mem.access_cycles(0x0C00_0004, 4, Access::Sequential), 18);
+        assert_eq!(mem.access_cycles(0x0E00_0000, 1, Access::Nonsequential), 5);
+    }
+
+    #[test]
+    fn test_prefetch_buffer_serves_sequential_fetches() {
+        let mut mem = Memory::new(vec![], vec![0; 0x100]);
+        mem.write_u16(0x0400_0204, 0x4000);
+        mem.fetch_u16(0x0800_0000);
+        assert_eq!(mem.take_cycles(), 5);
+        mem.fetch_u16(0x0800_0002);
+        assert_eq!(mem.take_cycles(), 3);
+        mem.idle(7);
+        mem.take_cycles();
+        mem.fetch_u16(0x0800_0004);
+        assert_eq!(mem.take_cycles(), 1);
+        mem.fetch_u16(0x0800_0006);
+        assert_eq!(mem.take_cycles(), 1);
+        mem.load_u32(0x0800_0040, Access::Nonsequential);
+        mem.take_cycles();
+        mem.fetch_u16(0x0800_0008);
+        assert_eq!(mem.take_cycles(), 5);
     }
 
     #[test]

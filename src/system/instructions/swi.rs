@@ -1,6 +1,9 @@
 use crate::{
     bitutil::{get_bits16, get_bits32},
-    system::cpu::{CPU, MODE_SVC, REGISTER_LR, REGISTER_PC},
+    system::{
+        cpu::{CPU, MODE_SVC, REGISTER_LR, REGISTER_PC},
+        memory::Memory,
+    },
 };
 
 use super::{Condition, Instruction};
@@ -26,7 +29,7 @@ pub fn decode_thumb(instruction: u16) -> Instruction {
 
 impl SoftwareInterrupt {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU) {
+    pub fn execute(self, cpu: &mut CPU, _mem: &mut Memory) {
         let return_address = cpu.next_instruction_address_from_execution_stage();
         let old_cpsr = cpu.get_cpsr();
 

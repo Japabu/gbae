@@ -2,7 +2,10 @@ use std::fmt::Display;
 
 use crate::{
     bitutil::{self, arithmetic_shift_right, get_bit, get_bit16, get_bits16, get_bits32, rotate_right_with_extend},
-    system::cpu::{CPU, REGISTER_PC, REGISTER_SP},
+    system::{
+        cpu::{CPU, REGISTER_PC, REGISTER_SP},
+        memory::Memory,
+    },
 };
 
 use super::{Condition, Instruction};
@@ -225,7 +228,10 @@ pub fn decode_add_sp_pc_thumb(instruction: u16) -> Instruction {
 
 impl DataProcessing {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU) {
+    pub fn execute(self, cpu: &mut CPU, mem: &mut Memory) {
+        if self.shifter_operand.is_register_shift() {
+            mem.idle(1);
+        }
         let (shifter_operand, shifter_carry) = self.shifter_operand.eval(cpu);
         let r_n = if self.n == REGISTER_PC && self.shifter_operand.is_register_shift() {
             cpu.get_r(REGISTER_PC).wrapping_add(4)

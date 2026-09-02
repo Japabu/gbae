@@ -1,6 +1,6 @@
 use crate::{
     bitutil::{get_bit, get_bits16, get_bits32},
-    system::cpu::CPU,
+    system::{cpu::CPU, memory::Memory},
 };
 
 use super::{Condition, Instruction};
@@ -60,11 +60,33 @@ pub fn decode_mul_thumb(instruction: u16) -> Instruction {
     })
 }
 
+impl Opcode {
+    fn internal_cycles(self, multiplier: u32) -> u32 {
+        let signed = matches!(self, Opcode::MUL | Opcode::MLA | Opcode::SMULL | Opcode::SMLAL);
+        let significant = if signed && multiplier & 0x8000_0000 != 0 { !multiplier } else { multiplier };
+        let m = if significant & 0xFFFF_FF00 == 0 {
+            1
+        } else if significant & 0xFFFF_0000 == 0 {
+            2
+        } else if significant & 0xFF00_0000 == 0 {
+            3
+        } else {
+            4
+        };
+        match self {
+            Opcode::MUL => m,
+            Opcode::MLA | Opcode::UMULL | Opcode::SMULL => m + 1,
+            Opcode::UMLAL | Opcode::SMLAL => m + 2,
+        }
+    }
+}
+
 impl Multiply {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU) {
+    pub fn execute(self, cpu: &mut CPU, mem: &mut Memory) {
         let r_m = cpu.get_r(self.m);
         let r_s = cpu.get_r(self.s);
+        mem.idle(self.opcode.internal_cycles(r_s));
         match self.opcode {
             Opcode::MUL | Opcode::MLA => {
                 let mut result = r_m.wrapping_mul(r_s);
@@ -105,6 +127,17 @@ impl Multiply {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_multiply_cycles() {
+        assert_eq!(Opcode::MUL.internal_cycles(0x0000_0012), 1);
+        assert_eq!(Opcode::MUL.internal_cycles(0xFFFF_FFF0), 1);
+        assert_eq!(Opcode::MUL.internal_cycles(0x0000_1234), 2);
+        assert_eq!(Opcode::MUL.internal_cycles(0x0012_3456), 3);
+        assert_eq!(Opcode::MUL.internal_cycles(0x1234_5678), 4);
+        assert_eq!(Opcode::UMULL.internal_cycles(0xFFFF_FFF0), 5);
+        assert_eq!(Opcode::SMLAL.internal_cycles(0xFFFF_FFF0), 3);
+    }
 
     #[test]
     fn test_multiply() {

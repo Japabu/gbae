@@ -4,7 +4,7 @@ use crate::{
     bitutil::{get_bit, get_bit16, get_bits16, get_bits32},
     system::{
         cpu::{self, CPU, REGISTER_LR, REGISTER_PC, REGISTER_SP},
-        memory::Memory,
+        memory::{Access, Memory},
     },
 };
 
@@ -111,6 +111,7 @@ impl LoadStoreMultiple {
         let pc_in_list = get_bit(registers, REGISTER_PC);
         let user_bank = self.s && !(self.opcode == Opcode::LDM && pc_in_list);
         let mut address = start_address;
+        let mut access = Access::Nonsequential;
         match self.opcode {
             Opcode::LDM => {
                 if self.w {
@@ -118,22 +119,24 @@ impl LoadStoreMultiple {
                 }
                 for i in 0..REGISTER_PC {
                     if get_bit(registers, i) {
-                        let value = mem.read_u32(address);
+                        let value = mem.load_u32(address, access);
                         if user_bank {
                             cpu.set_r_in_mode(i, cpu::MODE_USR, value);
                         } else {
                             cpu.set_r(i, value);
                         }
                         address = address.wrapping_add(4);
+                        access = Access::Sequential;
                     }
                 }
                 if pc_in_list {
-                    let value = mem.read_u32(address);
+                    let value = mem.load_u32(address, access);
                     if self.s && cpu.current_mode_has_spsr() {
                         cpu.set_cpsr(cpu.get_spsr());
                     }
                     cpu.set_pc(value);
                 }
+                mem.idle(1);
             }
             Opcode::STM => {
                 let first = registers.trailing_zeros() as u8;
@@ -148,8 +151,9 @@ impl LoadStoreMultiple {
                         } else {
                             cpu.get_r(i)
                         };
-                        mem.write_u32(address, value);
+                        mem.store_u32(address, value, access);
                         address = address.wrapping_add(4);
+                        access = Access::Sequential;
                     }
                 }
                 if self.w {

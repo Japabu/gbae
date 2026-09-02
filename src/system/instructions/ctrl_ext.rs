@@ -1,6 +1,6 @@
 use crate::{
     bitutil::{get_bit, get_bits32},
-    system::cpu::CPU,
+    system::{cpu::CPU, memory::Memory},
 };
 
 use super::{Condition, Instruction};
@@ -51,7 +51,7 @@ pub fn decode_msr_arm(instruction: u32) -> Instruction {
 
 impl Mrs {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU) {
+    pub fn execute(self, cpu: &mut CPU, _mem: &mut Memory) {
         cpu.set_r(self.d, if self.r { cpu.get_spsr() } else { cpu.get_cpsr() });
     }
 
@@ -62,7 +62,7 @@ impl Mrs {
 
 impl Msr {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU) {
+    pub fn execute(self, cpu: &mut CPU, _mem: &mut Memory) {
         let operand = match self.operand {
             MsrOperand::Immediate(immediate) => immediate,
             MsrOperand::Register(m) => cpu.get_r(m),

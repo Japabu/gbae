@@ -30,9 +30,21 @@ fn fuzzarm(name: &str) {
         eprintln!("tests/roms/fuzzarm/{}.gba or gba_bios.bin not found, skipping", name);
         return;
     };
-    for _ in 0..600 {
-        gba.run_frame();
-    }
+    let mut previous_pc = u32::MAX;
+    let mut stalled_steps = 0;
+    assert!(
+        gba.run_until(
+            |gba| {
+                stalled_steps = if gba.cpu.pc() == previous_pc && !gba.mem.get_io_registers().halted { stalled_steps + 1 } else { 0 };
+                previous_pc = gba.cpu.pc();
+                stalled_steps == 1000
+            },
+            2_000_000_000
+        ),
+        "{} did not finish",
+        name
+    );
+    gba.run_frame();
     let state = gba.mem.read_u32(EWRAM);
     if state == 0x4141_4141 || state == 0x5454_5454 {
         let mut dump = String::new();

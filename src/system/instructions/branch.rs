@@ -1,6 +1,9 @@
 use crate::{
     bitutil::{get_bit, get_bit16, get_bits16, get_bits32, sign_extend32},
-    system::cpu::{CPU, INSTRUCTION_LEN_ARM, INSTRUCTION_LEN_THUMB, REGISTER_LR, REGISTER_PC},
+    system::{
+        cpu::{CPU, INSTRUCTION_LEN_ARM, INSTRUCTION_LEN_THUMB, REGISTER_LR, REGISTER_PC},
+        memory::Memory,
+    },
 };
 
 use super::{Condition, Instruction};
@@ -102,7 +105,7 @@ pub fn decode_bl_suffix_thumb(instruction: u16) -> Instruction {
 
 impl Branch {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU) {
+    pub fn execute(self, cpu: &mut CPU, _mem: &mut Memory) {
         if self.cond.check(cpu) {
             let target = cpu.curr_instruction_address_from_execution_stage().wrapping_add(self.offset);
             if self.link {
@@ -120,7 +123,7 @@ impl Branch {
 
 impl BranchExchange {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU) {
+    pub fn execute(self, cpu: &mut CPU, _mem: &mut Memory) {
         let r_m = cpu.get_r(self.m);
         cpu.set_thumb_state(get_bit(r_m, 0));
         cpu.set_pc(r_m);
@@ -133,7 +136,7 @@ impl BranchExchange {
 
 impl BranchLinkPrefix {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU) {
+    pub fn execute(self, cpu: &mut CPU, _mem: &mut Memory) {
         cpu.set_r(REGISTER_LR, cpu.get_r(REGISTER_PC).wrapping_add(self.offset));
     }
 
@@ -148,7 +151,7 @@ impl BranchLinkPrefix {
 
 impl BranchLinkSuffix {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU) {
+    pub fn execute(self, cpu: &mut CPU, _mem: &mut Memory) {
         let target = cpu.get_r(REGISTER_LR).wrapping_add(self.offset);
         cpu.set_r(REGISTER_LR, cpu.next_instruction_address_from_execution_stage() | 1);
         cpu.set_r(REGISTER_PC, target & !0b1);

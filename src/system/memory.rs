@@ -160,6 +160,28 @@ impl FlashRegion {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    A,
+    B,
+    Select,
+    Start,
+    Right,
+    Left,
+    Up,
+    Down,
+    R,
+    L,
+}
+
+impl Key {
+    pub const ALL: [Key; 10] = [Key::A, Key::B, Key::Select, Key::Start, Key::Right, Key::Left, Key::Up, Key::Down, Key::R, Key::L];
+
+    pub const fn bit(self) -> u16 {
+        1 << self as u16
+    }
+}
+
 pub struct IoRegisters {
     pub disp_cnt: u16,
     pub disp_stat: u16,
@@ -199,7 +221,7 @@ pub struct IoRegisters {
     sio_multi3: u16,
     sio_cnt: u16,
     sio_data8: u16,
-    pub key_input: u16,
+    key_input: u16,
     key_cnt: u16,
     rcnt: u16,
     joy_cnt: u16,
@@ -447,7 +469,10 @@ impl IoRegisters {
             0x126 => self.sio_multi3 = value,
             0x128 => self.sio_cnt = value,
             0x12A => self.sio_data8 = value,
-            0x132 => self.key_cnt = value,
+            0x132 => {
+                self.key_cnt = value;
+                self.check_key_interrupt();
+            }
             0x134 => self.rcnt = value,
             0x140 => self.joy_cnt = value,
             0x150 => self.joy_recv = self.joy_recv & 0xFFFF_0000 | value as u32,
@@ -470,6 +495,26 @@ impl IoRegisters {
     pub fn write_u32(&mut self, offset: u32, value: u32) {
         self.write_u16(offset, value as u16);
         self.write_u16(offset + 2, (value >> 16) as u16);
+    }
+
+    pub fn set_pressed_keys(&mut self, pressed: u16) {
+        self.key_input = !pressed & 0x03FF;
+        self.check_key_interrupt();
+    }
+
+    pub fn pressed_keys(&self) -> u16 {
+        !self.key_input & 0x03FF
+    }
+
+    fn check_key_interrupt(&mut self) {
+        let selected = self.key_cnt & 0x03FF;
+        let pressed = self.pressed_keys() & selected;
+        let irq_enabled = self.key_cnt & 0x4000 != 0;
+        let all_selected_required = self.key_cnt & 0x8000 != 0;
+        let condition = if all_selected_required { selected != 0 && pressed == selected } else { pressed != 0 };
+        if irq_enabled && condition {
+            self.irf |= 1 << 12;
+        }
     }
 
     fn write_bg_reference(&mut self, bg: usize, axis: usize, value: u16, high: bool) {

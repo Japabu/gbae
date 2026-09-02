@@ -1,6 +1,6 @@
 use super::{
     cpu::CPU,
-    memory::{DmaTiming, Memory},
+    memory::{DmaTiming, Key, Memory},
     ppu::{Framebuffer, PPU},
 };
 
@@ -136,6 +136,16 @@ impl Gba {
             self.step();
         }
         condition(self)
+    }
+
+    pub fn set_key(&mut self, key: Key, pressed: bool) {
+        let keys = self.mem.get_io_registers().pressed_keys();
+        let keys = if pressed { keys | key.bit() } else { keys & !key.bit() };
+        self.mem.get_io_registers_mut().set_pressed_keys(keys);
+    }
+
+    pub fn set_pressed_keys(&mut self, keys: u16) {
+        self.mem.get_io_registers_mut().set_pressed_keys(keys);
     }
 
     pub fn framebuffer(&self) -> &Framebuffer {

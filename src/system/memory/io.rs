@@ -335,6 +335,9 @@ impl IoRegisters {
     }
 
     fn raise_timer_irqs(&mut self, overflows: u8) {
+        if overflows == 0 {
+            return;
+        }
         let requests = self.timers.irq_mask(overflows);
         for index in (0..4).filter(|index| requests.bit(*index as u32)) {
             self.raise(Interrupt::Timer(index));

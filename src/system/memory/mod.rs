@@ -66,10 +66,6 @@ fn halfword_of(value: u32, address: u32) -> u16 {
     }
 }
 
-fn boxed_zeroed<const N: usize>() -> Box<[u8; N]> {
-    vec![0u8; N].into_boxed_slice().try_into().unwrap()
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ram {
     Ewram,
@@ -77,6 +73,10 @@ enum Ram {
     Palette,
     Vram,
     Oam,
+}
+
+impl Ram {
+    const SIZES: [usize; 5] = [WRAM1_LEN, WRAM2_LEN, PALETTE_RAM_LEN, VRAM_LEN, OAM_LEN];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,11 +93,7 @@ enum Region {
 
 pub struct Memory {
     bios: Box<[u8; BIOS_LEN]>,
-    ewram: Box<[u8; WRAM1_LEN]>,
-    iwram: Box<[u8; WRAM2_LEN]>,
-    palette: Box<[u8; PALETTE_RAM_LEN]>,
-    vram: Box<[u8; VRAM_LEN]>,
-    oam: Box<[u8; OAM_LEN]>,
+    ram: [Box<[u8]>; 5],
     io: IoRegisters,
     pub apu: Apu,
     game_pak: Vec<u8>,
@@ -119,7 +115,7 @@ impl Memory {
     pub fn new(bios: Bios, game_pak: Vec<u8>) -> Memory {
         let builtin_bios = bios.is_builtin();
         let image = bios.bytes();
-        let mut bios = boxed_zeroed::<BIOS_LEN>();
+        let mut bios = Box::new([0; BIOS_LEN]);
         let length = image.len().min(BIOS_LEN);
         bios[..length].copy_from_slice(&image[..length]);
         let backup = Backup::new(SaveType::detect(&game_pak));
@@ -128,11 +124,7 @@ impl Memory {
             .fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3));
         Memory {
             bios,
-            ewram: boxed_zeroed(),
-            iwram: boxed_zeroed(),
-            palette: boxed_zeroed(),
-            vram: boxed_zeroed(),
-            oam: boxed_zeroed(),
+            ram: Ram::SIZES.map(|size| vec![0; size].into_boxed_slice()),
             io: IoRegisters::new(),
             apu: Apu::new(),
             game_pak,
@@ -173,16 +165,16 @@ impl Memory {
         &mut self.io
     }
 
-    pub fn vram(&self) -> &[u8; VRAM_LEN] {
-        &self.vram
+    pub fn vram(&self) -> &[u8] {
+        self.ram(Ram::Vram)
     }
 
-    pub fn palette_ram(&self) -> &[u8; PALETTE_RAM_LEN] {
-        &self.palette
+    pub fn palette_ram(&self) -> &[u8] {
+        self.ram(Ram::Palette)
     }
 
-    pub fn oam(&self) -> &[u8; OAM_LEN] {
-        &self.oam
+    pub fn oam(&self) -> &[u8] {
+        self.ram(Ram::Oam)
     }
 
     #[inline]
@@ -200,7 +192,7 @@ impl Memory {
         self.bus.invalidate_sequence();
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn fetch_u32(&mut self, address: u32) -> u32 {
         self.bus.charge_fetch(address, 4);
         self.executing_from_bios = address < BIOS_LEN as u32;
@@ -212,7 +204,7 @@ impl Memory {
         opcode
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn fetch_u16(&mut self, address: u32) -> u16 {
         self.bus.charge_fetch(address, 2);
         self.executing_from_bios = address < BIOS_LEN as u32;
@@ -224,43 +216,43 @@ impl Memory {
         opcode
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn load_u8(&mut self, address: u32, access: Access) -> u8 {
         self.bus.charge_data(address, 1, access);
         self.read_u8(address)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn load_u16(&mut self, address: u32, access: Access) -> u16 {
         self.bus.charge_data(address, 2, access);
         self.read_u16(address)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn load_u32(&mut self, address: u32, access: Access) -> u32 {
         self.bus.charge_data(address, 4, access);
         self.read_u32(address)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn store_u8(&mut self, address: u32, value: u8, access: Access) {
         self.bus.charge_data(address, 1, access);
         self.write_u8(address, value);
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn store_u16(&mut self, address: u32, value: u16, access: Access) {
         self.bus.charge_data(address, 2, access);
         self.write_u16(address, value);
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn store_u32(&mut self, address: u32, value: u32, access: Access) {
         self.bus.charge_data(address, 4, access);
         self.write_u32(address, value);
     }
 
-    #[inline]
+    #[inline(always)]
     fn region(&self, address: u32) -> Region {
         let offset = address as usize;
         match address >> 24 {
@@ -279,29 +271,17 @@ impl Memory {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn ram(&self, ram: Ram) -> &[u8] {
-        match ram {
-            Ram::Ewram => &self.ewram[..],
-            Ram::Iwram => &self.iwram[..],
-            Ram::Palette => &self.palette[..],
-            Ram::Vram => &self.vram[..],
-            Ram::Oam => &self.oam[..],
-        }
+        &self.ram[ram as usize]
     }
 
-    #[inline]
+    #[inline(always)]
     fn ram_mut(&mut self, ram: Ram) -> &mut [u8] {
-        match ram {
-            Ram::Ewram => &mut self.ewram[..],
-            Ram::Iwram => &mut self.iwram[..],
-            Ram::Palette => &mut self.palette[..],
-            Ram::Vram => &mut self.vram[..],
-            Ram::Oam => &mut self.oam[..],
-        }
+        &mut self.ram[ram as usize]
     }
 
-    #[inline]
+    #[inline(always)]
     fn bios_word(&self, offset: usize) -> u32 {
         if self.executing_from_bios {
             word(&self.bios[..], offset & !0b11)
@@ -310,7 +290,7 @@ impl Memory {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn io_read_u16(&self, offset: u32) -> u16 {
         if APU_REGISTERS.contains(&offset) {
             self.apu.read_u16(offset)
@@ -319,7 +299,7 @@ impl Memory {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn read_u8(&self, address: u32) -> u8 {
         match self.region(address) {
             Region::Bios(offset) => byte_of(self.bios_word(offset), address),
@@ -333,7 +313,7 @@ impl Memory {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn read_u16(&self, address: u32) -> u16 {
         let address = address & !0b1;
         match self.region(address) {
@@ -348,7 +328,7 @@ impl Memory {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn read_u32(&self, address: u32) -> u32 {
         let address = address & !0b11;
         match self.region(address) {
@@ -439,7 +419,7 @@ impl Memory {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn rom_u8(&self, offset: usize) -> u8 {
         match self.game_pak.get(offset) {
             Some(byte) => *byte,
@@ -447,7 +427,7 @@ impl Memory {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn rom_u16(&self, offset: usize) -> u16 {
         if offset + 2 <= self.game_pak.len() {
             halfword(&self.game_pak, offset)
@@ -456,7 +436,7 @@ impl Memory {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn rom_u32(&self, offset: usize) -> u32 {
         if offset + 4 <= self.game_pak.len() {
             word(&self.game_pak, offset)
@@ -465,6 +445,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     pub fn tick(&mut self, cycles: u32) {
         let mut remaining = cycles;
         while remaining > 0 {
@@ -474,13 +455,17 @@ impl Memory {
             let overflowed = self.io.tick_timers(step);
             if overflowed != 0 || self.apu_pending >= APU_BATCH_CYCLES {
                 self.flush_apu();
+                self.feed_fifos(overflowed);
             }
-            for timer in (0..2u8).filter(|timer| overflowed.bit(u32::from(*timer))) {
-                let refill = self.apu.timer_overflow(timer);
-                for (address, needed) in [FIFO_A, FIFO_B].into_iter().zip(refill) {
-                    if needed {
-                        self.refill_fifo(address);
-                    }
+        }
+    }
+
+    fn feed_fifos(&mut self, overflowed: u8) {
+        for timer in (0..2u8).filter(|timer| overflowed.bit(u32::from(*timer))) {
+            let refill = self.apu.timer_overflow(timer);
+            for (address, needed) in [FIFO_A, FIFO_B].into_iter().zip(refill) {
+                if needed {
+                    self.refill_fifo(address);
                 }
             }
         }
@@ -615,11 +600,9 @@ impl Memory {
     }
 
     pub fn save_state(&self, writer: &mut Writer) {
-        writer.bytes(&self.ewram[..]);
-        writer.bytes(&self.iwram[..]);
-        writer.bytes(&self.palette[..]);
-        writer.bytes(&self.vram[..]);
-        writer.bytes(&self.oam[..]);
+        for ram in &self.ram {
+            writer.bytes(ram);
+        }
         self.io.save_state(writer);
         self.apu.save_state(writer);
         self.backup.save_state(writer);
@@ -640,11 +623,9 @@ impl Memory {
     }
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
-        reader.bytes_into(&mut self.ewram[..])?;
-        reader.bytes_into(&mut self.iwram[..])?;
-        reader.bytes_into(&mut self.palette[..])?;
-        reader.bytes_into(&mut self.vram[..])?;
-        reader.bytes_into(&mut self.oam[..])?;
+        for ram in &mut self.ram {
+            reader.bytes_into(ram)?;
+        }
         self.io.load_state(reader)?;
         self.apu.load_state(reader)?;
         self.backup.load_state(reader)?;

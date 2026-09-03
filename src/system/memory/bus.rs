@@ -75,7 +75,7 @@ impl Bus {
         self.wait = WaitStates::decode(wait_cnt);
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn take_cycles(&mut self) -> u32 {
         std::mem::take(&mut self.cycles)
     }
@@ -85,7 +85,7 @@ impl Bus {
         self.cycles += cycles;
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn idle(&mut self, cycles: u32) {
         self.cycles += cycles;
         self.advance_prefetch(cycles);
@@ -102,7 +102,7 @@ impl Bus {
         self.next_fetch = None;
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn access_cycles(&self, address: u32, bytes: u32, access: Access) -> u32 {
         let word = bytes == 4;
         match address >> 24 {
@@ -135,12 +135,12 @@ impl Bus {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn rom_next_cycles(&self, address: u32) -> u32 {
         self.wait.rom_next[rom_wait_state(address)]
     }
 
-    #[inline]
+    #[inline(always)]
     fn advance_prefetch(&mut self, cycles: u32) {
         if !self.prefetch.active || self.prefetch.buffered >= PREFETCH_CAPACITY {
             return;
@@ -156,36 +156,41 @@ impl Bus {
         }
     }
 
-    #[inline]
-    fn prefetched_fetch_cycles(&mut self, address: u32, bytes: u32) -> u32 {
-        (address..address + bytes)
-            .step_by(2)
-            .map(|halfword| {
-                if self.prefetch.active && halfword == self.prefetch.start {
-                    self.prefetch.start += 2;
-                    if self.prefetch.buffered > 0 {
-                        self.prefetch.buffered -= 1;
-                        self.advance_prefetch(1);
-                        1
-                    } else {
-                        let remaining = self.rom_next_cycles(halfword) - self.prefetch.progress;
-                        self.prefetch.progress = 0;
-                        remaining
-                    }
-                } else {
-                    self.prefetch = Prefetch {
-                        active: true,
-                        start: halfword + 2,
-                        buffered: 0,
-                        progress: 0,
-                    };
-                    self.access_cycles(halfword, 2, Access::Nonsequential)
-                }
-            })
-            .sum()
+    #[inline(always)]
+    fn prefetched_halfword_cycles(&mut self, halfword: u32) -> u32 {
+        if self.prefetch.active && halfword == self.prefetch.start {
+            self.prefetch.start += 2;
+            if self.prefetch.buffered > 0 {
+                self.prefetch.buffered -= 1;
+                self.advance_prefetch(1);
+                1
+            } else {
+                let remaining = self.rom_next_cycles(halfword) - self.prefetch.progress;
+                self.prefetch.progress = 0;
+                remaining
+            }
+        } else {
+            self.prefetch = Prefetch {
+                active: true,
+                start: halfword + 2,
+                buffered: 0,
+                progress: 0,
+            };
+            self.access_cycles(halfword, 2, Access::Nonsequential)
+        }
     }
 
-    #[inline]
+    #[inline(always)]
+    fn prefetched_fetch_cycles(&mut self, address: u32, bytes: u32) -> u32 {
+        let first = self.prefetched_halfword_cycles(address);
+        if bytes == 4 {
+            first + self.prefetched_halfword_cycles(address + 2)
+        } else {
+            first
+        }
+    }
+
+    #[inline(always)]
     pub fn charge_fetch(&mut self, address: u32, bytes: u32) {
         let access = if self.next_fetch == Some(address) { Access::Sequential } else { Access::Nonsequential };
         let cycles = if is_rom(address) && self.wait.prefetch {
@@ -200,7 +205,7 @@ impl Bus {
         self.next_fetch = Some(address.wrapping_add(bytes));
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn charge_data(&mut self, address: u32, bytes: u32, access: Access) {
         let cycles = self.access_cycles(address, bytes, access);
         self.cycles += cycles;

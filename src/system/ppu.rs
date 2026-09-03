@@ -419,7 +419,8 @@ const NO_OBJ_PIXEL: ObjPixel = ObjPixel {
 };
 
 pub struct PPU {
-    framebuffer: Framebuffer,
+    framebuffer: Box<Framebuffer>,
+    finished: Box<Framebuffer>,
     affine_reference: [[i32; 2]; 2],
     affine_mosaic_reference: [[i32; 2]; 2],
     bg_lines: [[Pixel; FRAMEBUFFER_WIDTH]; 4],
@@ -432,7 +433,8 @@ pub struct PPU {
 impl PPU {
     pub fn new() -> PPU {
         PPU {
-            framebuffer: [[[0; 3]; FRAMEBUFFER_WIDTH]; FRAMEBUFFER_HEIGHT],
+            framebuffer: Box::new([[[0; 3]; FRAMEBUFFER_WIDTH]; FRAMEBUFFER_HEIGHT]),
+            finished: Box::new([[[0; 3]; FRAMEBUFFER_WIDTH]; FRAMEBUFFER_HEIGHT]),
             affine_reference: [[0; 2]; 2],
             affine_mosaic_reference: [[0; 2]; 2],
             bg_lines: [[None; FRAMEBUFFER_WIDTH]; 4],
@@ -444,11 +446,15 @@ impl PPU {
     }
 
     pub fn framebuffer(&self) -> &Framebuffer {
-        &self.framebuffer
+        &self.finished
+    }
+
+    pub fn finish_frame(&mut self) {
+        std::mem::swap(&mut self.framebuffer, &mut self.finished);
     }
 
     pub fn save_state(&self, writer: &mut Writer) {
-        for pixel in self.framebuffer.iter().flatten() {
+        for pixel in self.finished.iter().flatten() {
             writer.bytes(pixel);
         }
         for reference in self.affine_reference.iter().chain(&self.affine_mosaic_reference) {
@@ -457,9 +463,10 @@ impl PPU {
     }
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
-        for pixel in self.framebuffer.iter_mut().flatten() {
+        for pixel in self.finished.iter_mut().flatten() {
             reader.bytes_into(pixel)?;
         }
+        *self.framebuffer = *self.finished;
         for reference in self.affine_reference.iter_mut().chain(&mut self.affine_mosaic_reference) {
             reader.i32s(reference)?;
         }

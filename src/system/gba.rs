@@ -108,6 +108,7 @@ impl Gba {
         }
         self.ppu.latch_affine_references(io);
         if v_count == VISIBLE_SCANLINES {
+            self.ppu.finish_frame();
             self.mem.start_dma(DmaTiming::VBlank);
         }
     }
@@ -125,15 +126,14 @@ impl Gba {
     }
 
     pub fn run_scanline(&mut self) {
-        self.run_scanlines(1);
+        self.run_to_scanline(self.scanline_counter + 1);
     }
 
     pub fn run_frame(&mut self) {
-        self.run_scanlines(SCANLINES_PER_FRAME);
+        self.run_to_scanline((self.frame_count() + 1) * SCANLINES_PER_FRAME);
     }
 
-    fn run_scanlines(&mut self, count: u64) {
-        let target = self.scanline_counter + count;
+    fn run_to_scanline(&mut self, target: u64) {
         while self.scanline_counter < target {
             self.step();
         }

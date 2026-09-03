@@ -50,3 +50,30 @@ fn vcount_match_sets_flag_and_irq() {
     assert!(gba.run_until(|gba| gba.mem.read_u16(VCOUNT) == 43, 1_000_000));
     assert_eq!(gba.mem.read_u16(DISPSTAT) & 4, 0);
 }
+
+#[test]
+fn frames_end_on_the_frame_boundary() {
+    let mut gba = gba_without_rom();
+    for _ in 0..5 {
+        gba.run_scanline();
+    }
+    gba.run_frame();
+    assert_eq!(gba.scanline() % 228, 0);
+    assert_eq!(gba.frame_count(), 1);
+}
+
+#[test]
+fn the_picture_changes_only_at_vblank() {
+    let mut gba = gba_without_rom();
+    gba.mem.write_u16(PALETTE, rgb555(31, 0, 0));
+    gba.mem.write_u16(DISPCNT, 0);
+    gba.run_frame();
+    assert_eq!(gba.framebuffer()[100][100], rgb(31, 0, 0));
+    gba.mem.write_u16(PALETTE, rgb555(0, 31, 0));
+    for _ in 0..159 {
+        gba.run_scanline();
+    }
+    assert_eq!(gba.framebuffer()[100][100], rgb(31, 0, 0));
+    gba.run_scanline();
+    assert_eq!(gba.framebuffer()[100][100], rgb(0, 31, 0));
+}

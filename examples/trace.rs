@@ -1,3 +1,4 @@
+use gbae::system::bios::Bios;
 use gbae::system::cpu::Register;
 use gbae::system::gba::Gba;
 use gbae::system::instructions::{format_instruction_arm, format_instruction_thumb};
@@ -9,10 +10,14 @@ use std::panic;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: trace <bios> <rom> [max_steps] [watch=<hex>] [break=<hex>] [break_cpsr=<mask>:<value>] [pc_min=<hex>]");
+        eprintln!("usage: trace <bios or -> <rom> [max_steps] [watch=<hex>] [break=<hex>] [break_cpsr=<mask>:<value>] [pc_min=<hex>]");
         std::process::exit(1);
     }
-    let bios = fs::read(&args[1]).expect("Failed to read BIOS");
+    let bios = if args[1] == "-" {
+        Bios::Builtin
+    } else {
+        Bios::Image(fs::read(&args[1]).expect("Failed to read BIOS"))
+    };
     let rom = fs::read(&args[2]).expect("Failed to read ROM");
     let mut max_steps = u64::MAX;
     let mut watch: Option<u32> = None;

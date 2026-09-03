@@ -27,11 +27,14 @@ instead, which brings back the boot logo and its jingle.
 | A / B | Z / X |
 | L / R | A / S |
 | Start / Select | Enter / Backspace |
+| turbo | Tab |
 | menu | Escape |
 
 The menu offers resume, reset, save state, load state, a ROM browser, volume,
-turbo speed, a sound mode and key mapping; settings persist in `gbae.cfg`.
-Save data goes to `<rom>.sav` next to the ROM, save states to `<rom>.state`.
+the turbo speed and key mapping; settings persist in `gbae.cfg`. Tab toggles
+turbo: at 1.5x to 4x the sound plays along, pitched up like a tape running
+fast; at Max the machine runs as fast as it can and is silent. Save data goes
+to `<rom>.sav` next to the ROM, save states to `<rom>.state`.
 
 ## Tests and tools
 
@@ -73,7 +76,8 @@ src/main.rs, menu.rs, audio.rs, config.rs, font.rs   window build
 `Gba` owns the `CPU`, the `Memory` and the `PPU`. Each step runs one
 instruction, or skips to the next event while the CPU is halted, then hands
 the elapsed cycles to memory, which advances timers, the APU and DMA. Two
-events per scanline drive the display.
+events per scanline drive the display; the picture the frontend sees is the
+one finished at the last VBlank, so it is always a whole frame.
 
 ```
         one scanline, 1232 cycles, 228 per frame (160 visible + 68 blank)
@@ -81,7 +85,8 @@ events per scanline drive the display.
  ^                                                     ^
  start_scanline                                        start_hblank
    VCOUNT, DISPSTAT flags, VCOUNT match IRQ              HBLANK flag and IRQ
-   line 160: VBLANK flag, VBLANK IRQ, VBlank DMA         lines 0..159: render line,
+   line 160: VBLANK flag, VBLANK IRQ, VBlank DMA,        lines 0..159: render line,
+             picture finished
                                                          HBlank DMA
 
  CPU ──instruction──► Memory.tick(cycles) ──► timers ──overflow──► APU FIFO pop ──► DMA refill
@@ -165,18 +170,18 @@ colour effects, and writes RGB888 into the framebuffer.
 ```
  square 1, square 2, wave, noise ── evaluated on a 64-cycle grid ─┐
  FIFO A, FIFO B ── popped on timer overflow, refilled by DMA ─────┤
-        │                                                          ▼
-        └── Smooth mode: Catmull-Rom between samples ──► mixer: bias, volumes, clamp to 10 bits
-                                                              │ level changed at cycle t
-                                                              ▼
-                              band-limited step: 32-tap windowed sinc, 256 phases, device rate
-                                                              ▼
-                                     15 Hz DC blocker ──► i16 stereo ──► audio device
+                                                                   ▼
+                                      mixer: bias, volumes, clamp to 10 bits
+                                                                   │ level changed at cycle t
+                                                                   ▼
+                   band-limited step: 32-tap windowed sinc, 256 phases, device rate
+                                                                   ▼
+                          15 Hz DC blocker ──► i16 stereo ──► audio device
 ```
 
 The synthesizer generates at whatever rate the frontend's device reports, so
-nothing is resampled anywhere. Exact mode places every step at the cycle the
-game caused it; Smooth mode rounds off the Direct Sound staircase.
+nothing is resampled anywhere, and every step lands at the cycle the game
+caused it. Turbo asks for a lower rate, which plays the same sound faster.
 
 ## BIOS
 
@@ -198,11 +203,12 @@ it is only applied to the same game.
 ## Frontend
 
 `main.rs` runs the emulator on the winit event loop, paced to the GBA frame
-rate or unthrottled in turbo, presents frames through `softbuffer` with
-integer scaling, maps keyboard events through the configurable bindings,
-streams audio through `cpal` at the device's native rate and writes `.sav`
-files when the game changes its save data. `menu.rs` draws the Escape menu
-with the bitmap font in `font.rs`; `config.rs` reads and writes `gbae.cfg`.
+rate, a multiple of it in turbo or unthrottled at Max, presents frames
+through `softbuffer` with integer scaling, maps keyboard events through the
+configurable bindings, streams audio through `cpal` at the device's native
+rate and writes `.sav` files when the game changes its save data. `menu.rs`
+draws the Escape menu with the bitmap font in `font.rs`; `config.rs` reads
+and writes `gbae.cfg`.
 
 ## Acknowledgments
 

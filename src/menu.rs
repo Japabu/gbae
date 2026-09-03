@@ -68,20 +68,18 @@ impl Display for MainItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsItem {
     Volume,
-    Speed,
-    Sound,
+    Turbo,
     Controls,
     Back,
 }
 
 impl SettingsItem {
-    const ALL: [SettingsItem; 5] = [SettingsItem::Volume, SettingsItem::Speed, SettingsItem::Sound, SettingsItem::Controls, SettingsItem::Back];
+    const ALL: [SettingsItem; 4] = [SettingsItem::Volume, SettingsItem::Turbo, SettingsItem::Controls, SettingsItem::Back];
 
     fn line(self, settings: &Settings) -> String {
         match self {
             SettingsItem::Volume => format!("Volume      < {:>3}% >", settings.volume),
-            SettingsItem::Speed => format!("Speed       < {} >", if settings.turbo { "Turbo" } else { "1x" }),
-            SettingsItem::Sound => format!("Sound       < {} >", if settings.smooth_audio { "Smooth" } else { "Exact" }),
+            SettingsItem::Turbo => format!("Turbo       < {} >", settings.turbo),
             SettingsItem::Controls => "Controls...".to_string(),
             SettingsItem::Back => "Back".to_string(),
         }
@@ -189,8 +187,7 @@ impl Menu {
                     settings.volume.saturating_sub(VOLUME_STEP)
                 };
             }
-            SettingsItem::Speed => settings.turbo = !settings.turbo,
-            SettingsItem::Sound => settings.smooth_audio = !settings.smooth_audio,
+            SettingsItem::Turbo => settings.turbo = if increase { settings.turbo.next() } else { settings.turbo.previous() },
             SettingsItem::Controls | SettingsItem::Back => return Action::None,
         }
         Action::SettingsChanged
@@ -344,6 +341,14 @@ fn truncate(text: &str, width: usize) -> String {
     } else {
         format!("{}~", text.chars().take(width - 1).collect::<String>())
     }
+}
+
+pub fn draw_notice(frame: &mut Framebuffer, text: &str) {
+    let width = text.chars().count() * GLYPH_WIDTH + 8;
+    let height = GLYPH_HEIGHT + 8;
+    fill_rect(frame, 4, 4, width, height, PANEL);
+    draw_border(frame, 4, 4, width, height, BORDER);
+    draw_text(frame, 8, 8, text, HIGHLIGHT);
 }
 
 pub fn draw_text(frame: &mut Framebuffer, x: usize, y: usize, text: &str, color: [u8; 3]) {

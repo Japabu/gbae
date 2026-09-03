@@ -44,10 +44,62 @@ impl KeyNames for Key {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Speed {
+    OneAndAHalf,
+    #[default]
+    Double,
+    Triple,
+    Quadruple,
+    Unlimited,
+}
+
+impl Speed {
+    pub const ALL: [Speed; 5] = [Speed::OneAndAHalf, Speed::Double, Speed::Triple, Speed::Quadruple, Speed::Unlimited];
+
+    pub fn multiplier(self) -> Option<f64> {
+        match self {
+            Speed::OneAndAHalf => Some(1.5),
+            Speed::Double => Some(2.0),
+            Speed::Triple => Some(3.0),
+            Speed::Quadruple => Some(4.0),
+            Speed::Unlimited => None,
+        }
+    }
+
+    pub fn next(self) -> Speed {
+        Speed::ALL[(self.position() + 1) % Speed::ALL.len()]
+    }
+
+    pub fn previous(self) -> Speed {
+        Speed::ALL[(self.position() + Speed::ALL.len() - 1) % Speed::ALL.len()]
+    }
+
+    fn position(self) -> usize {
+        Speed::ALL.iter().position(|speed| *speed == self).unwrap_or_default()
+    }
+}
+
+impl Display for Speed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.multiplier() {
+            Some(multiplier) => write!(f, "{}x", multiplier),
+            None => f.write_str("Max"),
+        }
+    }
+}
+
+impl FromStr for Speed {
+    type Err = ();
+
+    fn from_str(text: &str) -> Result<Speed, ()> {
+        Speed::ALL.into_iter().find(|speed| speed.to_string() == text).ok_or(())
+    }
+}
+
 pub struct Settings {
     pub volume: u8,
-    pub turbo: bool,
-    pub smooth_audio: bool,
+    pub turbo: Speed,
     pub keys: [String; 10],
 }
 
@@ -55,8 +107,7 @@ impl Default for Settings {
     fn default() -> Settings {
         Settings {
             volume: 80,
-            turbo: false,
-            smooth_audio: false,
+            turbo: Speed::default(),
             keys: DEFAULT_KEYS.map(String::from),
         }
     }
@@ -95,8 +146,7 @@ impl FromStr for Settings {
             let (name, value) = (name.trim(), value.trim());
             match name {
                 "volume" => settings.volume = value.parse::<u32>().map_or(settings.volume, |volume| volume.min(100) as u8),
-                "turbo" => settings.turbo = value == "true",
-                "smooth_audio" => settings.smooth_audio = value == "true",
+                "turbo" => settings.turbo = value.parse().unwrap_or(settings.turbo),
                 _ => {
                     if let Some(key) = Key::ALL.into_iter().find(|key| key.setting_name() == name) {
                         settings.bind(key, value.to_string());
@@ -112,7 +162,6 @@ impl Display for Settings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "volume={}", self.volume)?;
         writeln!(f, "turbo={}", self.turbo)?;
-        writeln!(f, "smooth_audio={}", self.smooth_audio)?;
         for key in Key::ALL {
             writeln!(f, "{}={}", key.setting_name(), self.binding(key))?;
         }
@@ -128,19 +177,29 @@ mod tests {
     fn test_settings_round_trip() {
         let mut settings = Settings::default();
         settings.volume = 40;
-        settings.smooth_audio = true;
+        settings.turbo = Speed::Unlimited;
         settings.bind(Key::L, "KeyQ".to_string());
         let parsed: Settings = settings.to_string().parse().unwrap();
         assert_eq!(parsed.volume, 40);
-        assert!(parsed.smooth_audio && !parsed.turbo);
+        assert_eq!(parsed.turbo, Speed::Unlimited);
         assert_eq!(parsed.key_for("KeyQ"), Some(Key::L));
         assert_eq!(parsed.key_for("KeyZ"), Some(Key::A));
     }
 
     #[test]
     fn test_unknown_lines_and_bad_values_are_ignored() {
-        let parsed: Settings = "volume=999\nnonsense\nother=1\n".parse().unwrap();
+        let parsed: Settings = "volume=999\nturbo=true\nnonsense\nother=1\n".parse().unwrap();
         assert_eq!(parsed.volume, 100);
+        assert_eq!(parsed.turbo, Speed::Double);
         assert_eq!(parsed.binding(Key::A), "KeyZ");
+    }
+
+    #[test]
+    fn test_speeds_cycle_and_print() {
+        assert_eq!(Speed::OneAndAHalf.to_string(), "1.5x");
+        assert_eq!("4x".parse(), Ok(Speed::Quadruple));
+        assert_eq!(Speed::Unlimited.next(), Speed::OneAndAHalf);
+        assert_eq!(Speed::OneAndAHalf.previous(), Speed::Unlimited);
+        assert_eq!(Speed::Double.next().previous(), Speed::Double);
     }
 }

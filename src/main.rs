@@ -25,9 +25,16 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 const SAVE_FLUSH_INTERVAL_FRAMES: u32 = 60;
 const TURBO_SLICE: Duration = Duration::from_millis(8);
+const MAX_FRAMES_PER_WAKE: u32 = 4;
+const NOTICE_DURATION: Duration = Duration::from_millis(1500);
 
 fn frame_duration() -> Duration {
     Duration::from_secs_f64(CYCLES_PER_SCANLINE as f64 * SCANLINES_PER_FRAME as f64 / CPU_FREQUENCY as f64)
+}
+
+struct Notice {
+    text: String,
+    shown_at: Instant,
 }
 
 struct Emulator {
@@ -40,6 +47,8 @@ struct Emulator {
     audio: Option<Audio>,
     settings: Settings,
     menu: Menu,
+    turbo: bool,
+    notice: Option<Notice>,
     frames_since_save_check: u32,
 }
 
@@ -59,6 +68,8 @@ impl Emulator {
             audio,
             settings,
             menu: Menu::new(),
+            turbo: false,
+            notice: None,
             frames_since_save_check: 0,
         };
         emulator.configure_audio();
@@ -69,10 +80,36 @@ impl Emulator {
         emulator
     }
 
+    fn speed(&self) -> Option<f64> {
+        if self.turbo {
+            self.settings.turbo.multiplier()
+        } else {
+            Some(1.0)
+        }
+    }
+
     fn configure_audio(&mut self) {
         let sample_rate = self.audio.as_ref().map_or(SAMPLE_RATE, Audio::sample_rate);
-        self.gba.set_audio_sample_rate(sample_rate);
-        self.gba.set_smooth_audio(self.settings.smooth_audio);
+        let multiplier = self.speed().unwrap_or(1.0);
+        self.gba.set_audio_sample_rate((f64::from(sample_rate) / multiplier).round() as u32);
+    }
+
+    fn apply_settings(&mut self) {
+        if let Some(audio) = &self.audio {
+            audio.set_volume(self.settings.volume);
+        }
+        self.configure_audio();
+        self.settings.save(Path::new(CONFIG_FILE));
+    }
+
+    fn toggle_turbo(&mut self) {
+        self.turbo = !self.turbo;
+        self.configure_audio();
+        let speed = if self.turbo { self.settings.turbo.to_string() } else { "1x".to_string() };
+        self.notice = Some(Notice {
+            text: format!("Speed {}", speed),
+            shown_at: Instant::now(),
+        });
     }
 
     fn rom_directory(&self) -> PathBuf {
@@ -120,10 +157,8 @@ impl Emulator {
         }
         self.gba.run_frame();
         let samples = self.gba.take_audio_samples();
-        if let Some(audio) = &self.audio {
-            if !self.settings.turbo {
-                audio.push(&samples);
-            }
+        if let (Some(audio), Some(_)) = (&self.audio, self.speed()) {
+            audio.push(&samples);
         }
         self.frames_since_save_check += 1;
         if self.frames_since_save_check >= SAVE_FLUSH_INTERVAL_FRAMES {
@@ -174,17 +209,17 @@ impl Emulator {
             if pressed {
                 let action = self.menu.key(code, &mut self.settings);
                 if action == Action::SettingsChanged {
-                    if let Some(audio) = &self.audio {
-                        audio.set_volume(self.settings.volume);
-                    }
-                    self.gba.set_smooth_audio(self.settings.smooth_audio);
-                    self.settings.save(Path::new(CONFIG_FILE));
+                    self.apply_settings();
                 }
                 return action;
             }
         } else if code == KeyCode::Escape {
             if pressed {
                 self.menu.toggle();
+            }
+        } else if code == KeyCode::Tab {
+            if pressed {
+                self.toggle_turbo();
             }
         } else if let Some(key) = self.settings.key_for(&format!("{:?}", code)) {
             self.gba.set_key(key, pressed);
@@ -196,6 +231,8 @@ impl Emulator {
         let mut frame = *self.gba.framebuffer();
         if self.menu.open {
             self.menu.render(&mut frame, &self.settings);
+        } else if let Some(notice) = self.notice.as_ref().filter(|notice| notice.shown_at.elapsed() < NOTICE_DURATION) {
+            menu::draw_notice(&mut frame, &notice.text);
         }
         frame
     }
@@ -247,20 +284,30 @@ impl App {
 
     fn run_pending_frames(&mut self) {
         let now = Instant::now();
-        if self.emulator.settings.turbo {
-            let deadline = now + TURBO_SLICE;
-            while Instant::now() < deadline {
-                self.emulator.run_frame();
+        match self.emulator.speed() {
+            None => {
+                let deadline = now + TURBO_SLICE;
+                while Instant::now() < deadline {
+                    self.emulator.run_frame();
+                }
+                self.next_frame = Instant::now();
             }
-            self.next_frame = Instant::now();
-        } else if now >= self.next_frame {
-            self.emulator.run_frame();
-            self.next_frame += frame_duration();
-            if self.next_frame + frame_duration() * 4 < now {
-                self.next_frame = now;
+            Some(multiplier) => {
+                if now < self.next_frame {
+                    return;
+                }
+                let interval = frame_duration().div_f64(multiplier);
+                for _ in 0..MAX_FRAMES_PER_WAKE {
+                    self.emulator.run_frame();
+                    self.next_frame += interval;
+                    if now < self.next_frame {
+                        break;
+                    }
+                }
+                if now >= self.next_frame {
+                    self.next_frame = now;
+                }
             }
-        } else {
-            return;
         }
         if let Some(window) = &self.window {
             window.request_redraw();
@@ -344,10 +391,9 @@ impl ApplicationHandler for App {
             event_loop.set_control_flow(ControlFlow::Wait);
         } else {
             self.run_pending_frames();
-            event_loop.set_control_flow(if self.emulator.settings.turbo {
-                ControlFlow::Poll
-            } else {
-                ControlFlow::WaitUntil(self.next_frame)
+            event_loop.set_control_flow(match self.emulator.speed() {
+                None => ControlFlow::Poll,
+                Some(_) => ControlFlow::WaitUntil(self.next_frame),
             });
         }
     }

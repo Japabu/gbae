@@ -644,9 +644,6 @@ struct Fifo {
     samples: VecDeque<i8>,
     current: i8,
     level: f32,
-    history: [i8; 4],
-    last_pop: Option<u64>,
-    interval: u64,
 }
 
 impl Fifo {
@@ -658,43 +655,18 @@ impl Fifo {
         }
     }
 
-    fn pop(&mut self, clock: u64, smooth: bool) -> bool {
+    fn pop(&mut self) -> bool {
         if let Some(sample) = self.samples.pop_front() {
             self.current = sample;
         }
-        self.history.rotate_right(1);
-        self.history[0] = self.current;
-        self.interval = self.last_pop.map_or(0, |last_pop| clock - last_pop);
-        self.last_pop = Some(clock);
-        if !smooth {
-            self.level = f32::from(self.current);
-        }
-        self.samples.len() <= FIFO_REFILL_THRESHOLD
-    }
-
-    fn interpolate(&self, clock: u64) -> f32 {
-        let Some(last_pop) = self.last_pop.filter(|_| self.interval > 0) else {
-            return f32::from(self.current);
-        };
-        let t = ((clock - last_pop) as f32 / self.interval as f32).min(1.0);
-        let [p3, p2, p1, p0] = self.history.map(f32::from);
-        let a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
-        let b = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3;
-        let c = -p0 + p2;
-        0.5 * (((a * t + b) * t + c) * t + 2.0 * p1)
-    }
-
-    fn restart(&mut self) {
         self.level = f32::from(self.current);
-        self.history = [0; 4];
-        self.last_pop = None;
-        self.interval = 0;
+        self.samples.len() <= FIFO_REFILL_THRESHOLD
     }
 
     fn reset(&mut self) {
         self.samples.clear();
         self.current = 0;
-        self.restart();
+        self.level = 0.0;
     }
 
     fn save_state(&self, writer: &mut Writer) {
@@ -706,7 +678,7 @@ impl Fifo {
     fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
         self.samples = reader.sized_bytes()?.iter().map(|byte| *byte as i8).collect();
         self.current = reader.u8()? as i8;
-        self.restart();
+        self.level = f32::from(self.current);
         Ok(())
     }
 }
@@ -762,10 +734,8 @@ pub struct Apu {
     bias: u16,
     frame_sequencer_cycles: u32,
     frame_sequencer_step: u8,
-    clock: u64,
     frame_cycles: u32,
     grid_cycles: u32,
-    smooth: bool,
     last_level: [f32; 2],
     synth: [Synth; 2],
 }
@@ -786,10 +756,8 @@ impl Apu {
             bias: DEFAULT_BIAS,
             frame_sequencer_cycles: 0,
             frame_sequencer_step: 0,
-            clock: 0,
             frame_cycles: 0,
             grid_cycles: 0,
-            smooth: false,
             last_level: [0.0; 2],
             synth: [Synth::new(SAMPLE_RATE), Synth::new(SAMPLE_RATE)],
         }
@@ -896,9 +864,9 @@ impl Apu {
     }
 
     pub fn timer_overflow(&mut self, timer: u8) -> [bool; 2] {
-        let (clock, smooth, timers) = (self.clock, self.smooth, self.fifo_timer);
+        let timers = self.fifo_timer;
         let fifos = &mut self.fifo;
-        let refill = std::array::from_fn(|index| timers[index] == timer && fifos[index].pop(clock, smooth));
+        let refill = std::array::from_fn(|index| timers[index] == timer && fifos[index].pop());
         self.emit();
         refill
     }
@@ -914,16 +882,10 @@ impl Apu {
             let step = remaining.min(GRID_CYCLES - self.grid_cycles);
             self.grid_cycles += step;
             self.frame_cycles += step;
-            self.clock += u64::from(step);
             remaining -= step;
             if self.grid_cycles == GRID_CYCLES {
                 self.grid_cycles = 0;
                 self.advance_channels();
-                if self.smooth {
-                    for fifo in &mut self.fifo {
-                        fifo.level = fifo.interpolate(self.clock);
-                    }
-                }
                 self.emit();
             }
         }
@@ -1069,7 +1031,6 @@ impl Apu {
         for synth in &mut self.synth {
             synth.set_phase(phase);
         }
-        self.clock = 0;
         self.frame_cycles = 0;
         self.grid_cycles = 0;
         self.last_level = self.levels();
@@ -1081,13 +1042,6 @@ impl Apu {
             synth.set_sample_rate(sample_rate);
         }
         self.frame_cycles = 0;
-    }
-
-    pub fn set_smooth(&mut self, smooth: bool) {
-        self.smooth = smooth;
-        for fifo in &mut self.fifo {
-            fifo.level = f32::from(fifo.current);
-        }
     }
 
     pub fn take_samples(&mut self) -> Vec<i16> {
@@ -1145,23 +1099,16 @@ mod tests {
     }
 
     #[test]
-    fn test_smooth_direct_sound_rounds_off_steps() {
-        let rise = |smooth: bool| {
-            let mut apu = enabled_apu();
-            apu.set_smooth(smooth);
-            apu.write_u16(0x82, 0x2 | 0x4 | 0x100 | 0x200);
-            stream_fifo(&mut apu, 4096, std::iter::repeat(0).take(40).chain(std::iter::repeat(0x40).take(40)));
-            let left: Vec<i32> = apu.take_samples().iter().step_by(2).map(|sample| i32::from(*sample)).collect();
-            let edge = left.iter().position(|sample| *sample > left.iter().max().unwrap() / 2).unwrap();
-            let level = left[edge + 20];
-            let rising = left[edge - 20..edge + 20].iter().filter(|sample| **sample > level / 8 && **sample < level * 7 / 8).count();
-            (level, rising)
-        };
-        let (exact_level, exact_rising) = rise(false);
-        let (smooth_level, smooth_rising) = rise(true);
-        assert!((exact_level - smooth_level).abs() < exact_level / 8, "levels {} and {}", exact_level, smooth_level);
-        assert!(exact_rising <= 2, "{} samples rising in exact mode", exact_rising);
-        assert!(smooth_rising >= 4, "{} samples rising in smooth mode", smooth_rising);
+    fn test_direct_sound_steps_stay_sharp() {
+        let mut apu = enabled_apu();
+        apu.write_u16(0x82, 0x2 | 0x4 | 0x100 | 0x200);
+        stream_fifo(&mut apu, 4096, std::iter::repeat(0).take(40).chain(std::iter::repeat(0x40).take(40)));
+        let left: Vec<i32> = apu.take_samples().iter().step_by(2).map(|sample| i32::from(*sample)).collect();
+        let edge = left.iter().position(|sample| *sample > left.iter().max().unwrap() / 2).unwrap();
+        let level = left[edge + 20];
+        let rising = left[edge - 20..edge + 20].iter().filter(|sample| **sample > level / 8 && **sample < level * 7 / 8).count();
+        assert!(level > 0, "no step in the output");
+        assert!(rising <= 2, "{} samples rising", rising);
     }
 
     #[test]

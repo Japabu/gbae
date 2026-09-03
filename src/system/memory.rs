@@ -103,6 +103,7 @@ impl Key {
 
 pub struct IoRegisters {
     pub disp_cnt: u16,
+    pub green_swap: u16,
     pub disp_stat: u16,
     pub v_count: u16,
     pub bg_cnt: [u16; 4],
@@ -152,6 +153,7 @@ impl IoRegisters {
     pub fn new() -> Self {
         Self {
             disp_cnt: 0,
+            green_swap: 0,
             disp_stat: 0,
             v_count: 0,
             bg_cnt: [0; 4],
@@ -205,6 +207,7 @@ impl IoRegisters {
     pub fn read_u16(&self, offset: u32) -> u16 {
         match offset {
             0x000 => self.disp_cnt,
+            0x002 => self.green_swap,
             0x004 => self.disp_stat,
             0x006 => self.v_count,
             0x008 => self.bg_cnt[0],
@@ -285,6 +288,7 @@ impl IoRegisters {
     pub fn write_u16(&mut self, offset: u32, value: u16) {
         match offset {
             0x000 => self.disp_cnt = value,
+            0x002 => self.green_swap = value & 1,
             0x004 => self.disp_stat = (self.disp_stat & 0x0007) | (value & 0xFFF8),
             0x008 => self.bg_cnt[0] = value,
             0x00A => self.bg_cnt[1] = value,
@@ -406,6 +410,7 @@ impl IoRegisters {
 
     pub fn save_state(&self, writer: &mut Writer) {
         writer.u16(self.disp_cnt);
+        writer.u16(self.green_swap);
         writer.u16(self.disp_stat);
         writer.u16(self.v_count);
         writer.u16s(&self.bg_cnt);
@@ -457,6 +462,7 @@ impl IoRegisters {
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
         self.disp_cnt = reader.u16()?;
+        self.green_swap = reader.u16()?;
         self.disp_stat = reader.u16()?;
         self.v_count = reader.u16()?;
         reader.u16s(&mut self.bg_cnt)?;
@@ -701,6 +707,7 @@ pub struct Memory {
     dma: [DmaChannel; 4],
     dma_active: bool,
     bios_last_opcode: u32,
+    last_opcode: u32,
     executing_from_bios: bool,
     wait: WaitStates,
     prefetch: Prefetch,
@@ -761,6 +768,7 @@ impl Memory {
             dma: [DmaChannel::default(); 4],
             dma_active: false,
             bios_last_opcode: 0,
+            last_opcode: 0,
             executing_from_bios: true,
             wait: WaitStates::decode(0),
             prefetch: Prefetch::default(),
@@ -888,6 +896,7 @@ impl Memory {
         if self.executing_from_bios {
             self.bios_last_opcode = opcode;
         }
+        self.last_opcode = opcode;
         opcode
     }
 
@@ -898,6 +907,7 @@ impl Memory {
         if self.executing_from_bios {
             self.bios_last_opcode = self.read_u32(address);
         }
+        self.last_opcode = opcode as u32 | (opcode as u32) << 16;
         opcode
     }
 
@@ -979,7 +989,7 @@ impl Memory {
             RegionKey::Gpio(offset) => (self.gpio_or_rom_u16(address & !0b1, offset & !0b1) >> (8 * (offset & 1))) as u8,
             RegionKey::Eeprom => self.backup.eeprom_read() as u8,
             RegionKey::Backup(address) => self.backup.read(address),
-            RegionKey::Unmapped => 0,
+            RegionKey::Unmapped => (self.last_opcode >> (8 * (address & 0b11))) as u8,
         }
     }
 
@@ -997,7 +1007,7 @@ impl Memory {
             RegionKey::Gpio(offset) => self.gpio_or_rom_u16(address & !0b1, offset),
             RegionKey::Eeprom => self.backup.eeprom_read(),
             RegionKey::Backup(address) => self.backup.read(address) as u16 * 0x0101,
-            RegionKey::Unmapped => 0,
+            RegionKey::Unmapped => (self.last_opcode >> (8 * (address & 0b10))) as u16,
         }
     }
 
@@ -1015,7 +1025,7 @@ impl Memory {
             RegionKey::Gpio(offset) => self.gpio_or_rom_u16(address & !0b11, offset) as u32 | (self.gpio_or_rom_u16((address & !0b11) + 2, offset + 2) as u32) << 16,
             RegionKey::Eeprom => self.backup.eeprom_read() as u32 | (self.backup.eeprom_read() as u32) << 16,
             RegionKey::Backup(address) => self.backup.read(address) as u32 * 0x0101_0101,
-            RegionKey::Unmapped => 0,
+            RegionKey::Unmapped => self.last_opcode,
         }
     }
 
@@ -1188,6 +1198,7 @@ impl Memory {
         }
         writer.bool(self.dma_active);
         writer.u32(self.bios_last_opcode);
+        writer.u32(self.last_opcode);
         writer.bool(self.executing_from_bios);
         writer.bool(self.prefetch.active);
         writer.u32(self.prefetch.start);
@@ -1217,6 +1228,7 @@ impl Memory {
         }
         self.dma_active = reader.bool()?;
         self.bios_last_opcode = reader.u32()?;
+        self.last_opcode = reader.u32()?;
         self.executing_from_bios = reader.bool()?;
         self.prefetch.active = reader.bool()?;
         self.prefetch.start = reader.u32()?;
@@ -1554,9 +1566,16 @@ mod tests {
     }
 
     #[test]
-    fn test_unmapped_reads_are_open_bus() {
-        let mem = Memory::new(vec![], vec![]);
+    fn test_unmapped_reads_return_the_last_prefetched_opcode() {
+        let mut mem = Memory::new(vec![], vec![]);
         assert_eq!(mem.read_u32(0x1000_0000), 0);
-        assert_eq!(mem.read_u16(0x0100_0000), 0);
+        mem.write_u32(0x0300_0000, 0xE1A0_1234);
+        mem.fetch_u32(0x0300_0000);
+        assert_eq!(mem.read_u32(0x1000_0000), 0xE1A0_1234);
+        assert_eq!(mem.read_u16(0x0100_0002), 0xE1A0);
+        assert_eq!(mem.read_u8(0x0100_0001), 0x12);
+        mem.write_u16(0x0300_0010, 0x46C0);
+        mem.fetch_u16(0x0300_0010);
+        assert_eq!(mem.read_u32(0x1000_0000), 0x46C0_46C0);
     }
 }

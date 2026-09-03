@@ -18,6 +18,8 @@ const WINOUT: u32 = 0x0400_004A;
 const BLDCNT: u32 = 0x0400_0050;
 const BLDALPHA: u32 = 0x0400_0052;
 const BLDY: u32 = 0x0400_0054;
+const GREENSWAP: u32 = 0x0400_0002;
+const MOSAIC: u32 = 0x0400_004C;
 
 fn fill_tile(gba: &mut Gba, tile: u32, left: u16, right: u16) {
     for row in 0..8 {
@@ -262,4 +264,99 @@ fn mode2_draws_affine_background_from_8bit_tiles() {
     assert_eq!(fb[7][7], rgb(31, 0, 0));
     assert_eq!(fb[0][8], rgb(0, 0, 0));
     assert_eq!(fb[8][0], rgb(0, 0, 0));
+}
+
+fn place_square_sprite(gba: &mut Gba, index: u32, x: u16, y: u16, mosaic: bool) {
+    gba.mem.write_u16(OAM + index * 8, y | (mosaic as u16) << 12);
+    gba.mem.write_u16(OAM + index * 8 + 2, x);
+    gba.mem.write_u16(OAM + index * 8 + 4, 1);
+}
+
+fn sprite_tile_with_gradient(gba: &mut Gba) {
+    for column in 0..8u32 {
+        gba.mem.write_u16(OBJ_PALETTE + 2 + column * 2, rgb555(column as u8 * 4, 0, 0));
+    }
+    for row in 0..8 {
+        gba.mem.write_u32(OBJ_TILES + 32 + row * 4, 0x7654_3210 + 0x1111_1111);
+    }
+}
+
+#[test]
+fn sprite_horizontal_mosaic_repeats_block_start_pixels() {
+    let mut gba = gba_without_rom();
+    sprite_tile_with_gradient(&mut gba);
+    place_square_sprite(&mut gba, 0, 0, 0, true);
+    gba.mem.write_u16(MOSAIC, 3 << 8);
+    gba.mem.write_u16(DISPCNT, 1 << 12 | 1 << 6);
+    gba.run_frame();
+    let fb = gba.framebuffer();
+    assert_eq!(fb[0][0], rgb(0, 0, 0));
+    assert_eq!(fb[0][3], rgb(0, 0, 0));
+    assert_eq!(fb[0][4], rgb(16, 0, 0));
+    assert_eq!(fb[0][7], rgb(16, 0, 0));
+}
+
+#[test]
+fn sprite_cycle_budget_drops_sprites_beyond_the_limit() {
+    let mut gba = gba_without_rom();
+    gba.mem.write_u16(OBJ_PALETTE + 2, rgb555(0, 0, 31));
+    for row in 0..8 {
+        gba.mem.write_u32(OBJ_TILES + 32 + row * 4, 0x1111_1111);
+    }
+    let big_sprites = |gba: &mut Gba, count: u32| {
+        for index in 0..20u32 {
+            gba.mem.write_u16(OAM + index * 8, if index < count { 0 } else { 160 });
+            gba.mem.write_u16(OAM + index * 8 + 2, 100 | 3 << 14);
+            gba.mem.write_u16(OAM + index * 8 + 4, 1);
+        }
+    };
+    gba.mem.write_u16(OAM + 20 * 8, 8);
+    gba.mem.write_u16(OAM + 20 * 8 + 2, 0);
+    gba.mem.write_u16(OAM + 20 * 8 + 4, 1);
+    gba.mem.write_u16(DISPCNT, 1 << 12 | 1 << 6);
+
+    big_sprites(&mut gba, 10);
+    gba.run_frame();
+    assert_eq!(gba.framebuffer()[8][0], rgb(0, 0, 31));
+
+    big_sprites(&mut gba, 20);
+    gba.run_frame();
+    assert_eq!(gba.framebuffer()[8][0], rgb(0, 0, 0));
+}
+
+#[test]
+fn green_swap_exchanges_green_between_pixel_pairs() {
+    let mut gba = gba_without_rom();
+    gba.mem.write_u16(DISPCNT, 3 | 1 << 10);
+    gba.mem.write_u16(VRAM, rgb555(31, 31, 0));
+    gba.mem.write_u16(VRAM + 2, rgb555(0, 0, 31));
+    gba.mem.write_u16(GREENSWAP, 1);
+    gba.run_frame();
+    let fb = gba.framebuffer();
+    assert_eq!(fb[0][0], rgb(31, 0, 0));
+    assert_eq!(fb[0][1], rgb(0, 31, 31));
+}
+
+#[test]
+fn affine_background_mosaic_holds_reference_for_block_rows() {
+    let mut gba = gba_without_rom();
+    gba.mem.write_u16(PALETTE + 2, rgb555(31, 0, 0));
+    gba.mem.write_u16(PALETTE + 4, rgb555(0, 31, 0));
+    for row in 0..8 {
+        let value = if row < 4 { 0x0101_0101 } else { 0x0202_0202 };
+        gba.mem.write_u32(VRAM + 64 + row * 8, value);
+        gba.mem.write_u32(VRAM + 64 + row * 8 + 4, value);
+    }
+    gba.mem.write_u16(VRAM + 0x4000, 0x0101);
+    gba.mem.write_u16(VRAM + 0x4010, 0x0101);
+    gba.mem.write_u16(BG2CNT, 8 << 8 | 1 << 6);
+    gba.mem.write_u16(MOSAIC, 5 << 4);
+    gba.mem.write_u16(DISPCNT, 2 | 1 << 10);
+    gba.run_frame();
+    let fb = gba.framebuffer();
+    assert_eq!(fb[3][0], rgb(31, 0, 0));
+    assert_eq!(fb[5][0], rgb(31, 0, 0));
+    assert_eq!(fb[6][0], rgb(0, 31, 0));
+    assert_eq!(fb[11][0], rgb(0, 31, 0));
+    assert_eq!(fb[12][0], rgb(0, 31, 0));
 }

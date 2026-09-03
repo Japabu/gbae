@@ -21,6 +21,7 @@ const OBJ_SIZES: [[(i32, i32); 4]; 3] = [
 ];
 
 const DISPCNT_FRAME_SELECT: u16 = 1 << 4;
+const DISPCNT_HBLANK_INTERVAL_FREE: u16 = 1 << 5;
 const DISPCNT_OBJ_ONE_DIMENSIONAL: u16 = 1 << 6;
 const DISPCNT_FORCED_BLANK: u16 = 1 << 7;
 const DISPCNT_OBJ: u16 = 1 << 12;
@@ -43,6 +44,8 @@ const BLEND_DARKEN: u16 = 3;
 const OBJ_MODE_SEMI_TRANSPARENT: u16 = 1;
 const OBJ_MODE_WINDOW: u16 = 2;
 const OBJ_MODE_PROHIBITED: u16 = 3;
+const OBJ_CYCLES_PER_LINE: i32 = 1210;
+const OBJ_CYCLES_PER_LINE_HBLANK_FREE: i32 = 954;
 
 pub type Framebuffer = [[[u8; 3]; FRAMEBUFFER_WIDTH]; FRAMEBUFFER_HEIGHT];
 
@@ -87,6 +90,7 @@ impl Layer {
 pub struct PPU {
     framebuffer: Framebuffer,
     affine_reference: [[i32; 2]; 2],
+    affine_mosaic_reference: [[i32; 2]; 2],
     bg_lines: [[u16; FRAMEBUFFER_WIDTH]; 4],
     obj_line: [ObjPixel; FRAMEBUFFER_WIDTH],
     obj_window: [bool; FRAMEBUFFER_WIDTH],
@@ -99,6 +103,7 @@ impl PPU {
         PPU {
             framebuffer: [[[0; 3]; FRAMEBUFFER_WIDTH]; FRAMEBUFFER_HEIGHT],
             affine_reference: [[0; 2]; 2],
+            affine_mosaic_reference: [[0; 2]; 2],
             bg_lines: [[TRANSPARENT; FRAMEBUFFER_WIDTH]; 4],
             obj_line: [NO_OBJ_PIXEL; FRAMEBUFFER_WIDTH],
             obj_window: [false; FRAMEBUFFER_WIDTH],
@@ -120,6 +125,9 @@ impl PPU {
         for reference in &self.affine_reference {
             writer.i32s(reference);
         }
+        for reference in &self.affine_mosaic_reference {
+            writer.i32s(reference);
+        }
     }
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
@@ -129,6 +137,9 @@ impl PPU {
             }
         }
         for reference in &mut self.affine_reference {
+            reader.i32s(reference)?;
+        }
+        for reference in &mut self.affine_mosaic_reference {
             reader.i32s(reference)?;
         }
         Ok(())
@@ -147,6 +158,11 @@ impl PPU {
         let io = mem.get_io_registers();
         let y = io.v_count as usize;
 
+        let (_, mosaic_y) = mosaic_size(true, io.mosaic);
+        if y % mosaic_y == 0 {
+            self.affine_mosaic_reference = self.affine_reference;
+        }
+
         if io.disp_cnt & DISPCNT_FORCED_BLANK != 0 {
             self.framebuffer[y] = [[255; 3]; FRAMEBUFFER_WIDTH];
         } else {
@@ -154,6 +170,13 @@ impl PPU {
             self.render_objects(y, io, mem.vram(), mem.palette_ram(), mem.oam());
             self.sort_layers(io);
             self.compose(y, io, mem.palette_ram());
+            if io.green_swap & 1 != 0 {
+                for pair in self.framebuffer[y].chunks_exact_mut(2) {
+                    let green = pair[0][1];
+                    pair[0][1] = pair[1][1];
+                    pair[1][1] = green;
+                }
+            }
         }
 
         for bg in 0..2 {
@@ -244,9 +267,10 @@ impl PPU {
         let screen_base = ((control >> 8) & 0x1F) as usize * 0x800;
         let size = 128 << (control >> 14);
         let wraps = control & BGCNT_WRAPAROUND != 0;
-        let (mosaic_x, _) = mosaic_size(control & BGCNT_MOSAIC != 0, io.mosaic);
+        let mosaic = control & BGCNT_MOSAIC != 0;
+        let (mosaic_x, _) = mosaic_size(mosaic, io.mosaic);
         let [pa, _, pc, _] = io.bg_parameters[bg - 2].map(|parameter| parameter as i16 as i32);
-        let [mut px, mut py] = self.affine_reference[bg - 2];
+        let [mut px, mut py] = if mosaic { self.affine_mosaic_reference[bg - 2] } else { self.affine_reference[bg - 2] };
         let line = &mut self.bg_lines[bg];
 
         for x in 0..FRAMEBUFFER_WIDTH {
@@ -272,9 +296,10 @@ impl PPU {
         let mode = io.disp_cnt & 0b111;
         let (width, height) = if mode == 5 { (160, 128) } else { (240, 160) };
         let frame = if mode != 3 && io.disp_cnt & DISPCNT_FRAME_SELECT != 0 { 0xA000 } else { 0 };
-        let (mosaic_x, _) = mosaic_size(io.bg_cnt[2] & BGCNT_MOSAIC != 0, io.mosaic);
+        let mosaic = io.bg_cnt[2] & BGCNT_MOSAIC != 0;
+        let (mosaic_x, _) = mosaic_size(mosaic, io.mosaic);
         let [pa, _, pc, _] = io.bg_parameters[0].map(|parameter| parameter as i16 as i32);
-        let [mut px, mut py] = self.affine_reference[0];
+        let [mut px, mut py] = if mosaic { self.affine_mosaic_reference[0] } else { self.affine_reference[0] };
         let line = &mut self.bg_lines[2];
 
         for x in 0..FRAMEBUFFER_WIDTH {
@@ -299,13 +324,17 @@ impl PPU {
         self.obj_line.fill(NO_OBJ_PIXEL);
         self.obj_window.fill(false);
         if io.disp_cnt & DISPCNT_OBJ != 0 {
+            let mut budget = if io.disp_cnt & DISPCNT_HBLANK_INTERVAL_FREE != 0 { OBJ_CYCLES_PER_LINE_HBLANK_FREE } else { OBJ_CYCLES_PER_LINE };
             for index in 0..128 {
-                self.render_object(index, y, io, vram, palette, oam);
+                budget -= self.render_object(index, y, io, vram, palette, oam, budget);
+                if budget <= 0 {
+                    break;
+                }
             }
         }
     }
 
-    fn render_object(&mut self, index: usize, y: usize, io: &IoRegisters, vram: &[u8], palette: &[u8], oam: &[u8]) {
+    fn render_object(&mut self, index: usize, y: usize, io: &IoRegisters, vram: &[u8], palette: &[u8], oam: &[u8], budget: i32) -> i32 {
         let attribute0 = halfword(oam, index * 8);
         let attribute1 = halfword(oam, index * 8 + 2);
         let attribute2 = halfword(oam, index * 8 + 4);
@@ -315,7 +344,7 @@ impl PPU {
         let mode = (attribute0 >> 10) & 0b11;
         let shape = (attribute0 >> 14) as usize;
         if (!affine && double_size_or_disabled) || mode == OBJ_MODE_PROHIBITED || shape >= OBJ_SIZES.len() {
-            return;
+            return 0;
         }
 
         let (width, height) = OBJ_SIZES[shape][(attribute1 >> 14) as usize];
@@ -329,16 +358,20 @@ impl PPU {
             sprite_x -= 512;
         }
 
-        let (_, mosaic_y) = mosaic_size(attribute0 & 0x1000 != 0, io.mosaic >> 8);
+        let (mosaic_x, mosaic_y) = mosaic_size(attribute0 & 0x1000 != 0, io.mosaic >> 8);
         let row = (y - y % mosaic_y) as i32 - sprite_y;
         if row < 0 || row >= box_height {
-            return;
+            return 0;
+        }
+        let cycles = if affine { box_width * 2 + 10 } else { box_width };
+        if cycles > budget {
+            return cycles;
         }
 
         let eight_bit = attribute0 & 0x2000 != 0;
         let tile_base = (attribute2 & 0x3FF) as usize;
         if io.disp_cnt & 0b111 >= 3 && tile_base < 512 {
-            return;
+            return cycles;
         }
         let priority = ((attribute2 >> 10) & 0b11) as u8;
         let palette_bank = (attribute2 >> 12) as usize;
@@ -353,9 +386,13 @@ impl PPU {
         let horizontal_flip = !affine && attribute1 & 0x1000 != 0;
         let vertical_flip = !affine && attribute1 & 0x2000 != 0;
 
-        for column in 0..box_width {
-            let screen_x = sprite_x + column;
+        for screen_column in 0..box_width {
+            let screen_x = sprite_x + screen_column;
             if !(0..FRAMEBUFFER_WIDTH as i32).contains(&screen_x) {
+                continue;
+            }
+            let column = screen_x - screen_x % mosaic_x as i32 - sprite_x;
+            if column < 0 {
                 continue;
             }
             let (tx, ty) = if affine {
@@ -387,6 +424,7 @@ impl PPU {
                 };
             }
         }
+        cycles
     }
 
     fn compose(&mut self, y: usize, io: &IoRegisters, palette: &[u8]) {

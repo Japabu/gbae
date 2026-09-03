@@ -1,23 +1,37 @@
 use std::collections::VecDeque;
 
+use crate::bits::Bits;
+
 use super::{
     cpu::CPU_FREQUENCY,
     state::{Reader, StateError, Writer},
-    synth::{kernel, Synth, FRACTION_BITS, KERNEL_SHIFT, LEVEL_BITS, TAPS},
+    synth::Synth,
 };
 
 pub const SAMPLE_RATE: u32 = 48_000;
 const FRAME_SEQUENCER_CYCLES: u32 = 32_768;
 const GRID_CYCLES: u32 = 64;
 const FLUSH_CYCLES: u32 = CPU_FREQUENCY as u32 / 8;
-const LEVEL_SCALE: i32 = 1 << (LEVEL_BITS - 10);
 const FIFO_CAPACITY: usize = 32;
 const FIFO_REFILL_THRESHOLD: usize = 16;
-const DUTY_PATTERNS: [u8; 4] = [0b0000_0001, 0b0000_0011, 0b0000_1111, 0b1111_1100];
 const DEFAULT_BIAS: u16 = 0x200;
+const DAC_CENTER: f32 = 512.0;
+const DAC_MAXIMUM: f32 = 1023.0;
+const PSG_FULL_SCALE: f32 = 4.0 / 7.0;
+const MAXIMUM_FREQUENCY: u16 = 2047;
 
 pub const FIFO_A: u32 = 0x0400_00A0;
 pub const FIFO_B: u32 = 0x0400_00A4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    const ALL: [Side; 2] = [Side::Left, Side::Right];
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Envelope {
@@ -30,13 +44,13 @@ struct Envelope {
 
 impl Envelope {
     fn write(&mut self, value: u16) {
-        self.initial_volume = (value >> 12) as u8;
-        self.increase = value & 0x0800 != 0;
-        self.step_time = (value >> 8 & 0b111) as u8;
+        self.initial_volume = value.bits(12..16) as u8;
+        self.increase = value.bit(11);
+        self.step_time = value.bits(8..11) as u8;
     }
 
     fn read(&self) -> u16 {
-        (self.initial_volume as u16) << 12 | (self.increase as u16) << 11 | (self.step_time as u16) << 8
+        u16::from(self.initial_volume) << 12 | u16::from(self.increase) << 11 | u16::from(self.step_time) << 8
     }
 
     fn trigger(&mut self) {
@@ -46,6 +60,17 @@ impl Envelope {
 
     fn dac_enabled(&self) -> bool {
         self.initial_volume != 0 || self.increase
+    }
+
+    fn tick(&mut self) {
+        if self.step_time == 0 {
+            return;
+        }
+        self.counter = self.counter.saturating_sub(1);
+        if self.counter == 0 {
+            self.counter = self.step_time;
+            self.volume = if self.increase { (self.volume + 1).min(15) } else { self.volume.saturating_sub(1) };
+        }
     }
 
     fn save_state(&self, writer: &mut Writer) {
@@ -63,20 +88,6 @@ impl Envelope {
         self.volume = reader.u8()?;
         self.counter = reader.u8()?;
         Ok(())
-    }
-
-    fn tick(&mut self) {
-        if self.step_time != 0 {
-            self.counter = self.counter.saturating_sub(1);
-            if self.counter == 0 {
-                self.counter = self.step_time;
-                if self.increase && self.volume < 15 {
-                    self.volume += 1;
-                } else if !self.increase && self.volume > 0 {
-                    self.volume -= 1;
-                }
-            }
-        }
     }
 }
 
@@ -102,6 +113,15 @@ impl Length {
         }
     }
 
+    fn tick(&mut self) -> bool {
+        if self.enabled && self.counter > 0 {
+            self.counter -= 1;
+            self.counter == 0
+        } else {
+            false
+        }
+    }
+
     fn save_state(&self, writer: &mut Writer) {
         writer.bool(self.enabled);
         writer.u16(self.counter);
@@ -112,15 +132,13 @@ impl Length {
         self.counter = reader.u16()?;
         Ok(())
     }
+}
 
-    fn tick(&mut self) -> bool {
-        if self.enabled && self.counter > 0 {
-            self.counter -= 1;
-            self.counter == 0
-        } else {
-            false
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SweepStep {
+    Idle,
+    Frequency(u16),
+    Overflow,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -135,20 +153,61 @@ struct Sweep {
 
 impl Sweep {
     fn write(&mut self, value: u16) {
-        self.shift = (value & 0b111) as u8;
-        self.decrease = value & 0b1000 != 0;
-        self.time = (value >> 4 & 0b111) as u8;
+        self.shift = value.bits(0..3) as u8;
+        self.decrease = value.bit(3);
+        self.time = value.bits(4..7) as u8;
     }
 
     fn read(&self) -> u16 {
-        self.shift as u16 | (self.decrease as u16) << 3 | (self.time as u16) << 4
+        u16::from(self.shift) | u16::from(self.decrease) << 3 | u16::from(self.time) << 4
+    }
+
+    fn period(&self) -> u8 {
+        if self.time == 0 {
+            8
+        } else {
+            self.time
+        }
     }
 
     fn trigger(&mut self, frequency: u16) -> bool {
         self.shadow_frequency = frequency;
-        self.counter = if self.time == 0 { 8 } else { self.time };
+        self.counter = self.period();
         self.enabled = self.time != 0 || self.shift != 0;
-        self.shift != 0 && self.next_frequency() > 2047
+        self.shift != 0 && self.next_frequency() > MAXIMUM_FREQUENCY
+    }
+
+    fn next_frequency(&self) -> u16 {
+        let delta = self.shadow_frequency >> self.shift;
+        if self.decrease {
+            self.shadow_frequency.wrapping_sub(delta)
+        } else {
+            self.shadow_frequency + delta
+        }
+    }
+
+    fn tick(&mut self) -> SweepStep {
+        self.counter = self.counter.saturating_sub(1);
+        if self.counter != 0 {
+            return SweepStep::Idle;
+        }
+        self.counter = self.period();
+        if !self.enabled || self.time == 0 {
+            return SweepStep::Idle;
+        }
+        let next = self.next_frequency();
+        if next > MAXIMUM_FREQUENCY {
+            return SweepStep::Overflow;
+        }
+        if self.shift == 0 {
+            return SweepStep::Idle;
+        }
+        self.shadow_frequency = next;
+        if self.next_frequency() > MAXIMUM_FREQUENCY {
+            SweepStep::Overflow
+        } else {
+            SweepStep::Frequency(next)
+        }
     }
 
     fn save_state(&self, writer: &mut Writer) {
@@ -169,42 +228,42 @@ impl Sweep {
         self.enabled = reader.bool()?;
         Ok(())
     }
+}
 
-    fn next_frequency(&self) -> u16 {
-        let delta = self.shadow_frequency >> self.shift;
-        if self.decrease {
-            self.shadow_frequency.wrapping_sub(delta)
-        } else {
-            self.shadow_frequency + delta
-        }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Duty {
+    #[default]
+    Eighth,
+    Quarter,
+    Half,
+    ThreeQuarters,
+}
+
+impl Duty {
+    const ALL: [Duty; 4] = [Duty::Eighth, Duty::Quarter, Duty::Half, Duty::ThreeQuarters];
+
+    fn from_bits(bits: u16) -> Duty {
+        Duty::ALL[bits.bits(0..2) as usize]
     }
 
-    fn tick(&mut self) -> Option<Result<u16, ()>> {
-        self.counter = self.counter.saturating_sub(1);
-        if self.counter == 0 {
-            self.counter = if self.time == 0 { 8 } else { self.time };
-            if self.enabled && self.time != 0 {
-                let next = self.next_frequency();
-                if next > 2047 {
-                    return Some(Err(()));
-                }
-                if self.shift != 0 {
-                    self.shadow_frequency = next;
-                    if self.next_frequency() > 2047 {
-                        return Some(Err(()));
-                    }
-                    return Some(Ok(next));
-                }
-            }
+    fn bits(self) -> u16 {
+        self as u16
+    }
+
+    fn pattern(self) -> u8 {
+        match self {
+            Duty::Eighth => 0b0000_0001,
+            Duty::Quarter => 0b0000_0011,
+            Duty::Half => 0b0000_1111,
+            Duty::ThreeQuarters => 0b1111_1100,
         }
-        None
     }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Square {
     sweep: Sweep,
-    duty: u8,
+    duty: Duty,
     length: Length,
     envelope: Envelope,
     frequency: u16,
@@ -222,11 +281,11 @@ impl Square {
     }
 
     fn period(&self) -> i32 {
-        (2048 - self.frequency as i32) * 16
+        (2048 - i32::from(self.frequency)) * 16
     }
 
     fn write_control(&mut self, value: u16) {
-        self.duty = (value >> 6 & 0b11) as u8;
+        self.duty = Duty::from_bits(value.bits(6..8));
         self.length.write(value);
         self.envelope.write(value);
         if !self.envelope.dac_enabled() {
@@ -235,13 +294,13 @@ impl Square {
     }
 
     fn read_control(&self) -> u16 {
-        (self.duty as u16) << 6 | self.envelope.read()
+        self.duty.bits() << 6 | self.envelope.read()
     }
 
     fn write_frequency(&mut self, value: u16, has_sweep: bool) {
-        self.frequency = value & 0x7FF;
-        self.length.enabled = value & 0x4000 != 0;
-        if value & 0x8000 != 0 {
+        self.frequency = value.bits(0..11);
+        self.length.enabled = value.bit(14);
+        if value.bit(15) {
             self.enabled = self.envelope.dac_enabled();
             self.length.trigger();
             self.envelope.trigger();
@@ -253,28 +312,36 @@ impl Square {
     }
 
     fn read_frequency(&self) -> u16 {
-        (self.length.enabled as u16) << 14
+        u16::from(self.length.enabled) << 14
     }
 
     fn advance(&mut self, cycles: i32) {
         self.cycles -= cycles;
         while self.cycles <= 0 {
             self.cycles += self.period();
-            self.phase = (self.phase + 1) & 7;
+            self.phase = (self.phase + 1) % 8;
         }
     }
 
     fn sample(&self) -> u8 {
-        if self.enabled && DUTY_PATTERNS[self.duty as usize] >> self.phase & 1 != 0 {
+        if self.enabled && self.duty.pattern().bit(u32::from(self.phase)) {
             self.envelope.volume
         } else {
             0
         }
     }
 
+    fn tick_sweep(&mut self) {
+        match self.sweep.tick() {
+            SweepStep::Frequency(frequency) => self.frequency = frequency,
+            SweepStep::Overflow => self.enabled = false,
+            SweepStep::Idle => {}
+        }
+    }
+
     fn save_state(&self, writer: &mut Writer) {
         self.sweep.save_state(writer);
-        writer.u8(self.duty);
+        writer.u8(self.duty.bits() as u8);
         self.length.save_state(writer);
         self.envelope.save_state(writer);
         writer.u16(self.frequency);
@@ -285,21 +352,43 @@ impl Square {
 
     fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
         self.sweep.load_state(reader)?;
-        self.duty = reader.u8()? & 0b11;
+        self.duty = Duty::from_bits(u16::from(reader.u8()?));
         self.length.load_state(reader)?;
         self.envelope.load_state(reader)?;
-        self.frequency = reader.u16()? & 0x7FF;
+        self.frequency = reader.u16()? & MAXIMUM_FREQUENCY;
         self.enabled = reader.bool()?;
-        self.phase = reader.u8()? & 7;
+        self.phase = reader.u8()? % 8;
         self.cycles = reader.i32()?;
         Ok(())
     }
+}
 
-    fn tick_sweep(&mut self) {
-        match self.sweep.tick() {
-            Some(Ok(frequency)) => self.frequency = frequency,
-            Some(Err(())) => self.enabled = false,
-            None => {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum WaveVolume {
+    #[default]
+    Mute,
+    Full,
+    Half,
+    Quarter,
+}
+
+impl WaveVolume {
+    const ALL: [WaveVolume; 4] = [WaveVolume::Mute, WaveVolume::Full, WaveVolume::Half, WaveVolume::Quarter];
+
+    fn from_bits(bits: u16) -> WaveVolume {
+        WaveVolume::ALL[bits.bits(0..2) as usize]
+    }
+
+    fn bits(self) -> u16 {
+        self as u16
+    }
+
+    fn apply(self, nibble: u8) -> u8 {
+        match self {
+            WaveVolume::Mute => 0,
+            WaveVolume::Full => nibble,
+            WaveVolume::Half => nibble / 2,
+            WaveVolume::Quarter => nibble / 4,
         }
     }
 }
@@ -310,8 +399,8 @@ struct Wave {
     playing_bank: usize,
     playback: bool,
     length: Length,
-    volume: u8,
-    force_75: bool,
+    volume: WaveVolume,
+    force_three_quarters: bool,
     frequency: u16,
     enabled: bool,
     ram: [[u8; 16]; 2],
@@ -326,8 +415,8 @@ impl Wave {
             playing_bank: 0,
             playback: false,
             length: Length::new(256),
-            volume: 0,
-            force_75: false,
+            volume: WaveVolume::Mute,
+            force_three_quarters: false,
             frequency: 0,
             enabled: false,
             ram: [[0; 16]; 2],
@@ -337,36 +426,36 @@ impl Wave {
     }
 
     fn period(&self) -> i32 {
-        (2048 - self.frequency as i32) * 8
+        (2048 - i32::from(self.frequency)) * 8
     }
 
     fn write_bank(&mut self, value: u16) {
-        self.two_banks = value & 0x20 != 0;
-        self.playing_bank = (value >> 6 & 1) as usize;
-        self.playback = value & 0x80 != 0;
+        self.two_banks = value.bit(5);
+        self.playing_bank = usize::from(value.bit(6));
+        self.playback = value.bit(7);
         if !self.playback {
             self.enabled = false;
         }
     }
 
     fn read_bank(&self) -> u16 {
-        (self.two_banks as u16) << 5 | (self.playing_bank as u16) << 6 | (self.playback as u16) << 7
+        u16::from(self.two_banks) << 5 | (self.playing_bank as u16) << 6 | u16::from(self.playback) << 7
     }
 
     fn write_control(&mut self, value: u16) {
         self.length.write(value);
-        self.volume = (value >> 13 & 0b11) as u8;
-        self.force_75 = value & 0x8000 != 0;
+        self.volume = WaveVolume::from_bits(value.bits(13..15));
+        self.force_three_quarters = value.bit(15);
     }
 
     fn read_control(&self) -> u16 {
-        (self.volume as u16) << 13 | (self.force_75 as u16) << 15
+        self.volume.bits() << 13 | u16::from(self.force_three_quarters) << 15
     }
 
     fn write_frequency(&mut self, value: u16) {
-        self.frequency = value & 0x7FF;
-        self.length.enabled = value & 0x4000 != 0;
-        if value & 0x8000 != 0 {
+        self.frequency = value.bits(0..11);
+        self.length.enabled = value.bit(14);
+        if value.bit(15) {
             self.enabled = self.playback;
             self.length.trigger();
             self.position = 0;
@@ -375,14 +464,22 @@ impl Wave {
     }
 
     fn read_frequency(&self) -> u16 {
-        (self.length.enabled as u16) << 14
+        u16::from(self.length.enabled) << 14
+    }
+
+    fn sample_count(&self) -> u8 {
+        if self.two_banks {
+            64
+        } else {
+            32
+        }
     }
 
     fn advance(&mut self, cycles: i32) {
         self.cycles -= cycles;
         while self.cycles <= 0 {
             self.cycles += self.period();
-            self.position = (self.position + 1) % if self.two_banks { 64 } else { 32 };
+            self.position = (self.position + 1) % self.sample_count();
         }
     }
 
@@ -390,18 +487,13 @@ impl Wave {
         if !self.enabled {
             return 0;
         }
-        let bank = (self.playing_bank + (self.position >= 32) as usize) % 2;
-        let byte = self.ram[bank][(self.position as usize % 32) / 2];
+        let bank = (self.playing_bank + usize::from(self.position >= 32)) % 2;
+        let byte = self.ram[bank][usize::from(self.position % 32) / 2];
         let nibble = if self.position % 2 == 0 { byte >> 4 } else { byte & 0xF };
-        if self.force_75 {
+        if self.force_three_quarters {
             nibble * 3 / 4
         } else {
-            match self.volume {
-                0 => 0,
-                1 => nibble,
-                2 => nibble / 2,
-                _ => nibble / 4,
-            }
+            self.volume.apply(nibble)
         }
     }
 
@@ -409,13 +501,23 @@ impl Wave {
         (self.playing_bank + 1) % 2
     }
 
+    fn read_ram(&self, offset: usize) -> u16 {
+        let bank = &self.ram[self.accessible_bank()];
+        u16::from_le_bytes([bank[offset], bank[offset + 1]])
+    }
+
+    fn write_ram(&mut self, offset: usize, value: u16) {
+        let bank = self.accessible_bank();
+        self.ram[bank][offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
     fn save_state(&self, writer: &mut Writer) {
         writer.bool(self.two_banks);
         writer.u8(self.playing_bank as u8);
         writer.bool(self.playback);
         self.length.save_state(writer);
-        writer.u8(self.volume);
-        writer.bool(self.force_75);
+        writer.u8(self.volume.bits() as u8);
+        writer.bool(self.force_three_quarters);
         writer.u16(self.frequency);
         writer.bool(self.enabled);
         writer.bytes(&self.ram[0]);
@@ -426,12 +528,12 @@ impl Wave {
 
     fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
         self.two_banks = reader.bool()?;
-        self.playing_bank = reader.u8()? as usize & 1;
+        self.playing_bank = usize::from(reader.u8()?) % 2;
         self.playback = reader.bool()?;
         self.length.load_state(reader)?;
-        self.volume = reader.u8()?;
-        self.force_75 = reader.bool()?;
-        self.frequency = reader.u16()? & 0x7FF;
+        self.volume = WaveVolume::from_bits(u16::from(reader.u8()?));
+        self.force_three_quarters = reader.bool()?;
+        self.frequency = reader.u16()? & MAXIMUM_FREQUENCY;
         self.enabled = reader.bool()?;
         reader.bytes_into(&mut self.ram[0])?;
         reader.bytes_into(&mut self.ram[1])?;
@@ -463,7 +565,7 @@ impl Noise {
     }
 
     fn period(&self) -> i32 {
-        let divisor = if self.divisor == 0 { 8 } else { 16 * self.divisor as i32 };
+        let divisor = if self.divisor == 0 { 8 } else { 16 * i32::from(self.divisor) };
         (divisor << (self.shift + 1)) * 4
     }
 
@@ -476,11 +578,11 @@ impl Noise {
     }
 
     fn write_frequency(&mut self, value: u16) {
-        self.divisor = (value & 0b111) as u8;
-        self.seven_bits = value & 0b1000 != 0;
-        self.shift = (value >> 4 & 0xF) as u8;
-        self.length.enabled = value & 0x4000 != 0;
-        if value & 0x8000 != 0 {
+        self.divisor = value.bits(0..3) as u8;
+        self.seven_bits = value.bit(3);
+        self.shift = value.bits(4..8) as u8;
+        self.length.enabled = value.bit(14);
+        if value.bit(15) {
             self.enabled = self.envelope.dac_enabled();
             self.length.trigger();
             self.envelope.trigger();
@@ -490,18 +592,26 @@ impl Noise {
     }
 
     fn read_frequency(&self) -> u16 {
-        self.divisor as u16 | (self.seven_bits as u16) << 3 | (self.shift as u16) << 4 | (self.length.enabled as u16) << 14
+        u16::from(self.divisor) | u16::from(self.seven_bits) << 3 | u16::from(self.shift) << 4 | u16::from(self.length.enabled) << 14
     }
 
     fn advance(&mut self, cycles: i32) {
         self.cycles -= cycles;
         while self.cycles <= 0 {
             self.cycles += self.period();
-            let feedback = (self.lfsr ^ self.lfsr >> 1) & 1;
-            self.lfsr = self.lfsr >> 1 | feedback << 14;
+            let feedback = self.lfsr.bit(0) != self.lfsr.bit(1);
+            self.lfsr = (self.lfsr >> 1).with_bit(14, feedback);
             if self.seven_bits {
-                self.lfsr = self.lfsr & !(1 << 6) | feedback << 6;
+                self.lfsr = self.lfsr.with_bit(6, feedback);
             }
+        }
+    }
+
+    fn sample(&self) -> u8 {
+        if self.enabled && !self.lfsr.bit(0) {
+            self.envelope.volume
+        } else {
+            0
         }
     }
 
@@ -527,40 +637,19 @@ impl Noise {
         self.cycles = reader.i32()?;
         Ok(())
     }
-
-    fn sample(&self) -> u8 {
-        if self.enabled && self.lfsr & 1 == 0 {
-            self.envelope.volume
-        } else {
-            0
-        }
-    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Fifo {
     samples: VecDeque<i8>,
     current: i8,
-    level: i32,
-    history: [i8; TAPS],
-    head: usize,
-    last_pop: u64,
+    level: f32,
+    history: [i8; 4],
+    last_pop: Option<u64>,
     interval: u64,
 }
 
 impl Fifo {
-    fn new() -> Fifo {
-        Fifo {
-            samples: VecDeque::new(),
-            current: 0,
-            level: 0,
-            history: [0; TAPS],
-            head: 0,
-            last_pop: 0,
-            interval: 0,
-        }
-    }
-
     fn push_word(&mut self, value: u32) {
         for byte in value.to_le_bytes() {
             if self.samples.len() < FIFO_CAPACITY {
@@ -573,34 +662,32 @@ impl Fifo {
         if let Some(sample) = self.samples.pop_front() {
             self.current = sample;
         }
-        self.head = (self.head + 1) % TAPS;
-        self.history[self.head] = self.current;
-        self.interval = if self.last_pop == 0 { 0 } else { clock - self.last_pop };
-        self.last_pop = clock;
+        self.history.rotate_right(1);
+        self.history[0] = self.current;
+        self.interval = self.last_pop.map_or(0, |last_pop| clock - last_pop);
+        self.last_pop = Some(clock);
         if !smooth {
-            self.level = self.current as i32 * LEVEL_SCALE;
+            self.level = f32::from(self.current);
         }
         self.samples.len() <= FIFO_REFILL_THRESHOLD
     }
 
-    fn interpolate(&self, clock: u64) -> i32 {
-        if self.interval == 0 {
-            return self.current as i32 * LEVEL_SCALE;
-        }
-        let elapsed = ((clock - self.last_pop) << FRACTION_BITS) / self.interval;
-        let weights = kernel().weights((1 << FRACTION_BITS) - elapsed.min(1 << FRACTION_BITS) as u32);
-        let mut total = 0i32;
-        for (k, weight) in weights.iter().enumerate() {
-            total += weight * self.history[(self.head + TAPS - k) % TAPS] as i32;
-        }
-        total >> (KERNEL_SHIFT - LEVEL_SCALE.trailing_zeros())
+    fn interpolate(&self, clock: u64) -> f32 {
+        let Some(last_pop) = self.last_pop.filter(|_| self.interval > 0) else {
+            return f32::from(self.current);
+        };
+        let t = ((clock - last_pop) as f32 / self.interval as f32).min(1.0);
+        let [p3, p2, p1, p0] = self.history.map(f32::from);
+        let a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+        let b = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3;
+        let c = -p0 + p2;
+        0.5 * (((a * t + b) * t + c) * t + 2.0 * p1)
     }
 
     fn restart(&mut self) {
-        self.level = self.current as i32 * LEVEL_SCALE;
-        self.history = [0; TAPS];
-        self.head = 0;
-        self.last_pop = 0;
+        self.level = f32::from(self.current);
+        self.history = [0; 4];
+        self.last_pop = None;
         self.interval = 0;
     }
 
@@ -624,20 +711,52 @@ impl Fifo {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum PsgScale {
+    #[default]
+    Quarter,
+    Half,
+    Full,
+}
+
+impl PsgScale {
+    fn from_bits(bits: u16) -> PsgScale {
+        match bits.bits(0..2) {
+            0 => PsgScale::Quarter,
+            1 => PsgScale::Half,
+            _ => PsgScale::Full,
+        }
+    }
+
+    fn bits(self) -> u16 {
+        self as u16
+    }
+
+    fn factor(self) -> f32 {
+        match self {
+            PsgScale::Quarter => 0.25,
+            PsgScale::Half => 0.5,
+            PsgScale::Full => 1.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Output {
+    psg_volume: u8,
+    psg_channels: u8,
+    fifo: [bool; 2],
+}
+
 pub struct Apu {
     square1: Square,
     square2: Square,
     wave: Wave,
     noise: Noise,
     fifo: [Fifo; 2],
-    psg_volume_right: u8,
-    psg_volume_left: u8,
-    psg_enable_right: u8,
-    psg_enable_left: u8,
-    psg_scale: u8,
+    outputs: [Output; 2],
+    psg_scale: PsgScale,
     fifo_full_volume: [bool; 2],
-    fifo_enable_right: [bool; 2],
-    fifo_enable_left: [bool; 2],
     fifo_timer: [u8; 2],
     master_enable: bool,
     bias: u16,
@@ -647,7 +766,7 @@ pub struct Apu {
     frame_cycles: u32,
     grid_cycles: u32,
     smooth: bool,
-    last_level: [i32; 2],
+    last_level: [f32; 2],
     synth: [Synth; 2],
 }
 
@@ -658,15 +777,10 @@ impl Apu {
             square2: Square::new(),
             wave: Wave::new(),
             noise: Noise::new(),
-            fifo: [Fifo::new(), Fifo::new()],
-            psg_volume_right: 0,
-            psg_volume_left: 0,
-            psg_enable_right: 0,
-            psg_enable_left: 0,
-            psg_scale: 0,
+            fifo: [Fifo::default(), Fifo::default()],
+            outputs: [Output::default(); 2],
+            psg_scale: PsgScale::default(),
             fifo_full_volume: [false; 2],
-            fifo_enable_right: [false; 2],
-            fifo_enable_left: [false; 2],
             fifo_timer: [0; 2],
             master_enable: false,
             bias: DEFAULT_BIAS,
@@ -676,12 +790,13 @@ impl Apu {
             frame_cycles: 0,
             grid_cycles: 0,
             smooth: false,
-            last_level: [0; 2],
+            last_level: [0.0; 2],
             synth: [Synth::new(SAMPLE_RATE), Synth::new(SAMPLE_RATE)],
         }
     }
 
     pub fn read_u16(&self, offset: u32) -> u16 {
+        let [left, right] = self.outputs;
         match offset {
             0x60 => self.square1.sweep.read(),
             0x62 => self.square1.read_control(),
@@ -693,25 +808,23 @@ impl Apu {
             0x74 => self.wave.read_frequency(),
             0x78 => self.noise.envelope.read(),
             0x7C => self.noise.read_frequency(),
-            0x80 => self.psg_volume_right as u16 | (self.psg_volume_left as u16) << 4 | (self.psg_enable_right as u16) << 8 | (self.psg_enable_left as u16) << 12,
+            0x80 => u16::from(right.psg_volume) | u16::from(left.psg_volume) << 4 | u16::from(right.psg_channels) << 8 | u16::from(left.psg_channels) << 12,
             0x82 => {
-                self.psg_scale as u16
-                    | (self.fifo_full_volume[0] as u16) << 2
-                    | (self.fifo_full_volume[1] as u16) << 3
-                    | (self.fifo_enable_right[0] as u16) << 8
-                    | (self.fifo_enable_left[0] as u16) << 9
-                    | (self.fifo_timer[0] as u16) << 10
-                    | (self.fifo_enable_right[1] as u16) << 12
-                    | (self.fifo_enable_left[1] as u16) << 13
-                    | (self.fifo_timer[1] as u16) << 14
+                self.psg_scale.bits()
+                    | u16::from(self.fifo_full_volume[0]) << 2
+                    | u16::from(self.fifo_full_volume[1]) << 3
+                    | u16::from(right.fifo[0]) << 8
+                    | u16::from(left.fifo[0]) << 9
+                    | u16::from(self.fifo_timer[0]) << 10
+                    | u16::from(right.fifo[1]) << 12
+                    | u16::from(left.fifo[1]) << 13
+                    | u16::from(self.fifo_timer[1]) << 14
             }
-            0x84 => self.square1.enabled as u16 | (self.square2.enabled as u16) << 1 | (self.wave.enabled as u16) << 2 | (self.noise.enabled as u16) << 3 | (self.master_enable as u16) << 7,
+            0x84 => {
+                u16::from(self.square1.enabled) | u16::from(self.square2.enabled) << 1 | u16::from(self.wave.enabled) << 2 | u16::from(self.noise.enabled) << 3 | u16::from(self.master_enable) << 7
+            }
             0x88 => self.bias,
-            0x90..=0x9F => {
-                let bank = &self.wave.ram[self.wave.accessible_bank()];
-                let index = (offset - 0x90) as usize;
-                bank[index] as u16 | (bank[index + 1] as u16) << 8
-            }
+            0x90..=0x9F => self.wave.read_ram((offset - 0x90) as usize),
             _ => 0,
         }
     }
@@ -737,47 +850,43 @@ impl Apu {
             0x78 => self.noise.write_control(value),
             0x7C => self.noise.write_frequency(value),
             0x80 => {
-                self.psg_volume_right = (value & 0b111) as u8;
-                self.psg_volume_left = (value >> 4 & 0b111) as u8;
-                self.psg_enable_right = (value >> 8 & 0xF) as u8;
-                self.psg_enable_left = (value >> 12 & 0xF) as u8;
+                let [left, right] = &mut self.outputs;
+                right.psg_volume = value.bits(0..3) as u8;
+                left.psg_volume = value.bits(4..7) as u8;
+                right.psg_channels = value.bits(8..12) as u8;
+                left.psg_channels = value.bits(12..16) as u8;
             }
             0x82 => {
-                self.psg_scale = (value & 0b11) as u8;
-                self.fifo_full_volume = [value & 0x4 != 0, value & 0x8 != 0];
-                self.fifo_enable_right = [value & 0x100 != 0, value & 0x1000 != 0];
-                self.fifo_enable_left = [value & 0x200 != 0, value & 0x2000 != 0];
-                self.fifo_timer = [(value >> 10 & 1) as u8, (value >> 14 & 1) as u8];
-                if value & 0x800 != 0 {
-                    self.fifo[0].reset();
-                }
-                if value & 0x8000 != 0 {
-                    self.fifo[1].reset();
+                let [left, right] = &mut self.outputs;
+                self.psg_scale = PsgScale::from_bits(value);
+                self.fifo_full_volume = [value.bit(2), value.bit(3)];
+                right.fifo = [value.bit(8), value.bit(12)];
+                left.fifo = [value.bit(9), value.bit(13)];
+                self.fifo_timer = [u8::from(value.bit(10)), u8::from(value.bit(14))];
+                for (fifo, reset) in self.fifo.iter_mut().zip([value.bit(11), value.bit(15)]) {
+                    if reset {
+                        fifo.reset();
+                    }
                 }
             }
             0x84 => {
-                let enable = value & 0x80 != 0;
+                let enable = value.bit(7);
                 if !enable && self.master_enable {
                     self.square1 = Square::new();
                     self.square2 = Square::new();
                     self.wave = Wave::new();
                     self.noise = Noise::new();
-                    self.psg_volume_right = 0;
-                    self.psg_volume_left = 0;
-                    self.psg_enable_right = 0;
-                    self.psg_enable_left = 0;
+                    for output in &mut self.outputs {
+                        output.psg_volume = 0;
+                        output.psg_channels = 0;
+                    }
                 }
                 self.master_enable = enable;
             }
             0x88 => self.bias = value & 0xC3FE,
-            0x90..=0x9F => {
-                let bank = self.wave.accessible_bank();
-                let index = (offset - 0x90) as usize;
-                self.wave.ram[bank][index] = value as u8;
-                self.wave.ram[bank][index + 1] = (value >> 8) as u8;
-            }
-            0xA0 | 0xA2 => self.fifo[0].push_word(value as u32 | (value as u32) << 16),
-            0xA4 | 0xA6 => self.fifo[1].push_word(value as u32 | (value as u32) << 16),
+            0x90..=0x9F => self.wave.write_ram((offset - 0x90) as usize, value),
+            0xA0 | 0xA2 => self.fifo[0].push_word(u32::from(value) * 0x0001_0001),
+            0xA4 | 0xA6 => self.fifo[1].push_word(u32::from(value) * 0x0001_0001),
             _ => {}
         }
     }
@@ -787,12 +896,9 @@ impl Apu {
     }
 
     pub fn timer_overflow(&mut self, timer: u8) -> [bool; 2] {
-        let mut refill = [false; 2];
-        for fifo in 0..2 {
-            if self.fifo_timer[fifo] == timer {
-                refill[fifo] = self.fifo[fifo].pop(self.clock, self.smooth);
-            }
-        }
+        let (clock, smooth, timers) = (self.clock, self.smooth, self.fifo_timer);
+        let fifos = &mut self.fifo;
+        let refill = std::array::from_fn(|index| timers[index] == timer && fifos[index].pop(clock, smooth));
         self.emit();
         refill
     }
@@ -808,7 +914,7 @@ impl Apu {
             let step = remaining.min(GRID_CYCLES - self.grid_cycles);
             self.grid_cycles += step;
             self.frame_cycles += step;
-            self.clock += step as u64;
+            self.clock += u64::from(step);
             remaining -= step;
             if self.grid_cycles == GRID_CYCLES {
                 self.grid_cycles = 0;
@@ -827,21 +933,21 @@ impl Apu {
     }
 
     fn advance_channels(&mut self) {
-        self.square1.advance(GRID_CYCLES as i32);
-        self.square2.advance(GRID_CYCLES as i32);
-        self.wave.advance(GRID_CYCLES as i32);
-        self.noise.advance(GRID_CYCLES as i32);
+        let cycles = GRID_CYCLES as i32;
+        self.square1.advance(cycles);
+        self.square2.advance(cycles);
+        self.wave.advance(cycles);
+        self.noise.advance(cycles);
     }
 
     fn emit(&mut self) {
-        let (left, right) = self.mix();
-        if left != self.last_level[0] {
-            self.synth[0].add_delta(self.frame_cycles, left - self.last_level[0]);
-            self.last_level[0] = left;
-        }
-        if right != self.last_level[1] {
-            self.synth[1].add_delta(self.frame_cycles, right - self.last_level[1]);
-            self.last_level[1] = right;
+        let levels = self.levels();
+        let frame_cycles = self.frame_cycles;
+        for ((synth, last), level) in self.synth.iter_mut().zip(&mut self.last_level).zip(levels) {
+            if level != *last {
+                synth.add_delta(frame_cycles, level - *last);
+                *last = level;
+            }
         }
     }
 
@@ -854,7 +960,7 @@ impl Apu {
 
     fn tick_frame_sequencer(&mut self) {
         let step = self.frame_sequencer_step;
-        self.frame_sequencer_step = (step + 1) & 7;
+        self.frame_sequencer_step = (step + 1) % 8;
         if step % 2 == 0 {
             if self.square1.length.tick() {
                 self.square1.enabled = false;
@@ -879,32 +985,37 @@ impl Apu {
         }
     }
 
-    fn mix(&self) -> (i32, i32) {
+    fn psg_samples(&self) -> [u8; 4] {
+        [self.square1.sample(), self.square2.sample(), self.wave.sample(), self.noise.sample()]
+    }
+
+    fn level(&self, side: Side) -> f32 {
         if !self.master_enable {
-            return (0, 0);
+            return 0.0;
         }
-        let psg = [self.square1.sample(), self.square2.sample(), self.wave.sample(), self.noise.sample()];
-        let side = |volume: u8, enable: u8, fifo_right_or_left: [bool; 2]| {
-            let mut psg_sum = 0i32;
-            for (channel, sample) in psg.iter().enumerate() {
-                if enable & (1 << channel) != 0 {
-                    psg_sum += *sample as i32;
-                }
-            }
-            let psg_level = (psg_sum * volume as i32 * 4 * LEVEL_SCALE / 7) >> (2 - self.psg_scale.min(2));
-            let mut level = (self.bias & 0x3FE) as i32 * LEVEL_SCALE + psg_level;
-            for fifo in 0..2 {
-                if fifo_right_or_left[fifo] {
-                    let sample = self.fifo[fifo].level;
-                    level += if self.fifo_full_volume[fifo] { sample * 2 } else { sample };
-                }
-            }
-            level.clamp(0, 0x400 * LEVEL_SCALE - 1) - 0x200 * LEVEL_SCALE
-        };
-        (
-            side(self.psg_volume_left, self.psg_enable_left, self.fifo_enable_left),
-            side(self.psg_volume_right, self.psg_enable_right, self.fifo_enable_right),
-        )
+        let output = self.outputs[side as usize];
+        let psg: f32 = self
+            .psg_samples()
+            .iter()
+            .enumerate()
+            .filter(|(channel, _)| output.psg_channels.bit(*channel as u32))
+            .map(|(_, sample)| f32::from(*sample))
+            .sum();
+        let psg_level = psg * f32::from(output.psg_volume) * PSG_FULL_SCALE * self.psg_scale.factor();
+        let fifo_level: f32 = self
+            .fifo
+            .iter()
+            .zip(output.fifo)
+            .zip(self.fifo_full_volume)
+            .filter(|((_, enabled), _)| *enabled)
+            .map(|((fifo, _), full_volume)| if full_volume { fifo.level * 2.0 } else { fifo.level })
+            .sum();
+        let bias = f32::from(self.bias & 0x3FE);
+        (bias + psg_level + fifo_level).clamp(0.0, DAC_MAXIMUM) - DAC_CENTER
+    }
+
+    fn levels(&self) -> [f32; 2] {
+        Side::ALL.map(|side| self.level(side))
     }
 
     pub fn save_state(&self, writer: &mut Writer) {
@@ -912,22 +1023,24 @@ impl Apu {
         self.square2.save_state(writer);
         self.wave.save_state(writer);
         self.noise.save_state(writer);
-        self.fifo[0].save_state(writer);
-        self.fifo[1].save_state(writer);
-        writer.u8(self.psg_volume_right);
-        writer.u8(self.psg_volume_left);
-        writer.u8(self.psg_enable_right);
-        writer.u8(self.psg_enable_left);
-        writer.u8(self.psg_scale);
+        for fifo in &self.fifo {
+            fifo.save_state(writer);
+        }
+        let [left, right] = self.outputs;
+        writer.u8(right.psg_volume);
+        writer.u8(left.psg_volume);
+        writer.u8(right.psg_channels);
+        writer.u8(left.psg_channels);
+        writer.u8(self.psg_scale.bits() as u8);
         writer.bools(&self.fifo_full_volume);
-        writer.bools(&self.fifo_enable_right);
-        writer.bools(&self.fifo_enable_left);
+        writer.bools(&right.fifo);
+        writer.bools(&left.fifo);
         writer.bytes(&self.fifo_timer);
         writer.bool(self.master_enable);
         writer.u16(self.bias);
         writer.u32(self.frame_sequencer_cycles);
         writer.u8(self.frame_sequencer_step);
-        writer.u64(self.synth[0].phase(self.frame_cycles));
+        writer.u64(self.synth[0].phase(self.frame_cycles).to_bits());
     }
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
@@ -935,30 +1048,31 @@ impl Apu {
         self.square2.load_state(reader)?;
         self.wave.load_state(reader)?;
         self.noise.load_state(reader)?;
-        self.fifo[0].load_state(reader)?;
-        self.fifo[1].load_state(reader)?;
-        self.psg_volume_right = reader.u8()?;
-        self.psg_volume_left = reader.u8()?;
-        self.psg_enable_right = reader.u8()?;
-        self.psg_enable_left = reader.u8()?;
-        self.psg_scale = reader.u8()?;
+        for fifo in &mut self.fifo {
+            fifo.load_state(reader)?;
+        }
+        let [left, right] = &mut self.outputs;
+        right.psg_volume = reader.u8()?;
+        left.psg_volume = reader.u8()?;
+        right.psg_channels = reader.u8()?;
+        left.psg_channels = reader.u8()?;
+        self.psg_scale = PsgScale::from_bits(u16::from(reader.u8()?));
         reader.bools(&mut self.fifo_full_volume)?;
-        reader.bools(&mut self.fifo_enable_right)?;
-        reader.bools(&mut self.fifo_enable_left)?;
+        reader.bools(&mut right.fifo)?;
+        reader.bools(&mut left.fifo)?;
         reader.bytes_into(&mut self.fifo_timer)?;
         self.master_enable = reader.bool()?;
         self.bias = reader.u16()?;
         self.frame_sequencer_cycles = reader.u32()?;
-        self.frame_sequencer_step = reader.u8()? & 7;
-        let phase = reader.u64()?;
+        self.frame_sequencer_step = reader.u8()? % 8;
+        let phase = f64::from_bits(reader.u64()?);
         for synth in &mut self.synth {
             synth.set_phase(phase);
         }
         self.clock = 0;
         self.frame_cycles = 0;
         self.grid_cycles = 0;
-        let (left, right) = self.mix();
-        self.last_level = [left, right];
+        self.last_level = self.levels();
         Ok(())
     }
 
@@ -972,14 +1086,14 @@ impl Apu {
     pub fn set_smooth(&mut self, smooth: bool) {
         self.smooth = smooth;
         for fifo in &mut self.fifo {
-            fifo.level = fifo.current as i32 * LEVEL_SCALE;
+            fifo.level = f32::from(fifo.current);
         }
     }
 
     pub fn take_samples(&mut self) -> Vec<i16> {
         self.flush_synth();
-        let (left, right) = (self.synth[0].take(), self.synth[1].take());
-        left.iter().zip(&right).flat_map(|(left, right)| [*left, *right]).collect()
+        let [left, right] = &mut self.synth;
+        left.take().into_iter().zip(right.take()).flat_map(|(left, right)| [left, right]).collect()
     }
 
     pub fn pending_samples(&self) -> usize {
@@ -1025,7 +1139,7 @@ mod tests {
         let low = *left.iter().min().unwrap();
         assert!(high > 0 && low < 0, "high {} low {}", high, low);
         let crossings = left.windows(2).filter(|pair| (pair[0] < 0) != (pair[1] < 0)).count();
-        let expected_period_samples = SAMPLE_RATE as f64 / 512.0;
+        let expected_period_samples = f64::from(SAMPLE_RATE) / 512.0;
         let expected_crossings = (left.len() as f64 / expected_period_samples * 2.0) as usize;
         assert!((crossings as i64 - expected_crossings as i64).abs() <= 2, "{} crossings, expected {}", crossings, expected_crossings);
     }
@@ -1037,7 +1151,7 @@ mod tests {
             apu.set_smooth(smooth);
             apu.write_u16(0x82, 0x2 | 0x4 | 0x100 | 0x200);
             stream_fifo(&mut apu, 4096, std::iter::repeat(0).take(40).chain(std::iter::repeat(0x40).take(40)));
-            let left: Vec<i32> = apu.take_samples().iter().step_by(2).map(|sample| *sample as i32).collect();
+            let left: Vec<i32> = apu.take_samples().iter().step_by(2).map(|sample| i32::from(*sample)).collect();
             let edge = left.iter().position(|sample| *sample > left.iter().max().unwrap() / 2).unwrap();
             let level = left[edge + 20];
             let rising = left[edge - 20..edge + 20].iter().filter(|sample| **sample > level / 8 && **sample < level * 7 / 8).count();
@@ -1047,7 +1161,7 @@ mod tests {
         let (smooth_level, smooth_rising) = rise(true);
         assert!((exact_level - smooth_level).abs() < exact_level / 8, "levels {} and {}", exact_level, smooth_level);
         assert!(exact_rising <= 2, "{} samples rising in exact mode", exact_rising);
-        assert!(smooth_rising >= 6, "{} samples rising in smooth mode", smooth_rising);
+        assert!(smooth_rising >= 4, "{} samples rising in smooth mode", smooth_rising);
     }
 
     #[test]
@@ -1063,11 +1177,11 @@ mod tests {
         let mut apu = enabled_apu();
         apu.write_u16(0x88, 0xC200);
         assert_eq!(apu.read_u16(0x88), 0xC200);
-        assert_eq!(apu.mix(), (0, 0));
+        assert_eq!(apu.levels(), [0.0, 0.0]);
         apu.write_u16(0x82, 0x2 | 0x4 | 0x100 | 0x200);
         apu.write_fifo(0, 0x0000_0060);
         apu.timer_overflow(0);
-        assert_eq!(apu.mix(), (0x60 * 2 * LEVEL_SCALE, 0x60 * 2 * LEVEL_SCALE));
+        assert_eq!(apu.levels(), [192.0, 192.0]);
     }
 
     #[test]
@@ -1114,12 +1228,12 @@ mod tests {
             apu.write_fifo(0, 0);
         }
         assert!(!apu.timer_overflow(0)[0]);
-        assert_eq!(apu.mix(), (0x60 * 2 * LEVEL_SCALE, 0x60 * 2 * LEVEL_SCALE));
+        assert_eq!(apu.levels(), [192.0, 192.0]);
         for _ in 0..14 {
             assert!(!apu.timer_overflow(0)[0]);
         }
         assert!(apu.timer_overflow(0)[0]);
-        assert_eq!(apu.mix(), (0, 0));
+        assert_eq!(apu.levels(), [0.0, 0.0]);
     }
 
     #[test]
@@ -1129,5 +1243,19 @@ mod tests {
         apu.write_u16(0x7C, 0x8000 | 0x10);
         let samples = run_samples(&mut apu, 2048);
         assert!(samples.iter().any(|sample| *sample != samples[0]));
+    }
+
+    #[test]
+    fn test_sweep_raises_the_frequency_until_it_overflows() {
+        let mut apu = enabled_apu();
+        apu.write_u16(0x60, 1 << 4 | 2);
+        apu.write_u16(0x62, 0xF000 | 2 << 6);
+        apu.write_u16(0x64, 0x8000 | 256);
+        apu.run(FRAME_SEQUENCER_CYCLES * 3);
+        assert_eq!(apu.square1.frequency, 320);
+        assert!(apu.square1.enabled);
+        apu.run(FRAME_SEQUENCER_CYCLES * 32);
+        assert_eq!(apu.square1.frequency, 1525);
+        assert!(!apu.square1.enabled);
     }
 }

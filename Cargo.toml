@@ -13,14 +13,13 @@ required-features = ["frontend"]
 
 [features]
 default = ["frontend"]
-frontend = ["dep:winit", "dep:softbuffer", "dep:cpal", "dep:rfd"]
+frontend = ["dep:winit", "dep:softbuffer", "dep:cpal"]
 
 [dependencies]
 winit = { version = "0.30", optional = true }
 softbuffer = { version = "0.4", optional = true }
 cpal = { version = "0.18", optional = true }
-rfd = { version = "0.17", optional = true }
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["png"] }
 seq-macro = "0.3"
 
 [profile.dev]

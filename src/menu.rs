@@ -2,7 +2,11 @@ use crate::config::{key_label, Settings};
 use crate::font::{glyph, GLYPH_HEIGHT, GLYPH_WIDTH};
 use gbae::system::memory::Key;
 use gbae::system::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
+use std::path::{Path, PathBuf};
 use winit::keyboard::KeyCode;
+
+const VISIBLE_FILES: usize = 9;
+const LINE_WIDTH: usize = 24;
 
 const TEXT: [u8; 3] = [235, 235, 235];
 const HIGHLIGHT: [u8; 3] = [255, 200, 60];
@@ -13,14 +17,14 @@ const BORDER: [u8; 3] = [90, 90, 110];
 const MAIN_ITEMS: [&str; 7] = ["Resume", "Reset", "Save state", "Load state", "Load ROM...", "Settings", "Quit"];
 const SETTINGS_ITEMS: [&str; 4] = ["Volume", "Speed", "Controls...", "Back"];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     None,
     Close,
     Reset,
     SaveState,
     LoadState,
-    LoadRom,
+    LoadRom(PathBuf),
     Quit,
     SettingsChanged,
 }
@@ -30,6 +34,13 @@ enum Screen {
     Main,
     Settings,
     Controls,
+    Files,
+}
+
+struct FileEntry {
+    name: String,
+    path: PathBuf,
+    is_directory: bool,
 }
 
 pub struct Menu {
@@ -37,6 +48,8 @@ pub struct Menu {
     screen: Screen,
     index: usize,
     capturing: Option<Key>,
+    directory: PathBuf,
+    entries: Vec<FileEntry>,
 }
 
 impl Menu {
@@ -46,6 +59,8 @@ impl Menu {
             screen: Screen::Main,
             index: 0,
             capturing: None,
+            directory: PathBuf::new(),
+            entries: Vec::new(),
         }
     }
 
@@ -54,6 +69,18 @@ impl Menu {
         self.screen = Screen::Main;
         self.index = 0;
         self.capturing = None;
+    }
+
+    pub fn set_directory(&mut self, directory: &Path) {
+        self.directory = directory.to_path_buf();
+    }
+
+    pub fn browse(&mut self, directory: &Path) {
+        self.open = true;
+        self.screen = Screen::Files;
+        self.index = 0;
+        self.directory = directory.to_path_buf();
+        self.entries = list_directory(directory);
     }
 
     pub fn key(&mut self, code: KeyCode, settings: &mut Settings) -> Action {
@@ -66,6 +93,7 @@ impl Menu {
             Screen::Main => MAIN_ITEMS.len(),
             Screen::Settings => SETTINGS_ITEMS.len(),
             Screen::Controls => Key::ALL.len() + 1,
+            Screen::Files => self.entries.len().max(1),
         };
         match code {
             KeyCode::ArrowUp => self.index = (self.index + item_count - 1) % item_count,
@@ -102,7 +130,11 @@ impl Menu {
                 1 => Action::Reset,
                 2 => Action::SaveState,
                 3 => Action::LoadState,
-                4 => Action::LoadRom,
+                4 => {
+                    let directory = self.directory.clone();
+                    self.browse(&directory);
+                    Action::None
+                }
                 5 => {
                     self.screen = Screen::Settings;
                     self.index = 0;
@@ -127,6 +159,15 @@ impl Menu {
                     self.back()
                 }
             }
+            Screen::Files => match self.entries.get(self.index) {
+                Some(entry) if entry.is_directory => {
+                    let path = entry.path.clone();
+                    self.browse(&path);
+                    Action::None
+                }
+                Some(entry) => Action::LoadRom(entry.path.clone()),
+                None => Action::None,
+            },
         }
     }
 
@@ -141,6 +182,11 @@ impl Menu {
             Screen::Controls => {
                 self.screen = Screen::Settings;
                 self.index = 2;
+                Action::None
+            }
+            Screen::Files => {
+                self.screen = Screen::Main;
+                self.index = 4;
                 Action::None
             }
         }
@@ -190,7 +236,63 @@ impl Menu {
                 lines.push(("Back".to_string(), self.index == Key::ALL.len(), true));
                 ("Controls", lines)
             }
+            Screen::Files => {
+                let first = self.index.saturating_sub(VISIBLE_FILES - 1).min(self.entries.len().saturating_sub(VISIBLE_FILES));
+                let lines = self
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .skip(first)
+                    .take(VISIBLE_FILES)
+                    .map(|(i, entry)| (truncate(&entry.name, LINE_WIDTH), i == self.index, !entry.is_directory))
+                    .collect();
+                ("Load ROM", lines)
+            }
         }
+    }
+}
+
+fn list_directory(directory: &Path) -> Vec<FileEntry> {
+    let mut directories = Vec::new();
+    let mut roms = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(directory) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            if path.is_dir() {
+                directories.push(FileEntry {
+                    name: format!("{}/", name),
+                    path,
+                    is_directory: true,
+                });
+            } else if path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("gba")) {
+                roms.push(FileEntry { name, path, is_directory: false });
+            }
+        }
+    }
+    directories.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    roms.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    let mut entries = Vec::new();
+    if let Some(parent) = directory.parent() {
+        entries.push(FileEntry {
+            name: "../".to_string(),
+            path: parent.to_path_buf(),
+            is_directory: true,
+        });
+    }
+    entries.extend(directories);
+    entries.extend(roms);
+    entries
+}
+
+fn truncate(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        text.to_string()
+    } else {
+        format!("{}~", text.chars().take(width - 1).collect::<String>())
     }
 }
 

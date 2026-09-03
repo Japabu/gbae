@@ -1,269 +1,106 @@
-# Architecture Overview
+# Architecture
 
-## Design Philosophy
+## Crate layout
 
-**Simplicity and cleanliness**: The entire emulator is a single binary with MCP functionality built-in. No complex multi-crate setup, no stdio redirection - just a clean WebSocket server.
+`gbae` is a library crate with the emulator core and an optional binary
+(feature `frontend`) that puts a window, audio and input around it. Tests and
+examples use the library headlessly through `system::gba::Gba`.
 
-## Structure
+## The machine
 
-```
-gbae/
-├── src/
-│   ├── main.rs           # 96 lines - Entry point, emulator loop
-│   ├── mcp.rs            # 415 lines - Complete MCP server
-│   ├── debugger.rs       # 83 lines - Clean command execution
-│   ├── system/           # Emulator core
-│   │   ├── cpu.rs
-│   │   ├── memory.rs
-│   │   ├── ppu.rs
-│   │   └── ...
-│   └── ...
-├── Cargo.toml            # Single package, no workspace
-├── README.md             # Complete documentation
-└── ARCHITECTURE.md       # This file
-```
+`Gba` owns the `CPU`, the `Memory` and the `PPU` and drives them from a small
+scheduler. `step()` runs one instruction (or, while the CPU is halted, jumps to
+the next event) and then advances timers, the APU and DMA by the cycles that
+passed. Two events exist per scanline: the start of HBlank at cycle 960, where
+the line is rendered and HBlank DMA and IRQs fire, and the start of the next
+line at cycle 1232, where VCOUNT, DISPSTAT flags, VBlank IRQ and VBlank DMA
+are handled.
 
-## MCP Implementation
+## Instructions
 
-### Transport: WebSocket
+Every instruction family lives in one file under `system/instructions`
+(`data_processing`, `load_store`, `load_store_multiple`, `branch`, `multiply`,
+`ctrl_ext`, `swi`). Each file has a plain data struct, `decode_*` functions
+that build it from an instruction word, an `execute` method and a
+`disassemble` method. `instructions/mod.rs` gathers the structs in `enum
+Instruction`, and `decode_arm` / `decode_thumb` there are the only place where
+the encoding is described: a table of bit patterns such as `"000xxxxx 1xx1"`
+that a const fn turns into masks at compile time.
 
-**Why WebSocket over stdio?**
+Dispatch is constant-time. `lut.rs` builds two static tables,
+`ARM_LUT[4096]` indexed by instruction bits 27-20 and 7-4, and
+`THUMB_LUT[1024]` indexed by bits 15-6. Entry `i` is `execute_arm::<i>`, a
+generic function that puts the index bits back into the instruction word and
+calls the ordinary decoder and executor. Because the index is a compile-time
+constant the compiler folds the pattern table and the decoded fields, so each
+entry ends up as a specialised handler without a second description of the
+instruction anywhere.
 
-1. **Hot reloading**: Restart emulator without restarting Claude Code
-2. **Network flexibility**: Can run emulator remotely
-3. **Clean separation**: No process spawning, no pipe management
-4. **Stateless**: Connection can drop and reconnect freely
+## CPU
 
-### Protocol: JSON-RPC 2.0
+`cpu.rs` keeps the current register file as a flat array and swaps the banked
+registers in and out when the mode changes, so register access is an array
+index. It models the two-stage fetch pipeline (`pipeline: [u32; 2]`), which is
+what makes self-modifying code, BIOS read protection and PC-relative values
+behave like the hardware. Condition codes are checked with a 16-entry table.
+The CPU only counts cycles that `Memory` reports.
 
-Simple and standard. Example request:
+## Memory and timing
 
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "step",
-    "arguments": {"count": 10}
-  },
-  "id": 1
-}
-```
+`memory.rs` maps addresses with `decode_address` into concrete buffers. CPU
+accesses go through `fetch_*`, `load_*` and `store_*`, which charge cycles by
+region, width and sequentiality, decode WAITCNT for ROM and SRAM, and model the
+ROM prefetch buffer. Plain `read_*` / `write_*` are untimed and used by DMA,
+the PPU, the debugger tools and tests. Instructions add their internal cycles
+through `Memory::idle`, DMA transfers stall the CPU by their documented cost,
+and unmapped or protected reads return the last prefetched opcode.
 
-### Tools (6 total)
+IO registers are a struct with one direct `match` per access width; timers
+keep a budget of cycles until the next possible overflow so that they are only
+recomputed when it matters; DMA channels latch their addresses on enable and
+run on immediate, VBlank, HBlank or FIFO triggers.
 
-All tools follow the same pattern:
-1. Parse arguments from JSON
-2. Send command through channel
-3. Await response
-4. Format as MCP result
+## PPU
 
-```rust
-DebugCommand → Channel → Debugger → CPU/Memory
-                            ↓
-                    DebugResponse → JSON
-```
+`ppu.rs` renders one scanline at a time into per-layer line buffers: text
+backgrounds with scrolling, sizes, flips and mosaic; affine backgrounds; the
+bitmap modes through the same affine transform; sprites with all shapes,
+affine and double-size modes, both mapping modes, the OBJ window, the per-line
+cycle budget and mosaic. Composition takes the two topmost visible layers per
+pixel according to a per-line priority order, applies window rules and colour
+effects, and writes RGB888 into the framebuffer.
 
-## Emulator Flow
+## APU
 
-### Startup Sequence
+`apu.rs` owns the sound registers. The PSG channels advance by elapsed cycles
+between output samples, a 512 Hz frame sequencer drives length, envelope and
+sweep, the two FIFOs pop a sample on their timer's overflow and ask `Memory`
+for a DMA refill when half empty, and the mixer applies volumes and SOUNDBIAS.
+Output is 48 kHz stereo, taken by the frontend once per frame.
 
-```rust
-main() → tokio::Runtime
-  ↓
-run_emulator()
-  ↓
-  ├─→ spawn MCP server (port 3000)
-  └─→ run_headless()
-        ↓
-        ├─→ Initialize CPU, Memory, PPU
-        ├─→ Start HALTED
-        └─→ loop:
-              ├─→ handle_mcp_commands() (non-blocking)
-              └─→ if running: cpu.cycle()
-```
+## Saves, RTC, states
 
-### State Management
+`save.rs` detects the save type from the ROM's ID string and implements SRAM,
+64K and 128K flash command sets and the serial EEPROM protocol. `rtc.rs`
+exposes the cartridge GPIO pins with an S-3511 clock behind them, fed with the
+host time by the frontend. `state.rs` is a tiny versioned binary format; every
+component has `save_state` / `load_state`, and a state records the ROM length
+and hash so it is only applied to the same game.
 
-- **Halted by default**: Emulator starts paused
-- **Command-driven**: All execution controlled via MCP
-- **Non-blocking**: MCP commands processed between CPU cycles
+## Frontend
 
-## Key Design Decisions
+`main.rs` runs the emulator on the winit event loop, paced to the GBA frame
+rate (or unthrottled in turbo), presents the frame through `softbuffer` with
+integer scaling, forwards keyboard events through the configurable mapping,
+streams audio through `cpal` and writes `.sav` files when the game changes its
+save data. `menu.rs` draws the Escape menu into the frame with the bitmap font
+in `font.rs`; `config.rs` reads and writes `gbae.cfg`.
 
-### 1. Single Binary
+## Testing
 
-**Rationale**: No need for workspace complexity. Everything in one place.
-
-**Benefits**:
-- Simpler build process
-- Easier to understand
-- No version mismatches
-- Faster compilation
-
-### 2. Network-Based MCP
-
-**Rationale**: stdio-based MCP can't be reloaded without restarting the parent process.
-
-**Benefits**:
-- Hot reload workflow
-- Independent processes
-- Better debugging
-- Network transparency
-
-### 3. Halted Start
-
-**Rationale**: Claude needs to inspect state before execution begins.
-
-**Benefits**:
-- Inspect initial CPU state
-- Set up observations
-- Controlled execution
-- No race conditions
-
-### 4. Headless Operation
-
-**Rationale**: Focus on autonomous debugging, not interactive play.
-
-**Benefits**:
-- Simpler code
-- Faster execution
-- Better for CI/CD
-- Less dependencies
-
-## Communication Flow
-
-```
-┌─────────────┐                    ┌──────────────┐
-│ Claude Code │◄──WebSocket (JSON)─┤ MCP Server   │
-└─────────────┘                    │ (Axum)       │
-                                   └──────┬───────┘
-                                          │
-                                   ┌──────▼───────┐
-                                   │ Command      │
-                                   │ Channel      │
-                                   │ (mpsc)       │
-                                   └──────┬───────┘
-                                          │
-                                   ┌──────▼───────┐
-                                   │ Debugger     │
-                                   │              │
-                                   └──────┬───────┘
-                                          │
-                         ┌────────────────┼────────────────┐
-                         ▼                ▼                ▼
-                    ┌────────┐      ┌─────────┐      ┌────────┐
-                    │  CPU   │      │ Memory  │      │  PPU   │
-                    └────────┘      └─────────┘      └────────┘
-```
-
-## Future Enhancements
-
-Potential additions (maintaining simplicity):
-
-### High Priority
-- [ ] Screenshot tool (return framebuffer as base64 PNG)
-- [ ] Halt/pause tool (stop execution)
-- [ ] Breakpoint support (halt at address)
-
-### Medium Priority
-- [ ] Memory write tool
-- [ ] Register write tool
-- [ ] Execution speed control
-
-### Low Priority
-- [ ] Async event notifications (register changes, breakpoints hit)
-- [ ] Display mode (optional GUI)
-- [ ] Recording/playback
-
-## Code Quality
-
-### Current State
-- **Clean separation**: MCP, Debugger, Emulator are independent
-- **Minimal dependencies**: Only what's needed
-- **Type safety**: Strong typing throughout
-- **Error handling**: Result types, no panics in MCP layer
-
-### Metrics
-- **Main binary**: ~400 lines (mcp.rs) + ~100 lines (main.rs/debugger.rs)
-- **Dependencies**: 16 (down from 20+ with separate crates)
-- **Build time**: <20s release, <2s dev
-- **Binary size**: ~12MB debug, ~5MB release
-
-## Testing Strategy
-
-### Manual Testing
-1. Start emulator: `cargo run`
-2. Connect Claude Code
-3. Use tools to verify functionality
-
-### Future: Integration Tests
-- Mock WebSocket client
-- Test each tool
-- Verify command flow
-- Test error cases
-
-## Performance Considerations
-
-### Non-Blocking Design
-- MCP commands don't block emulation
-- Commands processed between cycles
-- Responses sent asynchronously
-
-### Memory Efficiency
-- Shared framebuffer (Arc<RwLock>)
-- Command channel (unbounded, minimal overhead)
-- No polling loops
-
-### CPU Usage
-- Sleep when halted (10ms intervals)
-- Run full speed when executing
-- WebSocket is event-driven
-
-## Comparison: Before vs After
-
-### Before (3-crate workspace)
-```
-gbae/
-├── src/lib.rs (re-exports)
-├── src/main.rs (complex modes)
-├── ipc/
-│   ├── Cargo.toml
-│   └── src/lib.rs (types only)
-└── mcp-server/
-    ├── Cargo.toml
-    ├── src/lib.rs (rmcp integration)
-    └── src/main.rs (stdio transport)
-```
-
-**Issues**:
-- Complex workspace setup
-- stdio transport (no hot reload)
-- 3 separate crates
-- Re-export confusion
-
-### After (single binary)
-```
-gbae/
-├── src/
-│   ├── main.rs (clean startup)
-│   ├── mcp.rs (self-contained)
-│   └── debugger.rs (simple)
-└── Cargo.toml (single package)
-```
-
-**Benefits**:
-- One package, one binary
-- WebSocket transport (hot reload!)
-- Self-contained MCP implementation
-- Clean, understandable structure
-
-## Summary
-
-This architecture prioritizes:
-1. **Simplicity**: Everything in one binary
-2. **Hot reload**: Network-based MCP
-3. **Cleanliness**: Minimal, focused code
-4. **Autonomy**: Designed for Claude Code's autonomous debugging workflow
-
-The result is a ~500 line addition to the emulator that provides full MCP debugging capabilities with hot reload support.
+Unit tests sit next to the code. `tests/` holds integration tests that drive
+the headless machine: PPU behaviour against expected pixels and golden PNGs,
+DMA and timer semantics, cycle counts from the ARM7TDMI datasheet, saves,
+audio, input, save states, and boot goldens for the official BIOS and Pokémon
+Emerald. `tests/roms.rs` runs jsmolka's gba-tests and FuzzARM and compares the
+final screen with recorded pass screens.

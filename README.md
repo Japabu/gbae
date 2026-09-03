@@ -1,123 +1,79 @@
-# GBA Emulator with MCP Support
+# gbae
 
-A Game Boy Advance emulator with built-in Model Context Protocol (MCP) server for autonomous debugging with Claude Code.
+A Game Boy Advance emulator in Rust.
 
-## Quick Start
+The core (`gbae` library) is a cycle-counting ARM7TDMI, the full GBA memory
+map with wait states and the ROM prefetch buffer, a scanline PPU with every
+background mode, sprites, windows and colour effects, the four PSG channels
+plus Direct Sound, DMA and timers, flash/SRAM/EEPROM saves and the cartridge
+real-time clock. It has no dependencies of its own beyond `seq-macro`.
 
-```bash
-# Run the emulator (starts with MCP server on port 3000)
-cargo run
+The window build adds `winit`, `softbuffer` and `cpal` and nothing else.
 
-# Use custom port
-GBA_MCP_PORT=3001 cargo run
+## Running
+
+```
+cargo run --release              # loads gba_bios.bin and rom.gba from the current directory
+cargo run --release -- game.gba  # or a specific ROM
+GBA_BIOS=path/to/bios.bin cargo run --release
 ```
 
-The emulator will:
-- Load `gba_bios.bin` and `rom.gba` from the current directory
-- Start in **HALTED** state (no execution)
-- Start MCP WebSocket server on `ws://127.0.0.1:3000/mcp` (or custom port)
+Without a ROM the Escape menu opens on a file browser.
 
-## Architecture
+Default controls (change them in the menu, saved to `gbae.cfg`):
 
-### Clean and Simple Design
+| GBA | key |
+|---|---|
+| D-pad | arrow keys |
+| A / B | Z / X |
+| L / R | A / S |
+| Start / Select | Enter / Backspace |
+| menu | Escape |
 
-The emulator is a single binary with all MCP functionality built-in:
+The Escape menu offers resume, reset, save state, load state, a ROM browser,
+volume, turbo speed and key mapping. Save data is written to `<rom>.sav` next
+to the ROM, save states to `<rom>.state`.
 
-- **No external crates**: All MCP code is in `src/mcp.rs`
-- **WebSocket-based**: Uses Axum for clean WebSocket transport
-- **Stateless connection**: Kill and restart emulator anytime, Claude Code reconnects automatically
-- **Headless operation**: No display, pure debugging focus
+## Tests
 
-### Hot Reloading Workflow
-
-1. Run emulator: `cargo run`
-2. Claude Code connects via WebSocket
-3. Make code changes
-4. Kill emulator (Ctrl+C)
-5. Run again: `cargo run`
-6. Claude Code auto-reconnects with new tools available!
-
-## MCP Tools
-
-The emulator provides 6 debugging tools through MCP:
-
-### `continue_execution`
-Resume execution from halted state.
-
-### `step`
-Step forward by N instructions (default: 1).
-
-### `read_memory`
-Read memory at an address (hex format like "0x06000000").
-
-### `read_register`
-Read a CPU register (0-15, or "pc", "sp", "lr").
-
-### `get_cpu_state`
-Get all CPU registers and CPSR.
-
-### `read_palette`
-Read palette RAM (first 32 colors shown).
-
-## Claude Code Setup
-
-The emulator uses a **network-based MCP connection** instead of stdio, which allows hot reloading.
-
-Add to your MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "gba-debugger": {
-      "transport": "websocket",
-      "url": "ws://127.0.0.1:3000/mcp"
-    }
-  }
-}
+```
+cargo test --no-default-features                       # unit and integration tests, fast
+cargo test --release --test boot -- --ignored          # boots Pokémon Emerald to the copyright screen
+cargo test --release --test roms -- --ignored          # jsmolka's gba-tests and FuzzARM, needs tests/roms
 ```
 
-## Features
+The golden-frame tests compare rendered frames with PNGs in `tests/golden`;
+run with `UPDATE_GOLDEN=1` to re-record after checking the new image. The ROM
+suites expect the ROMs under `tests/roms/jsmolka` and `tests/roms/fuzzarm`
+(both projects publish the prebuilt `.gba` files on GitHub).
 
-- ARM7TDMI CPU emulation
-  - ARM and Thumb instruction sets
-  - CPU modes and banked registers
-  - Condition code flags
-- Memory system
-  - BIOS ROM, Work RAM, VRAM, Palette RAM
-  - Memory-mapped I/O registers
-  - Game ROM (cartridge) support
-- Picture Processing Unit (PPU)
-  - Mode 0 background rendering
-  - 4bpp tile support
-- MCP Server
-  - WebSocket transport for hot reloading
-  - 6 debugging tools
-  - JSON-RPC 2.0 protocol
+Headless tools in `examples/`:
 
-## Building
-
-```bash
-cargo build
-cargo build --release
+```
+cargo run --release --example render -- gba_bios.bin rom.gba 400 frame.png
+cargo run --release --example trace -- gba_bios.bin rom.gba 1000 break=0x08000100
+cargo run --release --example bench -- gba_bios.bin rom.gba 400
 ```
 
-## Autonomous Debugging Example
+## Layout
 
-With Claude Code connected:
+```
+src/system/instructions   one file per instruction family: decode, execute, disassemble
+src/system/cpu.rs         registers, pipeline, exceptions
+src/system/memory.rs      memory map, IO registers, DMA, timers, wait states, prefetch
+src/system/ppu.rs         scanline renderer
+src/system/apu.rs         sound
+src/system/save.rs        SRAM, flash, EEPROM
+src/system/rtc.rs         GPIO and the S-3511 clock
+src/system/state.rs       save state format
+src/system/gba.rs         the machine and its scheduler
+src/main.rs, menu.rs, audio.rs, config.rs, font.rs   window build
+```
 
-1. **Check initial state**: Use `get_cpu_state` to see CPU registers
-2. **Inspect BIOS**: Use `read_memory` with address "0x00000000"
-3. **Step through code**: Use `step` with count
-4. **Continue execution**: Use `continue_execution` to run
-5. **Check graphics**: Use `read_palette` and `read_memory` on VRAM
-
-Claude can autonomously debug issues like:
-- Why the Nintendo logo isn't displaying
-- Incorrect palette colors
-- CPU stuck in loops
-- Memory access issues
+See `ARCHITECTURE.md` for how the pieces fit together.
 
 ## Acknowledgments
 
-- [GBATEK](https://problemkaputt.de/gbatek.htm) - Technical documentation
-- [ARM7TDMI Technical Reference Manual](https://documentation-service.arm.com/static/5e8e353cef2d0b5d1f41a560) - CPU documentation
+- [GBATEK](https://problemkaputt.de/gbatek.htm) and the ARM7TDMI technical reference manual
+- [jsmolka/gba-tests](https://github.com/jsmolka/gba-tests) and [DenSinH/FuzzARM](https://github.com/DenSinH/FuzzARM) test ROMs
+- the public domain [font8x8](https://github.com/dhepper/font8x8) used by the menu

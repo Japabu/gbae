@@ -42,25 +42,32 @@ struct Emulator {
 }
 
 impl Emulator {
-    fn new(bios: Vec<u8>, rom_path: &Path, settings: Settings) -> Emulator {
+    fn new(bios: Vec<u8>, rom_path: Option<&Path>, settings: Settings) -> Emulator {
         let audio = Audio::new(settings.volume);
         if audio.is_none() {
             eprintln!("No audio output available, running silently");
         }
         let mut emulator = Emulator {
-            gba: Gba::new(bios.clone(), vec![0; 0x100]),
+            gba: Gba::new(bios.clone(), Vec::new()),
             bios,
             rom: Vec::new(),
             save_path: PathBuf::new(),
             state_path: PathBuf::new(),
-            title: String::new(),
+            title: "no ROM".to_string(),
             audio,
             settings,
             menu: Menu::new(),
             frames_since_save_check: 0,
         };
-        emulator.load_rom(rom_path);
+        match rom_path {
+            Some(rom_path) => emulator.load_rom(rom_path),
+            None => emulator.menu.browse(&std::env::current_dir().unwrap_or_default()),
+        }
         emulator
+    }
+
+    fn rom_directory(&self) -> PathBuf {
+        self.save_path.parent().map(Path::to_path_buf).filter(|directory| !directory.as_os_str().is_empty()).unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
     }
 
     fn load_rom(&mut self, rom_path: &Path) {
@@ -73,10 +80,12 @@ impl Emulator {
         };
         self.flush_save(true);
         self.title = CartridgeInfo::parse(&rom).map(|cartridge| cartridge.title.trim().to_string()).unwrap_or_default();
+        let rom_path = rom_path.canonicalize().unwrap_or_else(|_| rom_path.to_path_buf());
         self.save_path = rom_path.with_extension("sav");
         self.state_path = rom_path.with_extension("state");
         self.rom = rom;
         self.reset();
+        self.menu.set_directory(&self.rom_directory());
         eprintln!("Loaded {} ({}), save type {:?}", rom_path.display(), self.title, self.gba.save_type());
     }
 
@@ -110,7 +119,7 @@ impl Emulator {
     }
 
     fn flush_save(&mut self, force: bool) {
-        if (self.gba.take_save_dirty() || force) && !self.gba.save_data().is_empty() {
+        if (self.gba.take_save_dirty() || force) && !self.gba.save_data().is_empty() && !self.save_path.as_os_str().is_empty() {
             if let Err(error) = std::fs::write(&self.save_path, self.gba.save_data()) {
                 eprintln!("Could not write {}: {}", self.save_path.display(), error);
             }
@@ -296,12 +305,10 @@ impl ApplicationHandler for App {
                         self.emulator.load_state();
                         self.emulator.menu.toggle();
                     }
-                    Action::LoadRom => {
-                        if let Some(path) = rfd::FileDialog::new().add_filter("Game Boy Advance ROM", &["gba"]).pick_file() {
-                            self.emulator.load_rom(&path);
-                            if let Some(window) = &self.window {
-                                window.set_title(&format!("gbae - {}", self.emulator.title));
-                            }
+                    Action::LoadRom(path) => {
+                        self.emulator.load_rom(&path);
+                        if let Some(window) = &self.window {
+                            window.set_title(&format!("gbae - {}", self.emulator.title));
                         }
                         self.emulator.menu.toggle();
                     }
@@ -333,19 +340,9 @@ fn main() {
         eprintln!("Could not read BIOS {}: {}", bios_path, error);
         std::process::exit(1);
     });
-    let rom_path = std::env::args().nth(1).map(PathBuf::from).or_else(|| {
-        if Path::new("rom.gba").exists() {
-            Some(PathBuf::from("rom.gba"))
-        } else {
-            rfd::FileDialog::new().add_filter("Game Boy Advance ROM", &["gba"]).pick_file()
-        }
-    });
-    let Some(rom_path) = rom_path else {
-        eprintln!("No ROM selected");
-        std::process::exit(1);
-    };
+    let rom_path = std::env::args().nth(1).map(PathBuf::from).or_else(|| Path::new("rom.gba").exists().then(|| PathBuf::from("rom.gba")));
     let settings = Settings::load(Path::new(CONFIG_FILE));
-    let emulator = Emulator::new(bios, &rom_path, settings);
+    let emulator = Emulator::new(bios, rom_path.as_deref(), settings);
 
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = App {

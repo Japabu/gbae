@@ -1,8 +1,10 @@
+use crate::bits::Bits;
+
 use super::state::{Reader, StateError, Writer};
 
-const PIN_SCK: u8 = 1 << 0;
-const PIN_SIO: u8 = 1 << 1;
-const PIN_CS: u8 = 1 << 2;
+const SCK: u32 = 0;
+const SIO: u32 = 1;
+const CS: u32 = 2;
 
 const COMMAND_RESET: u8 = 0;
 const COMMAND_STATUS: u8 = 1;
@@ -50,11 +52,11 @@ impl Gpio {
     pub fn read(&self, offset: u32) -> u16 {
         match offset {
             0 => {
-                let inputs = if self.rtc.sio_output() { PIN_SIO } else { 0 } & !self.direction;
-                (self.data & self.direction | inputs) as u16
+                let inputs = 0u8.with_bit(SIO, self.rtc.sio_output()) & !self.direction;
+                u16::from(self.data & self.direction | inputs)
             }
-            2 => self.direction as u16,
-            4 => self.readable as u16,
+            2 => u16::from(self.direction),
+            4 => u16::from(self.readable),
             _ => 0,
         }
     }
@@ -62,11 +64,11 @@ impl Gpio {
     pub fn write(&mut self, offset: u32, value: u16) {
         match offset {
             0 => {
-                self.data = value as u8 & 0xF;
+                self.data = value.bits(0..4) as u8;
                 self.rtc.update(self.data & self.direction);
             }
-            2 => self.direction = value as u8 & 0xF,
-            4 => self.readable = value & 1 != 0,
+            2 => self.direction = value.bits(0..4) as u8,
+            4 => self.readable = value.bit(0),
             _ => {}
         }
     }
@@ -77,6 +79,10 @@ enum Transfer {
     Command,
     Reading,
     Writing,
+}
+
+impl Transfer {
+    const ALL: [Transfer; 3] = [Transfer::Command, Transfer::Reading, Transfer::Writing];
 }
 
 pub struct Rtc {
@@ -140,18 +146,13 @@ impl Rtc {
         self.offset_seconds = reader.i64()?;
         self.status = reader.u8()?;
         self.pins = reader.u8()?;
-        self.transfer = match reader.u8()? {
-            0 => Transfer::Command,
-            1 => Transfer::Reading,
-            2 => Transfer::Writing,
-            _ => return Err(StateError::Corrupt),
-        };
+        self.transfer = *Transfer::ALL.get(usize::from(reader.u8()?)).ok_or(StateError::Corrupt)?;
         self.bit_count = reader.u32()?;
         self.byte = reader.u8()?;
         self.command = reader.u8()?;
         reader.bytes_into(&mut self.buffer)?;
-        self.buffer_length = reader.u8()? as usize % 8;
-        self.buffer_index = reader.u8()? as usize % 8;
+        self.buffer_length = usize::from(reader.u8()?) % 8;
+        self.buffer_index = usize::from(reader.u8()?) % 8;
         self.sio_output = reader.bool()?;
         Ok(())
     }
@@ -159,23 +160,19 @@ impl Rtc {
     fn update(&mut self, pins: u8) {
         let previous = self.pins;
         self.pins = pins;
-        if pins & PIN_CS == 0 {
+        if !pins.bit(CS) || !previous.bit(CS) {
             self.transfer = Transfer::Command;
             self.bit_count = 0;
             self.byte = 0;
-        } else if previous & PIN_CS == 0 {
-            self.transfer = Transfer::Command;
-            self.bit_count = 0;
-            self.byte = 0;
-        } else if pins & PIN_SCK != 0 && previous & PIN_SCK == 0 {
-            self.clock(pins & PIN_SIO != 0);
+        } else if pins.bit(SCK) && !previous.bit(SCK) {
+            self.clock(pins.bit(SIO));
         }
     }
 
     fn clock(&mut self, sio: bool) {
         match self.transfer {
             Transfer::Command => {
-                self.byte |= (sio as u8) << self.bit_count;
+                self.byte = self.byte.with_bit(self.bit_count, sio);
                 self.bit_count += 1;
                 if self.bit_count == 8 {
                     self.start_command(self.byte);
@@ -183,7 +180,7 @@ impl Rtc {
             }
             Transfer::Reading => {
                 if self.buffer_index < self.buffer_length {
-                    self.sio_output = self.buffer[self.buffer_index] >> self.bit_count & 1 != 0;
+                    self.sio_output = self.buffer[self.buffer_index].bit(self.bit_count);
                     self.bit_count += 1;
                     if self.bit_count == 8 {
                         self.bit_count = 0;
@@ -192,7 +189,7 @@ impl Rtc {
                 }
             }
             Transfer::Writing => {
-                self.byte |= (sio as u8) << self.bit_count;
+                self.byte = self.byte.with_bit(self.bit_count, sio);
                 self.bit_count += 1;
                 if self.bit_count == 8 {
                     if self.buffer_index < self.buffer_length {
@@ -210,8 +207,8 @@ impl Rtc {
     }
 
     fn start_command(&mut self, byte: u8) {
-        let byte = if byte & 0xF0 == 0x60 { byte } else { byte.reverse_bits() };
-        self.command = byte >> 1 & 0b111;
+        let byte = if byte.bits(4..8) == 0x6 { byte } else { byte.reverse_bits() };
+        self.command = byte.bits(1..4);
         self.bit_count = 0;
         self.byte = 0;
         self.buffer_index = 0;
@@ -221,7 +218,7 @@ impl Rtc {
             COMMAND_TIME => 3,
             _ => 0,
         };
-        if byte & 1 != 0 {
+        if byte.bit(0) {
             self.transfer = Transfer::Reading;
             self.fill_buffer();
         } else {
@@ -261,11 +258,7 @@ impl Rtc {
         let (year, month, day, weekday) = civil_from_days(seconds / 86_400);
         let second_of_day = seconds % 86_400;
         let hour = (second_of_day / 3600) as u8;
-        let hour = if self.status & STATUS_24_HOUR != 0 {
-            bcd(hour)
-        } else {
-            bcd(hour % 12) | if hour >= 12 { 0x80 } else { 0 }
-        };
+        let hour = if self.status & STATUS_24_HOUR != 0 { bcd(hour) } else { bcd(hour % 12).with_bit(7, hour >= 12) };
         [
             bcd((year % 100) as u8),
             bcd(month),
@@ -279,12 +272,12 @@ impl Rtc {
 
     fn set_written_time(&mut self, time: [u8; 7]) {
         let hour = if self.status & STATUS_24_HOUR != 0 {
-            from_bcd(time[4] & 0x3F)
+            from_bcd(time[4].bits(0..6))
         } else {
-            from_bcd(time[4] & 0x1F) + if time[4] & 0x80 != 0 { 12 } else { 0 }
+            from_bcd(time[4].bits(0..5)) + if time[4].bit(7) { 12 } else { 0 }
         };
-        let days = days_from_civil(2000 + from_bcd(time[0]) as u64, from_bcd(time[1]), from_bcd(time[2]));
-        let written = days * 86_400 + hour as u64 * 3600 + from_bcd(time[5]) as u64 * 60 + from_bcd(time[6]) as u64;
+        let days = days_from_civil(2000 + u64::from(from_bcd(time[0])), from_bcd(time[1]), from_bcd(time[2]));
+        let written = days * 86_400 + u64::from(hour) * 3600 + u64::from(from_bcd(time[5])) * 60 + u64::from(from_bcd(time[6]));
         self.offset_seconds = written as i64 - self.unix_seconds as i64;
     }
 }
@@ -294,7 +287,7 @@ fn bcd(value: u8) -> u8 {
 }
 
 fn from_bcd(value: u8) -> u8 {
-    (value >> 4) * 10 + (value & 0xF)
+    value.bits(4..8) * 10 + value.bits(0..4)
 }
 
 fn civil_from_days(days: u64) -> (u64, u8, u8, u8) {
@@ -324,6 +317,10 @@ fn days_from_civil(year: u64, month: u8, day: u8) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PIN_SCK: u8 = 1 << SCK;
+    const PIN_SIO: u8 = 1 << SIO;
+    const PIN_CS: u8 = 1 << CS;
 
     #[test]
     fn test_civil_conversion() {

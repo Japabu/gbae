@@ -5,7 +5,7 @@ mod timers;
 
 pub use bus::Access;
 pub use dma::DmaTiming;
-pub use io::{IoRegisters, Key};
+pub use io::{Interrupt, IoRegisters, Key};
 
 use crate::bits::Bits;
 
@@ -546,7 +546,7 @@ impl Memory {
             self.io.dma[channel].control = control.disabled();
         }
         if control.raises_irq() {
-            self.io.irf |= 1 << (8 + channel);
+            self.io.raise(Interrupt::Dma(channel));
         }
 
         self.bus.add_cycles(cycles);

@@ -1,7 +1,9 @@
+use crate::bits::Bits;
+
 use super::{
     bios::Bios,
     cpu::CPU,
-    memory::{DmaTiming, Key, Memory},
+    memory::{DmaTiming, Interrupt, Key, Memory},
     ppu::{Framebuffer, PPU},
     save::SaveType,
     state::{Reader, StateError, Writer},
@@ -12,16 +14,19 @@ pub const HDRAW_CYCLES: u64 = 960;
 pub const SCANLINES_PER_FRAME: u64 = 228;
 pub const VISIBLE_SCANLINES: u16 = 160;
 
-const DISPSTAT_VBLANK: u16 = 1 << 0;
-const DISPSTAT_HBLANK: u16 = 1 << 1;
-const DISPSTAT_VCOUNT: u16 = 1 << 2;
-const DISPSTAT_VBLANK_IRQ: u16 = 1 << 3;
-const DISPSTAT_HBLANK_IRQ: u16 = 1 << 4;
-const DISPSTAT_VCOUNT_IRQ: u16 = 1 << 5;
+const DISPSTAT_VBLANK: u32 = 0;
+const DISPSTAT_HBLANK: u32 = 1;
+const DISPSTAT_VCOUNT_MATCH: u32 = 2;
+const DISPSTAT_VBLANK_IRQ: u32 = 3;
+const DISPSTAT_HBLANK_IRQ: u32 = 4;
+const DISPSTAT_VCOUNT_IRQ: u32 = 5;
+const DISPSTAT_VCOUNT_SETTING: std::ops::Range<u32> = 8..16;
 
-const IRQ_VBLANK: u16 = 1 << 0;
-const IRQ_HBLANK: u16 = 1 << 1;
-const IRQ_VCOUNT: u16 = 1 << 2;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Draw,
+    Blank,
+}
 
 pub struct Gba {
     pub cpu: CPU,
@@ -29,32 +34,31 @@ pub struct Gba {
     pub ppu: PPU,
     scanline_counter: u64,
     next_event_cycles: u64,
-    in_hblank: bool,
+    phase: Phase,
 }
 
 impl Gba {
-    pub fn new(bios: Bios, cartridge_data: Vec<u8>) -> Self {
-        let mut gba = Self {
+    pub fn new(bios: Bios, cartridge_data: Vec<u8>) -> Gba {
+        let mut gba = Gba {
             cpu: CPU::new(),
             mem: Memory::new(bios, cartridge_data),
             ppu: PPU::new(),
             scanline_counter: 0,
             next_event_cycles: HDRAW_CYCLES,
-            in_hblank: false,
+            phase: Phase::Draw,
         };
         gba.cpu.reset(&mut gba.mem);
         gba.start_scanline();
         gba
     }
 
-    #[inline]
     pub fn step(&mut self) {
         while self.cpu.cycles() >= self.next_event_cycles {
             self.advance_event();
         }
-        let stalled = self.mem.take_cycles() as u64;
-        self.cpu.add_cycles(stalled);
-        self.mem.tick(stalled as u32);
+        let stalled = self.mem.take_cycles();
+        self.cpu.add_cycles(u64::from(stalled));
+        self.mem.tick(stalled);
         let io = self.mem.io_mut();
         if io.halted && io.ie & io.irf == 0 {
             let skipped = self.next_event_cycles.saturating_sub(self.cpu.cycles());
@@ -63,23 +67,25 @@ impl Gba {
         } else {
             io.halted = false;
             self.cpu.handle_interrupts(&mut self.mem);
-            let cycles_before = self.cpu.cycles();
+            let before = self.cpu.cycles();
             self.cpu.cycle(&mut self.mem);
-            let elapsed = (self.cpu.cycles() - cycles_before) as u32;
-            self.mem.tick(elapsed);
+            self.mem.tick((self.cpu.cycles() - before) as u32);
         }
     }
 
     fn advance_event(&mut self) {
-        if self.in_hblank {
-            self.in_hblank = false;
-            self.scanline_counter += 1;
-            self.next_event_cycles += HDRAW_CYCLES;
-            self.start_scanline();
-        } else {
-            self.in_hblank = true;
-            self.next_event_cycles += CYCLES_PER_SCANLINE - HDRAW_CYCLES;
-            self.start_hblank();
+        match self.phase {
+            Phase::Draw => {
+                self.phase = Phase::Blank;
+                self.next_event_cycles += CYCLES_PER_SCANLINE - HDRAW_CYCLES;
+                self.start_hblank();
+            }
+            Phase::Blank => {
+                self.phase = Phase::Draw;
+                self.scanline_counter += 1;
+                self.next_event_cycles += HDRAW_CYCLES;
+                self.start_scanline();
+            }
         }
     }
 
@@ -87,22 +93,20 @@ impl Gba {
         let v_count = (self.scanline_counter % SCANLINES_PER_FRAME) as u16;
         let io = self.mem.io_mut();
         io.v_count = v_count;
-        io.disp_stat &= !(DISPSTAT_VBLANK | DISPSTAT_HBLANK | DISPSTAT_VCOUNT);
-
-        if v_count >= VISIBLE_SCANLINES && v_count < SCANLINES_PER_FRAME as u16 - 1 {
-            io.disp_stat |= DISPSTAT_VBLANK;
+        let in_vblank = (VISIBLE_SCANLINES..SCANLINES_PER_FRAME as u16 - 1).contains(&v_count);
+        let vcount_match = v_count == io.disp_stat.bits(DISPSTAT_VCOUNT_SETTING);
+        io.disp_stat = io
+            .disp_stat
+            .with_bit(DISPSTAT_VBLANK, in_vblank)
+            .with_bit(DISPSTAT_HBLANK, false)
+            .with_bit(DISPSTAT_VCOUNT_MATCH, vcount_match);
+        if vcount_match && io.disp_stat.bit(DISPSTAT_VCOUNT_IRQ) {
+            io.raise(Interrupt::VCount);
         }
-        if v_count == io.disp_stat >> 8 {
-            io.disp_stat |= DISPSTAT_VCOUNT;
-            if io.disp_stat & DISPSTAT_VCOUNT_IRQ != 0 {
-                io.irf |= IRQ_VCOUNT;
-            }
-        }
-        if v_count == VISIBLE_SCANLINES && io.disp_stat & DISPSTAT_VBLANK_IRQ != 0 {
-            io.irf |= IRQ_VBLANK;
+        if v_count == VISIBLE_SCANLINES && io.disp_stat.bit(DISPSTAT_VBLANK_IRQ) {
+            io.raise(Interrupt::VBlank);
         }
         self.ppu.latch_affine_references(io);
-
         if v_count == VISIBLE_SCANLINES {
             self.mem.start_dma(DmaTiming::VBlank);
         }
@@ -110,9 +114,9 @@ impl Gba {
 
     fn start_hblank(&mut self) {
         let io = self.mem.io_mut();
-        io.disp_stat |= DISPSTAT_HBLANK;
-        if io.disp_stat & DISPSTAT_HBLANK_IRQ != 0 {
-            io.irf |= IRQ_HBLANK;
+        io.disp_stat = io.disp_stat.with_bit(DISPSTAT_HBLANK, true);
+        if io.disp_stat.bit(DISPSTAT_HBLANK_IRQ) {
+            io.raise(Interrupt::HBlank);
         }
         if io.v_count < VISIBLE_SCANLINES {
             self.ppu.draw_scanline(&self.mem);
@@ -121,14 +125,15 @@ impl Gba {
     }
 
     pub fn run_scanline(&mut self) {
-        let target = self.scanline_counter + 1;
-        while self.scanline_counter < target {
-            self.step();
-        }
+        self.run_scanlines(1);
     }
 
     pub fn run_frame(&mut self) {
-        let target = self.scanline_counter + SCANLINES_PER_FRAME;
+        self.run_scanlines(SCANLINES_PER_FRAME);
+    }
+
+    fn run_scanlines(&mut self, count: u64) {
+        let target = self.scanline_counter + count;
         while self.scanline_counter < target {
             self.step();
         }
@@ -145,8 +150,7 @@ impl Gba {
     }
 
     pub fn set_key(&mut self, key: Key, pressed: bool) {
-        let keys = self.mem.io().pressed_keys();
-        let keys = if pressed { keys | key.bit() } else { keys & !key.bit() };
+        let keys = self.mem.io().pressed_keys().with_bits(key.number()..key.number() + 1, u16::from(pressed));
         self.mem.io_mut().set_pressed_keys(keys);
     }
 
@@ -182,7 +186,7 @@ impl Gba {
         self.ppu.save_state(&mut writer);
         writer.u64(self.scanline_counter);
         writer.u64(self.next_event_cycles);
-        writer.bool(self.in_hblank);
+        writer.bool(self.phase == Phase::Blank);
         writer.finish()
     }
 
@@ -196,7 +200,7 @@ impl Gba {
         self.ppu.load_state(&mut reader)?;
         self.scanline_counter = reader.u64()?;
         self.next_event_cycles = reader.u64()?;
-        self.in_hblank = reader.bool()?;
+        self.phase = if reader.bool()? { Phase::Blank } else { Phase::Draw };
         Ok(())
     }
 

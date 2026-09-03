@@ -76,7 +76,7 @@ macro_rules! bits {
     };
 }
 
-bits!(u8 => i8, u16 => i16, u32 => i32, u64 => i64);
+bits!(u8 => i8, u16 => i16, u32 => i32, u64 => i64, u128 => i128);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Arithmetic {

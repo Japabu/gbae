@@ -28,6 +28,45 @@ pub struct Writer {
     bytes: Vec<u8>,
 }
 
+pub struct Reader<'a> {
+    bytes: &'a [u8],
+}
+
+macro_rules! numbers {
+    ($($name:ident $many:ident: $number:ty),* $(,)?) => {
+        impl Writer {
+            $(
+                pub fn $name(&mut self, value: $number) {
+                    self.bytes(&value.to_le_bytes());
+                }
+
+                pub fn $many(&mut self, values: &[$number]) {
+                    for value in values {
+                        self.$name(*value);
+                    }
+                }
+            )*
+        }
+
+        impl Reader<'_> {
+            $(
+                pub fn $name(&mut self) -> Result<$number, StateError> {
+                    Ok(<$number>::from_le_bytes(self.take(std::mem::size_of::<$number>())?.try_into().unwrap()))
+                }
+
+                pub fn $many(&mut self, target: &mut [$number]) -> Result<(), StateError> {
+                    for value in target {
+                        *value = self.$name()?;
+                    }
+                    Ok(())
+                }
+            )*
+        }
+    };
+}
+
+numbers!(u8 u8s: u8, u16 u16s: u16, u32 u32s: u32, i32 i32s: i32, u64 u64s: u64, i64 i64s: i64, u128 u128s: u128);
+
 impl Writer {
     pub fn new() -> Writer {
         let mut writer = Writer { bytes: Vec::new() };
@@ -44,58 +83,8 @@ impl Writer {
         self.bytes.extend_from_slice(value);
     }
 
-    pub fn u8(&mut self, value: u8) {
-        self.bytes.push(value);
-    }
-
     pub fn bool(&mut self, value: bool) {
-        self.u8(value as u8);
-    }
-
-    pub fn u16(&mut self, value: u16) {
-        self.bytes(&value.to_le_bytes());
-    }
-
-    pub fn u32(&mut self, value: u32) {
-        self.bytes(&value.to_le_bytes());
-    }
-
-    pub fn i32(&mut self, value: i32) {
-        self.bytes(&value.to_le_bytes());
-    }
-
-    pub fn u64(&mut self, value: u64) {
-        self.bytes(&value.to_le_bytes());
-    }
-
-    pub fn i64(&mut self, value: i64) {
-        self.bytes(&value.to_le_bytes());
-    }
-
-    pub fn u128(&mut self, value: u128) {
-        self.bytes(&value.to_le_bytes());
-    }
-
-    pub fn usize(&mut self, value: usize) {
-        self.u64(value as u64);
-    }
-
-    pub fn u16s(&mut self, values: &[u16]) {
-        for value in values {
-            self.u16(*value);
-        }
-    }
-
-    pub fn u32s(&mut self, values: &[u32]) {
-        for value in values {
-            self.u32(*value);
-        }
-    }
-
-    pub fn i32s(&mut self, values: &[i32]) {
-        for value in values {
-            self.i32(*value);
-        }
+        self.u8(u8::from(value));
     }
 
     pub fn bools(&mut self, values: &[bool]) {
@@ -104,14 +93,14 @@ impl Writer {
         }
     }
 
+    pub fn usize(&mut self, value: usize) {
+        self.u64(value as u64);
+    }
+
     pub fn sized_bytes(&mut self, value: &[u8]) {
         self.usize(value.len());
         self.bytes(value);
     }
-}
-
-pub struct Reader<'a> {
-    bytes: &'a [u8],
 }
 
 impl<'a> Reader<'a> {
@@ -141,61 +130,8 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
-    pub fn u8(&mut self) -> Result<u8, StateError> {
-        Ok(self.take(1)?[0])
-    }
-
     pub fn bool(&mut self) -> Result<bool, StateError> {
         Ok(self.u8()? != 0)
-    }
-
-    pub fn u16(&mut self) -> Result<u16, StateError> {
-        Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
-    }
-
-    pub fn u32(&mut self) -> Result<u32, StateError> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
-    }
-
-    pub fn i32(&mut self) -> Result<i32, StateError> {
-        Ok(i32::from_le_bytes(self.take(4)?.try_into().unwrap()))
-    }
-
-    pub fn u64(&mut self) -> Result<u64, StateError> {
-        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
-    }
-
-    pub fn i64(&mut self) -> Result<i64, StateError> {
-        Ok(i64::from_le_bytes(self.take(8)?.try_into().unwrap()))
-    }
-
-    pub fn u128(&mut self) -> Result<u128, StateError> {
-        Ok(u128::from_le_bytes(self.take(16)?.try_into().unwrap()))
-    }
-
-    pub fn usize(&mut self) -> Result<usize, StateError> {
-        usize::try_from(self.u64()?).map_err(|_| StateError::Corrupt)
-    }
-
-    pub fn u16s(&mut self, target: &mut [u16]) -> Result<(), StateError> {
-        for value in target {
-            *value = self.u16()?;
-        }
-        Ok(())
-    }
-
-    pub fn u32s(&mut self, target: &mut [u32]) -> Result<(), StateError> {
-        for value in target {
-            *value = self.u32()?;
-        }
-        Ok(())
-    }
-
-    pub fn i32s(&mut self, target: &mut [i32]) -> Result<(), StateError> {
-        for value in target {
-            *value = self.i32()?;
-        }
-        Ok(())
     }
 
     pub fn bools(&mut self, target: &mut [bool]) -> Result<(), StateError> {
@@ -205,8 +141,48 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
+    pub fn usize(&mut self) -> Result<usize, StateError> {
+        usize::try_from(self.u64()?).map_err(|_| StateError::Corrupt)
+    }
+
     pub fn sized_bytes(&mut self) -> Result<&'a [u8], StateError> {
         let length = self.usize()?;
         self.take(length)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_values_round_trip() {
+        let mut writer = Writer::new();
+        writer.u8(1);
+        writer.bool(true);
+        writer.u16s(&[2, 3]);
+        writer.i32(-4);
+        writer.u64(5);
+        writer.u128(6);
+        writer.sized_bytes(b"seven");
+        let bytes = writer.finish();
+        let mut reader = Reader::new(&bytes).unwrap();
+        assert_eq!(reader.u8().unwrap(), 1);
+        assert!(reader.bool().unwrap());
+        let mut pair = [0; 2];
+        reader.u16s(&mut pair).unwrap();
+        assert_eq!(pair, [2, 3]);
+        assert_eq!(reader.i32().unwrap(), -4);
+        assert_eq!(reader.u64().unwrap(), 5);
+        assert_eq!(reader.u128().unwrap(), 6);
+        assert_eq!(reader.sized_bytes().unwrap(), b"seven");
+        assert_eq!(reader.u8(), Err(StateError::Truncated));
+    }
+
+    #[test]
+    fn test_header_is_checked() {
+        assert_eq!(Reader::new(b"nope").err(), Some(StateError::Truncated));
+        assert_eq!(Reader::new(b"GBAESTAT\x09\x00\x00\x00").err(), Some(StateError::UnsupportedVersion(9)));
+        assert_eq!(Reader::new(b"XXXXXXXX\x02\x00\x00\x00").err(), Some(StateError::BadMagic));
     }
 }

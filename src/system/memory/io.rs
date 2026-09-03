@@ -7,8 +7,32 @@ use super::{
     timers::Timers,
 };
 
-const KEY_IRQ: u16 = 1 << 12;
-const TIMER_IRQS: u32 = 3;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Interrupt {
+    VBlank,
+    HBlank,
+    VCount,
+    Timer(usize),
+    Serial,
+    Dma(usize),
+    Keypad,
+    GamePak,
+}
+
+impl Interrupt {
+    fn bit(self) -> u32 {
+        match self {
+            Interrupt::VBlank => 0,
+            Interrupt::HBlank => 1,
+            Interrupt::VCount => 2,
+            Interrupt::Timer(index) => 3 + index as u32,
+            Interrupt::Serial => 7,
+            Interrupt::Dma(channel) => 8 + channel as u32,
+            Interrupt::Keypad => 12,
+            Interrupt::GamePak => 13,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -27,6 +51,10 @@ pub enum Key {
 impl Key {
     pub const ALL: [Key; 10] = [Key::A, Key::B, Key::Select, Key::Start, Key::Right, Key::Left, Key::Up, Key::Down, Key::R, Key::L];
     const MASK: u16 = 0x03FF;
+
+    pub const fn number(self) -> u32 {
+        self as u32
+    }
 
     pub const fn bit(self) -> u16 {
         1 << self as u16
@@ -289,8 +317,12 @@ impl IoRegisters {
         let all_selected_required = self.key_cnt.bit(15);
         let condition = if all_selected_required { selected != 0 && pressed == selected } else { pressed != 0 };
         if irq_enabled && condition {
-            self.irf |= KEY_IRQ;
+            self.raise(Interrupt::Keypad);
         }
+    }
+
+    pub fn raise(&mut self, interrupt: Interrupt) {
+        self.irf = self.irf.with_bit(interrupt.bit(), true);
     }
 
     pub fn tick_timers(&mut self, cycles: u32) -> u8 {
@@ -300,7 +332,10 @@ impl IoRegisters {
     }
 
     fn raise_timer_irqs(&mut self, overflows: u8) {
-        self.irf |= u16::from(self.timers.irq_mask(overflows)) << TIMER_IRQS;
+        let requests = self.timers.irq_mask(overflows);
+        for index in (0..4).filter(|index| requests.bit(*index as u32)) {
+            self.raise(Interrupt::Timer(index));
+        }
     }
 
     pub fn save_state(&self, writer: &mut Writer) {

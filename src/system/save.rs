@@ -1,5 +1,7 @@
 use std::cell::Cell;
 
+use crate::bits::Bits;
+
 use super::state::{Reader, StateError, Writer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,14 +22,10 @@ impl SaveType {
             (b"FLASH512_V", SaveType::Flash64K),
             (b"FLASH_V", SaveType::Flash64K),
         ];
-        for offset in (0..rom.len()).step_by(4) {
-            for (marker, save_type) in MARKERS {
-                if rom[offset..].starts_with(marker) {
-                    return save_type;
-                }
-            }
-        }
-        SaveType::None
+        (0..rom.len())
+            .step_by(4)
+            .find_map(|offset| MARKERS.iter().find(|(marker, _)| rom[offset..].starts_with(marker)).map(|(_, save_type)| *save_type))
+            .unwrap_or(SaveType::None)
     }
 }
 
@@ -108,7 +106,7 @@ impl Backup {
 
     pub fn eeprom_write(&mut self, value: u16) {
         if let Medium::Eeprom(eeprom) = &mut self.medium {
-            self.dirty |= eeprom.write(value & 1 != 0);
+            self.dirty |= eeprom.write(value.bit(0));
         }
     }
 
@@ -178,20 +176,19 @@ enum FlashCommand {
 }
 
 impl FlashCommand {
+    const ALL: [FlashCommand; 8] = [
+        FlashCommand::None,
+        FlashCommand::Prefix1,
+        FlashCommand::Prefix2,
+        FlashCommand::ErasePrefix1,
+        FlashCommand::ErasePrefix2,
+        FlashCommand::ErasePrefix3,
+        FlashCommand::Program,
+        FlashCommand::BankSwitch,
+    ];
+
     fn from_state(value: u8) -> Result<FlashCommand, StateError> {
-        [
-            FlashCommand::None,
-            FlashCommand::Prefix1,
-            FlashCommand::Prefix2,
-            FlashCommand::ErasePrefix1,
-            FlashCommand::ErasePrefix2,
-            FlashCommand::ErasePrefix3,
-            FlashCommand::Program,
-            FlashCommand::BankSwitch,
-        ]
-        .get(value as usize)
-        .copied()
-        .ok_or(StateError::Corrupt)
+        FlashCommand::ALL.get(usize::from(value)).copied().ok_or(StateError::Corrupt)
     }
 }
 
@@ -225,7 +222,7 @@ impl Flash {
     }
 
     fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
-        self.bank = reader.u8()? as usize % (self.data.len() / 0x10000);
+        self.bank = usize::from(reader.u8()?) % (self.data.len() / 0x10000);
         self.id_mode = reader.bool()?;
         self.command = FlashCommand::from_state(reader.u8()?)?;
         Ok(())
@@ -283,7 +280,7 @@ impl Flash {
             }
             FlashCommand::BankSwitch => {
                 if offset == 0 {
-                    self.bank = value as usize % (self.data.len() / 0x10000);
+                    self.bank = usize::from(value) % (self.data.len() / 0x10000);
                 }
                 self.command = FlashCommand::None;
             }
@@ -298,6 +295,10 @@ enum EepromState {
     Idle,
     Receiving,
     Reading,
+}
+
+impl EepromState {
+    const ALL: [EepromState; 3] = [EepromState::Idle, EepromState::Receiving, EepromState::Reading];
 }
 
 pub struct Eeprom {
@@ -338,12 +339,7 @@ impl Eeprom {
 
     fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
         self.address_bits = reader.u32()?;
-        self.state = match reader.u8()? {
-            0 => EepromState::Idle,
-            1 => EepromState::Receiving,
-            2 => EepromState::Reading,
-            _ => return Err(StateError::Corrupt),
-        };
+        self.state = *EepromState::ALL.get(usize::from(reader.u8()?)).ok_or(StateError::Corrupt)?;
         self.received_bits = reader.u32()?;
         self.request = reader.u128()?;
         self.read_data = reader.u64()?;
@@ -369,15 +365,15 @@ impl Eeprom {
             self.received_bits = 0;
             self.request = 0;
         }
-        self.request = self.request << 1 | bit as u128;
+        self.request = self.request << 1 | u128::from(bit);
         self.received_bits += 1;
 
         if self.received_bits >= 2 {
-            let is_read = self.request >> (self.received_bits - 2) & 0b11 == 0b11;
+            let is_read = self.request.bits(self.received_bits - 2..self.received_bits) == 0b11;
             let request_length = if is_read { 2 + self.address_bits + 1 } else { 2 + self.address_bits + DATA_BITS + 1 };
             if self.received_bits == request_length {
                 let address_shift = request_length - 2 - self.address_bits;
-                let address = ((self.request >> address_shift) as u32 & ((1 << self.address_bits) - 1)) as usize & 0x3FF;
+                let address = (self.request.bits(address_shift..address_shift + self.address_bits) as usize) & 0x3FF;
                 let block = address * 8..address * 8 + 8;
                 if is_read {
                     self.read_data = u64::from_be_bytes(self.data[block].try_into().unwrap());
@@ -401,7 +397,7 @@ impl Eeprom {
             if position < READ_PREAMBLE_BITS {
                 0
             } else {
-                (self.read_data >> (DATA_BITS - 1 - (position - READ_PREAMBLE_BITS)) & 1) as u16
+                u16::from(self.read_data.bit(DATA_BITS - 1 - (position - READ_PREAMBLE_BITS)))
             }
         } else {
             1

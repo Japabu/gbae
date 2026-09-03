@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -263,8 +263,9 @@ impl Emulator {
 }
 
 struct App {
-    window: Option<Arc<Window>>,
-    surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
+    context: softbuffer::Context<OwnedDisplayHandle>,
+    window: Option<Arc<dyn Window>>,
+    surface: Option<softbuffer::Surface<OwnedDisplayHandle, Arc<dyn Window>>>,
     emulator: Emulator,
     next_frame: Instant,
 }
@@ -274,7 +275,7 @@ impl App {
         let (Some(window), Some(surface)) = (&self.window, &mut self.surface) else {
             return;
         };
-        let size = window.inner_size();
+        let size = window.surface_size();
         let (Some(width), Some(height)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
             return;
         };
@@ -341,7 +342,7 @@ impl App {
         }
     }
 
-    fn quit(&mut self, event_loop: &ActiveEventLoop) {
+    fn quit(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.emulator.flush_save(true);
         self.emulator.save_settings();
         event_loop.exit();
@@ -349,25 +350,27 @@ impl App {
 }
 
 impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+    fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
         let attributes = WindowAttributes::default()
             .with_title(format!("gbae - {}", self.emulator.title))
-            .with_inner_size(LogicalSize::new(FRAMEBUFFER_WIDTH as f64 * 3.0, FRAMEBUFFER_HEIGHT as f64 * 3.0));
-        let window = Arc::new(event_loop.create_window(attributes).expect("Failed to create window"));
-        let context = softbuffer::Context::new(window.clone()).expect("Failed to create graphics context");
-        let surface = softbuffer::Surface::new(&context, window.clone()).expect("Failed to create surface");
+            .with_surface_size(LogicalSize::new(FRAMEBUFFER_WIDTH as f64 * 3.0, FRAMEBUFFER_HEIGHT as f64 * 3.0));
+        let window: Arc<dyn Window> = event_loop.create_window(attributes).expect("Failed to create window").into();
+        let surface = softbuffer::Surface::new(&self.context, window.clone()).expect("Failed to create surface");
         self.window = Some(window);
         self.surface = Some(surface);
         self.next_frame = Instant::now();
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, (): ()) {}
+    fn proxy_wake_up(&mut self, _event_loop: &dyn ActiveEventLoop) {}
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => self.quit(event_loop),
             WindowEvent::RedrawRequested => self.present(),
-            WindowEvent::Resized(_) => {
+            WindowEvent::SurfaceResized(_) => {
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -417,7 +420,7 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         if self.emulator.menu.open {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
@@ -450,11 +453,10 @@ fn main() -> ExitCode {
     let config_path = config::config_path();
     let settings = config_path.as_deref().map(Settings::load).unwrap_or_default();
 
-    let event_loop = EventLoop::with_user_event().build().expect("Failed to create event loop");
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let context = softbuffer::Context::new(event_loop.owned_display_handle()).expect("Failed to create graphics context");
     let proxy = event_loop.create_proxy();
-    let audio = Audio::new(settings.volume, move || {
-        let _ = proxy.send_event(());
-    });
+    let audio = Audio::new(settings.volume, move || proxy.wake_up());
     if audio.is_none() {
         eprintln!("gbae: no audio output available, running silently");
     }
@@ -469,13 +471,14 @@ fn main() -> ExitCode {
         None => emulator.menu.browse(&std::env::current_dir().unwrap_or_default()),
     }
 
-    let mut app = App {
+    let app = App {
+        context,
         window: None,
         surface: None,
         emulator,
         next_frame: Instant::now(),
     };
-    event_loop.run_app(&mut app).expect("Event loop failed");
+    event_loop.run_app(app).expect("Event loop failed");
     ExitCode::SUCCESS
 }
 

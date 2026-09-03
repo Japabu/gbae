@@ -9,3 +9,5 @@
 .env
 .claude/
 /tests/roms/
+*.state
+gbae.cfg

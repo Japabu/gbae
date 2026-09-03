@@ -5,12 +5,15 @@ use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
-        eprintln!("usage: bench <rom> <frames>");
+    if args.len() > 3 {
+        eprintln!("usage: bench [rom] [frames]");
         std::process::exit(1);
     }
-    let rom = fs::read(&args[1]).expect("Failed to read ROM");
-    let frames: u64 = args[2].parse().expect("Failed to parse frame count");
+    let rom = match args.get(1) {
+        Some(path) => fs::read(path).expect("Failed to read ROM"),
+        None => gbae::benchmark::rom(),
+    };
+    let frames: u64 = args.get(2).map_or(1200, |frames| frames.parse().expect("Failed to parse frame count"));
 
     let mut gba = Gba::new(rom);
     let mut instructions = 0u64;

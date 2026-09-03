@@ -269,6 +269,22 @@ pub fn asr(m: Register, amount: u32) -> ShifterOperand {
     ShifterOperand::ShiftImmediate { shift: Shift::ASR, m, amount }
 }
 
+pub fn ror(m: Register, amount: u32) -> ShifterOperand {
+    ShifterOperand::ShiftImmediate { shift: Shift::ROR, m, amount }
+}
+
+pub fn lsl_by(m: Register, s: Register) -> ShifterOperand {
+    ShifterOperand::ShiftRegister { shift: Shift::LSL, m, s }
+}
+
+pub fn lsr_by(m: Register, s: Register) -> ShifterOperand {
+    ShifterOperand::ShiftRegister { shift: Shift::LSR, m, s }
+}
+
+pub fn asr_by(m: Register, s: Register) -> ShifterOperand {
+    ShifterOperand::ShiftRegister { shift: Shift::ASR, m, s }
+}
+
 fn data_processing(opcode: Opcode, set_flags: bool, d: Register, n: Register, operand: impl Into<ShifterOperand>) -> Instruction {
     Instruction::DataProcessing(DataProcessing {
         opcode,
@@ -319,15 +335,23 @@ pub fn mvn(d: Register, operand: impl Into<ShifterOperand>) -> Instruction {
     data_processing(Opcode::MVN, false, d, d, operand)
 }
 
-pub fn mul(d: Register, m: Register, s: Register) -> Instruction {
+fn multiply(set_flags: bool, d: Register, m: Register, s: Register) -> Instruction {
     Instruction::Multiply(Multiply {
         opcode: multiply::Opcode::MUL,
-        set_flags: false,
+        set_flags,
         d,
         n: Register::R0,
         s,
         m,
     })
+}
+
+pub fn mul(d: Register, m: Register, s: Register) -> Instruction {
+    multiply(false, d, m, s)
+}
+
+pub fn muls(d: Register, m: Register, s: Register) -> Instruction {
+    multiply(true, d, m, s)
 }
 
 pub fn offset_address(n: Register, offset: u32) -> AddressingMode {

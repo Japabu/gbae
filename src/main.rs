@@ -355,13 +355,7 @@ impl ApplicationHandler for App {
 
 fn main() {
     let bios_path = std::env::var("GBA_BIOS").unwrap_or_else(|_| "gba_bios.bin".to_string());
-    let bios = match std::fs::read(&bios_path) {
-        Ok(bytes) => {
-            eprintln!("Using BIOS {}", bios_path);
-            Bios::Image(bytes)
-        }
-        Err(_) => Bios::Builtin,
-    };
+    let bios = Bios::load(Path::new(&bios_path)).inspect(|_| eprintln!("Using BIOS {}", bios_path)).unwrap_or(Bios::Builtin);
     let rom_path = std::env::args().nth(1).map(PathBuf::from).or_else(|| Path::new("rom.gba").exists().then(|| PathBuf::from("rom.gba")));
     let settings = Settings::load(Path::new(CONFIG_FILE));
     let emulator = Emulator::new(bios, rom_path.as_deref(), settings);

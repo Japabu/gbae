@@ -15,6 +15,10 @@ pub enum Bios {
 }
 
 impl Bios {
+    pub fn load(path: &std::path::Path) -> std::io::Result<Bios> {
+        std::fs::read(path).map(Bios::Image)
+    }
+
     pub fn bytes(&self) -> Vec<u8> {
         match self {
             Bios::Builtin => image(),

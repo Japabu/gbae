@@ -145,6 +145,7 @@ impl IoRegisters {
         self.read_u16(offset & !1).to_le_bytes()[(offset & 1) as usize]
     }
 
+    #[inline]
     pub fn read_u16(&self, offset: u32) -> u16 {
         let low = |word: u32| word as u16;
         let high = |word: u32| (word >> 16) as u16;
@@ -212,6 +213,7 @@ impl IoRegisters {
         }
     }
 
+    #[inline]
     pub fn write_u16(&mut self, offset: u32, value: u16) {
         let with_low = |word: u32| word.with_bits(0..16, u32::from(value));
         let with_high = |word: u32| word.with_bits(16..32, u32::from(value));
@@ -325,6 +327,7 @@ impl IoRegisters {
         self.irf = self.irf.with_bit(interrupt.bit(), true);
     }
 
+    #[inline]
     pub fn tick_timers(&mut self, cycles: u32) -> u8 {
         let overflows = self.timers.tick(cycles);
         self.raise_timer_irqs(overflows);

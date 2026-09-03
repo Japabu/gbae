@@ -32,26 +32,32 @@ const APU_REGISTERS: std::ops::Range<u32> = 0x060..0x0A8;
 const APU_BATCH_CYCLES: u32 = 512;
 const FIFO_TRANSFER_WORDS: u32 = 4;
 
+#[inline]
 fn halfword(buffer: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([buffer[offset], buffer[offset + 1]])
 }
 
+#[inline]
 fn word(buffer: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes([buffer[offset], buffer[offset + 1], buffer[offset + 2], buffer[offset + 3]])
 }
 
+#[inline]
 fn set_halfword(buffer: &mut [u8], offset: usize, value: u16) {
     buffer[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
 
+#[inline]
 fn set_word(buffer: &mut [u8], offset: usize, value: u32) {
     buffer[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
 
+#[inline]
 fn byte_of(value: u32, address: u32) -> u8 {
     value.to_le_bytes()[(address & 0b11) as usize]
 }
 
+#[inline]
 fn halfword_of(value: u32, address: u32) -> u16 {
     if address.bit(1) {
         (value >> 16) as u16
@@ -157,10 +163,12 @@ impl Memory {
         self.intr_waiting = waiting;
     }
 
+    #[inline]
     pub fn io(&self) -> &IoRegisters {
         &self.io
     }
 
+    #[inline]
     pub fn io_mut(&mut self) -> &mut IoRegisters {
         &mut self.io
     }
@@ -177,18 +185,22 @@ impl Memory {
         &self.oam
     }
 
+    #[inline]
     pub fn take_cycles(&mut self) -> u32 {
         self.bus.take_cycles()
     }
 
+    #[inline]
     pub fn idle(&mut self, cycles: u32) {
         self.bus.idle(cycles);
     }
 
+    #[inline]
     pub fn invalidate_fetch_sequence(&mut self) {
         self.bus.invalidate_sequence();
     }
 
+    #[inline]
     pub fn fetch_u32(&mut self, address: u32) -> u32 {
         self.bus.charge_fetch(address, 4);
         self.executing_from_bios = address < BIOS_LEN as u32;
@@ -200,6 +212,7 @@ impl Memory {
         opcode
     }
 
+    #[inline]
     pub fn fetch_u16(&mut self, address: u32) -> u16 {
         self.bus.charge_fetch(address, 2);
         self.executing_from_bios = address < BIOS_LEN as u32;
@@ -211,36 +224,43 @@ impl Memory {
         opcode
     }
 
+    #[inline]
     pub fn load_u8(&mut self, address: u32, access: Access) -> u8 {
         self.bus.charge_data(address, 1, access);
         self.read_u8(address)
     }
 
+    #[inline]
     pub fn load_u16(&mut self, address: u32, access: Access) -> u16 {
         self.bus.charge_data(address, 2, access);
         self.read_u16(address)
     }
 
+    #[inline]
     pub fn load_u32(&mut self, address: u32, access: Access) -> u32 {
         self.bus.charge_data(address, 4, access);
         self.read_u32(address)
     }
 
+    #[inline]
     pub fn store_u8(&mut self, address: u32, value: u8, access: Access) {
         self.bus.charge_data(address, 1, access);
         self.write_u8(address, value);
     }
 
+    #[inline]
     pub fn store_u16(&mut self, address: u32, value: u16, access: Access) {
         self.bus.charge_data(address, 2, access);
         self.write_u16(address, value);
     }
 
+    #[inline]
     pub fn store_u32(&mut self, address: u32, value: u32, access: Access) {
         self.bus.charge_data(address, 4, access);
         self.write_u32(address, value);
     }
 
+    #[inline]
     fn region(&self, address: u32) -> Region {
         let offset = address as usize;
         match address >> 24 {
@@ -259,6 +279,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     fn ram(&self, ram: Ram) -> &[u8] {
         match ram {
             Ram::Ewram => &self.ewram[..],
@@ -269,6 +290,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     fn ram_mut(&mut self, ram: Ram) -> &mut [u8] {
         match ram {
             Ram::Ewram => &mut self.ewram[..],
@@ -279,6 +301,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     fn bios_word(&self, offset: usize) -> u32 {
         if self.executing_from_bios {
             word(&self.bios[..], offset & !0b11)
@@ -287,6 +310,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     fn io_read_u16(&self, offset: u32) -> u16 {
         if APU_REGISTERS.contains(&offset) {
             self.apu.read_u16(offset)
@@ -295,6 +319,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     pub fn read_u8(&self, address: u32) -> u8 {
         match self.region(address) {
             Region::Bios(offset) => byte_of(self.bios_word(offset), address),
@@ -308,6 +333,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     pub fn read_u16(&self, address: u32) -> u16 {
         let address = address & !0b1;
         match self.region(address) {
@@ -322,6 +348,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     pub fn read_u32(&self, address: u32) -> u32 {
         let address = address & !0b11;
         match self.region(address) {
@@ -336,6 +363,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     pub fn write_u8(&mut self, address: u32, value: u8) {
         match self.region(address) {
             Region::Ram(Ram::Oam, _) => {}
@@ -356,6 +384,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     pub fn write_u16(&mut self, address: u32, value: u16) {
         let selected_byte = value.to_le_bytes()[(address & 0b1) as usize];
         match self.region(address & !0b1) {
@@ -375,6 +404,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     pub fn write_u32(&mut self, address: u32, value: u32) {
         let selected_byte = byte_of(value, address);
         match self.region(address & !0b11) {
@@ -400,6 +430,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     fn gpio_or_rom_u16(&self, address: u32, offset: u32) -> u16 {
         if self.gpio.readable() && offset < 6 {
             self.gpio.read(offset)
@@ -408,6 +439,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     fn rom_u8(&self, offset: usize) -> u8 {
         match self.game_pak.get(offset) {
             Some(byte) => *byte,
@@ -415,6 +447,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     fn rom_u16(&self, offset: usize) -> u16 {
         if offset + 2 <= self.game_pak.len() {
             halfword(&self.game_pak, offset)
@@ -423,6 +456,7 @@ impl Memory {
         }
     }
 
+    #[inline]
     fn rom_u32(&self, offset: usize) -> u32 {
         if offset + 4 <= self.game_pak.len() {
             word(&self.game_pak, offset)
@@ -632,6 +666,7 @@ impl Memory {
     }
 }
 
+#[inline]
 fn vram_offset(address: u32) -> usize {
     let offset = address.bits(0..17) as usize;
     if offset >= VRAM_LEN {

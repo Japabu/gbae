@@ -10,10 +10,12 @@ pub enum Access {
     Sequential,
 }
 
+#[inline]
 pub fn is_rom(address: u32) -> bool {
     (0x08..=0x0D).contains(&(address >> 24))
 }
 
+#[inline]
 fn rom_wait_state(address: u32) -> usize {
     ((address >> 25) - 4) as usize
 }
@@ -73,28 +75,34 @@ impl Bus {
         self.wait = WaitStates::decode(wait_cnt);
     }
 
+    #[inline]
     pub fn take_cycles(&mut self) -> u32 {
         std::mem::take(&mut self.cycles)
     }
 
+    #[inline]
     pub fn add_cycles(&mut self, cycles: u32) {
         self.cycles += cycles;
     }
 
+    #[inline]
     pub fn idle(&mut self, cycles: u32) {
         self.cycles += cycles;
         self.advance_prefetch(cycles);
     }
 
+    #[inline]
     pub fn invalidate_sequence(&mut self) {
         self.next_fetch = None;
     }
 
+    #[inline]
     pub fn interrupt(&mut self) {
         self.prefetch.active = false;
         self.next_fetch = None;
     }
 
+    #[inline]
     pub fn access_cycles(&self, address: u32, bytes: u32, access: Access) -> u32 {
         let word = bytes == 4;
         match address >> 24 {
@@ -127,10 +135,12 @@ impl Bus {
         }
     }
 
+    #[inline]
     fn rom_next_cycles(&self, address: u32) -> u32 {
         self.wait.rom_next[rom_wait_state(address)]
     }
 
+    #[inline]
     fn advance_prefetch(&mut self, cycles: u32) {
         if !self.prefetch.active || self.prefetch.buffered >= PREFETCH_CAPACITY {
             return;
@@ -146,6 +156,7 @@ impl Bus {
         }
     }
 
+    #[inline]
     fn prefetched_fetch_cycles(&mut self, address: u32, bytes: u32) -> u32 {
         (address..address + bytes)
             .step_by(2)
@@ -174,6 +185,7 @@ impl Bus {
             .sum()
     }
 
+    #[inline]
     pub fn charge_fetch(&mut self, address: u32, bytes: u32) {
         let access = if self.next_fetch == Some(address) { Access::Sequential } else { Access::Nonsequential };
         let cycles = if is_rom(address) && self.wait.prefetch {
@@ -188,6 +200,7 @@ impl Bus {
         self.next_fetch = Some(address.wrapping_add(bytes));
     }
 
+    #[inline]
     pub fn charge_data(&mut self, address: u32, bytes: u32, access: Access) {
         let cycles = self.access_cycles(address, bytes, access);
         self.cycles += cycles;

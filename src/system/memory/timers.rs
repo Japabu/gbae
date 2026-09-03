@@ -88,6 +88,7 @@ impl Timers {
             .fold(0, |mask, (index, _)| mask | 1 << index)
     }
 
+    #[inline]
     pub fn tick(&mut self, cycles: u32) -> u8 {
         self.pending += cycles;
         if self.pending < self.budget {
@@ -97,6 +98,7 @@ impl Timers {
         }
     }
 
+    #[inline]
     pub fn cycles_until_flush(&self) -> u32 {
         self.budget.saturating_sub(self.pending).max(1)
     }

@@ -6,6 +6,26 @@ use std::collections::VecDeque;
 use std::env;
 use std::fs;
 use std::panic;
+use std::path::Path;
+
+struct Snapshot {
+    pc: u32,
+    thumb: bool,
+    word: u32,
+    registers: [u32; 16],
+    cpsr: u32,
+}
+
+impl Snapshot {
+    fn disassembly(&self) -> String {
+        let text = if self.thumb {
+            format_instruction_thumb(self.word as u16, (self.word >> 16) as u16, self.pc)
+        } else {
+            format_instruction_arm(self.word, self.pc)
+        };
+        text.lines().next().unwrap_or("").to_string()
+    }
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -16,7 +36,7 @@ fn main() {
     let bios = if args[1] == "-" {
         Bios::Builtin
     } else {
-        Bios::Image(fs::read(&args[1]).expect("Failed to read BIOS"))
+        Bios::load(Path::new(&args[1])).expect("Failed to read BIOS")
     };
     let rom = fs::read(&args[2]).expect("Failed to read ROM");
     let mut max_steps = u64::MAX;
@@ -45,7 +65,7 @@ fn main() {
     }
 
     let mut gba = Gba::new(bios, rom);
-    let mut history: VecDeque<(u32, bool, u32, [u32; 16], u32)> = VecDeque::new();
+    let mut history: VecDeque<Snapshot> = VecDeque::new();
     let mut steps = 0u64;
     let mut watched_value = watch.map_or(0, |address| gba.mem.read_u32(address));
 
@@ -80,7 +100,13 @@ fn main() {
             if history.len() == 40 {
                 history.pop_front();
             }
-            history.push_back((pc, thumb, word, registers, gba.cpu.cpsr().bits()));
+            history.push_back(Snapshot {
+                pc,
+                thumb,
+                word,
+                registers,
+                cpsr: gba.cpu.cpsr().bits(),
+            });
             gba.step();
             steps += 1;
             if let Some(address) = watch {
@@ -110,20 +136,15 @@ fn main() {
         println!("distinct addresses: {}", counts.len());
     }
     println!("last instructions (oldest first):");
-    for (pc, thumb, word, _, _) in history.iter() {
-        let text = if *thumb {
-            format_instruction_thumb(*word as u16, (*word >> 16) as u16, *pc)
-        } else {
-            format_instruction_arm(*word, *pc)
-        };
-        println!("  {:08X} {} {}", pc, if *thumb { "T" } else { "A" }, text.lines().next().unwrap_or(""));
+    for snapshot in &history {
+        println!("  {:08X} {} {}", snapshot.pc, if snapshot.thumb { "T" } else { "A" }, snapshot.disassembly());
     }
-    if let Some((_, _, _, registers, cpsr)) = history.back() {
+    if let Some(snapshot) = history.back() {
         println!("registers before last instruction:");
-        for (i, value) in registers.iter().enumerate() {
-            println!("  r{:<2} = {:08X}", i, value);
+        for (register, value) in Register::all().zip(snapshot.registers) {
+            println!("  {:<3} = {:08X}", register.to_string(), value);
         }
-        println!("  cpsr = {:08X}", cpsr);
+        println!("  cpsr = {:08X}", snapshot.cpsr);
     }
     if result.is_err() {
         std::process::exit(1);

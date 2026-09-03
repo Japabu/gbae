@@ -55,7 +55,7 @@ impl Gba {
         let stalled = self.mem.take_cycles() as u64;
         self.cpu.add_cycles(stalled);
         self.mem.tick(stalled as u32);
-        let io = self.mem.get_io_registers_mut();
+        let io = self.mem.io_mut();
         if io.halted && io.ie & io.irf == 0 {
             let skipped = self.next_event_cycles.saturating_sub(self.cpu.cycles());
             self.cpu.add_cycles(skipped);
@@ -85,7 +85,7 @@ impl Gba {
 
     fn start_scanline(&mut self) {
         let v_count = (self.scanline_counter % SCANLINES_PER_FRAME) as u16;
-        let io = self.mem.get_io_registers_mut();
+        let io = self.mem.io_mut();
         io.v_count = v_count;
         io.disp_stat &= !(DISPSTAT_VBLANK | DISPSTAT_HBLANK | DISPSTAT_VCOUNT);
 
@@ -109,7 +109,7 @@ impl Gba {
     }
 
     fn start_hblank(&mut self) {
-        let io = self.mem.get_io_registers_mut();
+        let io = self.mem.io_mut();
         io.disp_stat |= DISPSTAT_HBLANK;
         if io.disp_stat & DISPSTAT_HBLANK_IRQ != 0 {
             io.irf |= IRQ_HBLANK;
@@ -145,13 +145,13 @@ impl Gba {
     }
 
     pub fn set_key(&mut self, key: Key, pressed: bool) {
-        let keys = self.mem.get_io_registers().pressed_keys();
+        let keys = self.mem.io().pressed_keys();
         let keys = if pressed { keys | key.bit() } else { keys & !key.bit() };
-        self.mem.get_io_registers_mut().set_pressed_keys(keys);
+        self.mem.io_mut().set_pressed_keys(keys);
     }
 
     pub fn set_pressed_keys(&mut self, keys: u16) {
-        self.mem.get_io_registers_mut().set_pressed_keys(keys);
+        self.mem.io_mut().set_pressed_keys(keys);
     }
 
     pub fn save_type(&self) -> SaveType {

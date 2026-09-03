@@ -151,7 +151,7 @@ impl PPU {
     }
 
     pub fn draw_scanline(&mut self, mem: &Memory) {
-        let io = mem.get_io_registers();
+        let io = mem.io();
         let y = io.v_count as usize;
 
         let (_, mosaic_y) = mosaic_size(true, io.mosaic);

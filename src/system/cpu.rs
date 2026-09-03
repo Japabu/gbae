@@ -495,7 +495,7 @@ impl CPU {
 
     #[inline(always)]
     pub fn handle_interrupts(&mut self, mem: &mut Memory) {
-        let io = mem.get_io_registers();
+        let io = mem.io();
         if io.ime && !self.cpsr.irq_disabled() && io.ie & io.irf != 0 {
             self.take_exception(Mode::Irq, IRQ_VECTOR, self.pc().wrapping_add(4));
             self.flush_pipeline(mem);

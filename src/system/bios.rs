@@ -93,8 +93,8 @@ pub fn call(function: u32, cpu: &mut CPU, mem: &mut Memory) {
     match function {
         0x00 => soft_reset(cpu, mem),
         0x01 => register_ram_reset(argument(R0), mem),
-        0x02 => mem.get_io_registers_mut().halted = true,
-        0x03 | 0x27 => mem.get_io_registers_mut().halted = true,
+        0x02 => mem.io_mut().halted = true,
+        0x03 | 0x27 => mem.io_mut().halted = true,
         0x04 => intr_wait(argument(R0) != 0, argument(R1), cpu, mem),
         0x05 => intr_wait(true, 1, cpu, mem),
         0x06 => divide(argument(R0), argument(R1), cpu, mem),
@@ -203,7 +203,7 @@ fn intr_wait(discard_old: bool, mask: u32, cpu: &mut CPU, mem: &mut Memory) {
         mem.set_intr_waiting(false);
     } else {
         mem.set_intr_waiting(true);
-        mem.get_io_registers_mut().halted = true;
+        mem.io_mut().halted = true;
         cpu.set_r(PC, cpu.pc());
     }
 }

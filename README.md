@@ -3,8 +3,8 @@
 A Game Boy Advance emulator in Rust, MIT licensed, with its own BIOS.
 
 The core (`gbae` library) is a cycle-counting ARM7TDMI with the full memory
-map, PPU, sound, DMA, timers, saves and cartridge clock; its only dependency
-is `seq-macro`. The window build adds `winit`, `softbuffer` and `cpal`.
+map, PPU, sound, DMA, timers, saves and cartridge clock, and has no
+dependencies. The window build adds `winit`, `softbuffer` and `cpal`.
 
 ## Running
 
@@ -122,23 +122,29 @@ struct, `decode_*` functions building it from an instruction word,
 checked against the decoders by round-trip tests over all 4096 ARM lookup
 entries and all 65536 Thumb words.
 
+`lut.rs` lists the instruction formats as bit patterns, in the order the
+hardware resolves them, and builds two tables from that list at compile
+time: the format of every 12-bit ARM index (bits 27..20 and 7..4) and of
+every 8-bit Thumb index (bits 15..8), and the handler for each.
+
 ```
- ARM word                                THUMB word
- bits 27..20 and 7..4 ──► 12-bit index   bits 15..6 ──► 10-bit index
-                            │                              │
-                     ARM_LUT[index]                  THUMB_LUT[index]
-                            │                              │
-             execute_arm::<INDEX>(word)     execute_thumb::<INDEX>(word)
-                            │                              │
-     put INDEX bits back, decode with the pattern table, execute
-              "000xxxxx 1xx1" ─► load_store::decode_extra_arm
-              "101xxxxx xxxx" ─► branch::decode_b_arm / decode_bl_arm
-                            ▼
-                  enum Instruction { DataProcessing, LoadStore, Branch, ... }
+ ARM_FORMATS                                   word E1A01000 (MOV R1, R0)
+   "00010x00 0000" => Mrs                         index 1A0
+   "00010010 0001" => BranchExchange                │
+   "000000xx 1001" => Multiply                      ▼
+   ...                            ARM_FORMAT_LUT[1A0] = DataProcessing
+   "000xxxxx xxxx" => DataProcessing                │
+   ...                                              ▼
+                                  ARM_LUT[1A0] = run_arm::<DataProcessing>
+                                                    │
+                                                    ▼
+                                  data_processing::decode_arm(word).execute(cpu, mem)
 ```
 
-The index is a const generic, so each table entry compiles to its own
-handler without a second description of any instruction.
+There is one handler per format, 13 for ARM and 23 for Thumb; each has
+its family's decoder and executor inlined, so an instruction costs one
+table lookup and one indirect call. The same format table serves
+`Instruction::decode_arm` for the disassembler and the tests.
 
 ## CPU
 

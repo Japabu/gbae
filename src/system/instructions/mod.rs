@@ -37,108 +37,13 @@ pub enum Instruction {
     Unknown(u32),
 }
 
-const fn pattern_bits(pattern: &str, ones: bool) -> u32 {
-    let bytes = pattern.as_bytes();
-    let mut length = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != b' ' {
-            length += 1;
-        }
-        i += 1;
-    }
-    let mut result = 0;
-    let mut position = length;
-    i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b' ' => {}
-            b'0' | b'1' | b'x' => {
-                position -= 1;
-                let set = if ones { bytes[i] == b'1' } else { bytes[i] != b'x' };
-                if set {
-                    result |= 1 << position;
-                }
-            }
-            _ => panic!("Pattern may only contain 0, 1, x and spaces"),
-        }
-        i += 1;
-    }
-    result
-}
-
-pub const fn pattern_mask(pattern: &str) -> u32 {
-    pattern_bits(pattern, false)
-}
-
-pub const fn pattern_value(pattern: &str) -> u32 {
-    pattern_bits(pattern, true)
-}
-
-macro_rules! match_pattern {
-    ($bits:expr, { $($pattern:literal => $result:expr,)* _ => $default:expr $(,)? }) => {{
-        let bits = $bits;
-        match () {
-            $(_ if bits & const { pattern_mask($pattern) } == const { pattern_value($pattern) } => $result,)*
-            _ => $default,
-        }
-    }};
-}
-
 impl Instruction {
-    #[inline(always)]
     pub fn decode_arm(word: u32) -> Instruction {
-        match_pattern!(lut::index_arm(word) as u32, {
-            "00010x00 0000" => ctrl_ext::decode_mrs_arm(word),
-            "00010x10 0000" => ctrl_ext::decode_msr_arm(word),
-            "00010010 0001" => branch::decode_bx_arm(word),
-            "000000xx 1001" => multiply::decode_arm(word),
-            "00001xxx 1001" => multiply::decode_arm(word),
-            "00010x00 1001" => load_store::decode_swap_arm(word),
-            "000xxxxx 1xx1" => load_store::decode_extra_arm(word),
-            "00010xx0 xxxx" => Instruction::Unknown(word),
-            "000xxxxx xxxx" => data_processing::decode_arm(word),
-            "00110x00 xxxx" => Instruction::Unknown(word),
-            "00110x10 xxxx" => ctrl_ext::decode_msr_arm(word),
-            "001xxxxx xxxx" => data_processing::decode_arm(word),
-            "010xxxxx xxxx" => load_store::decode_arm(word),
-            "011xxxxx xxx0" => load_store::decode_arm(word),
-            "100xxxxx xxxx" => load_store_multiple::decode_arm(word),
-            "1010xxxx xxxx" => branch::decode_b_arm(word),
-            "1011xxxx xxxx" => branch::decode_bl_arm(word),
-            "1111xxxx xxxx" => swi::decode_arm(word),
-            _ => Instruction::Unknown(word),
-        })
+        lut::arm_format(word).decode(word)
     }
 
-    #[inline(always)]
     pub fn decode_thumb(word: u16) -> Instruction {
-        match_pattern!(u32::from(word).bits(8..), {
-            "000 11 0 xx" => data_processing::decode_add_sub_register_thumb(word),
-            "000 11 1 xx" => data_processing::decode_add_sub_immediate_thumb(word),
-            "000 xx x xx" => data_processing::decode_shift_imm_thumb(word),
-            "001 xxxxx" => data_processing::decode_mov_cmp_add_sub_immediate_thumb(word),
-            "010000 xx" => data_processing::decode_register_thumb(word),
-            "010001 11" => branch::decode_branch_exchange_thumb(word),
-            "010001 xx" => data_processing::decode_special_thumb(word),
-            "01001 xxx" => load_store::decode_load_from_literal_pool_thumb(word),
-            "0101 xxxx" => load_store::decode_register_offset_thumb(word),
-            "011x xxxx" => load_store::decode_word_byte_thumb(word),
-            "1000 xxxx" => load_store::decode_halfword_thumb(word),
-            "1001 xxxx" => load_store::decode_stack_thumb(word),
-            "1010 xxxx" => data_processing::decode_add_sp_pc_thumb(word),
-            "1011 0000" => data_processing::decode_adjust_sp_thumb(word),
-            "1011 010x" => load_store_multiple::decode_push_thumb(word),
-            "1011 110x" => load_store_multiple::decode_pop_thumb(word),
-            "1100 xxxx" => load_store_multiple::decode_ldm_stm_thumb(word),
-            "1101 1110" => Instruction::Unknown(u32::from(word)),
-            "1101 1111" => swi::decode_thumb(word),
-            "1101 xxxx" => branch::decode_conditional_branch_thumb(word),
-            "11100 xxx" => branch::decode_unconditional_branch_thumb(word),
-            "11110 xxx" => branch::decode_bl_prefix_thumb(word),
-            "11111 xxx" => branch::decode_bl_suffix_thumb(word),
-            _ => Instruction::Unknown(u32::from(word)),
-        })
+        lut::thumb_format(word).decode(word)
     }
 
     #[inline(always)]
@@ -430,16 +335,6 @@ mod tests {
     }
 
     #[test]
-    fn test_pattern_parsing() {
-        assert_eq!(pattern_mask("000xxxxx xxx0"), 0b1110_0000_0001);
-        assert_eq!(pattern_value("000xxxxx xxx0"), 0);
-        assert_eq!(pattern_mask("00010010 0001"), 0xFFF);
-        assert_eq!(pattern_value("00010010 0001"), 0x121);
-        assert_eq!(pattern_mask("1011 010x"), 0xFE);
-        assert_eq!(pattern_value("1011 010x"), 0xB4);
-    }
-
-    #[test]
     fn test_thumb_bl_pair_is_formatted_as_one_branch() {
         assert!(format_instruction_thumb(0xF000, 0xF802, 0x0800_0000).starts_with("BL #08000008"));
     }
@@ -456,7 +351,7 @@ mod tests {
         let mut state = 0x2545_F491;
         for index in 0..lut::LUT_ARM_SIZE {
             for _ in 0..8 {
-                let word = lut::with_index_arm(xorshift(&mut state), index);
+                let word = xorshift(&mut state).with_bits(20..28, (index as u32).bits(4..12)).with_bits(4..8, (index as u32).bits(0..4));
                 let decoded = Instruction::decode_arm(word);
                 if matches!(decoded, Instruction::Unknown(_)) {
                     continue;

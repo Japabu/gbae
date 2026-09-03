@@ -129,6 +129,8 @@ pub struct IoRegisters {
     tm_counter: [u16; 4],
     tm_cycles: [u32; 4],
     timer_overflows: u8,
+    timer_pending: u32,
+    timer_budget: u32,
     sio_data32: u32,
     sio_multi2: u16,
     sio_multi3: u16,
@@ -179,6 +181,8 @@ impl IoRegisters {
             tm_counter: [0; 4],
             tm_cycles: [0; 4],
             timer_overflows: 0,
+            timer_pending: 0,
+            timer_budget: 0,
             sio_data32: 0,
             sio_multi2: 0,
             sio_multi3: 0,
@@ -226,13 +230,13 @@ impl IoRegisters {
             0x0D2 => self.dma_cnt_h[2],
             0x0DC => self.dma_cnt_l[3],
             0x0DE => self.dma_cnt_h[3],
-            0x100 => self.tm_counter[0],
+            0x100 => self.timer_counter_now(0),
             0x102 => self.tm_control[0],
-            0x104 => self.tm_counter[1],
+            0x104 => self.timer_counter_now(1),
             0x106 => self.tm_control[1],
-            0x108 => self.tm_counter[2],
+            0x108 => self.timer_counter_now(2),
             0x10A => self.tm_control[2],
-            0x10C => self.tm_counter[3],
+            0x10C => self.timer_counter_now(3),
             0x10E => self.tm_control[3],
             0x120 => self.sio_data32 as u16,
             0x122 => (self.sio_data32 >> 16) as u16,
@@ -346,14 +350,7 @@ impl IoRegisters {
             0x0DA => self.dma_dad[3] = self.dma_dad[3] & 0x0000_FFFF | (value as u32) << 16,
             0x0DC => self.dma_cnt_l[3] = value,
             0x0DE => self.dma_cnt_h[3] = value,
-            0x100 => self.tm_reload[0] = value,
-            0x102 => self.write_timer_control(0, value),
-            0x104 => self.tm_reload[1] = value,
-            0x106 => self.write_timer_control(1, value),
-            0x108 => self.tm_reload[2] = value,
-            0x10A => self.write_timer_control(2, value),
-            0x10C => self.tm_reload[3] = value,
-            0x10E => self.write_timer_control(3, value),
+            0x100..=0x10E => self.write_timer_register(offset, value),
             0x120 => self.sio_data32 = self.sio_data32 & 0xFFFF_0000 | value as u32,
             0x122 => self.sio_data32 = self.sio_data32 & 0x0000_FFFF | (value as u32) << 16,
             0x124 => self.sio_multi2 = value,
@@ -440,6 +437,7 @@ impl IoRegisters {
         writer.u16s(&self.tm_counter);
         writer.u32s(&self.tm_cycles);
         writer.u8(self.timer_overflows);
+        writer.u32(self.timer_pending);
         writer.u32(self.sio_data32);
         writer.u16(self.sio_multi2);
         writer.u16(self.sio_multi3);
@@ -492,6 +490,8 @@ impl IoRegisters {
         reader.u16s(&mut self.tm_counter)?;
         reader.u32s(&mut self.tm_cycles)?;
         self.timer_overflows = reader.u8()?;
+        self.timer_pending = reader.u32()?;
+        self.timer_budget = 0;
         self.sio_data32 = reader.u32()?;
         self.sio_multi2 = reader.u16()?;
         self.sio_multi3 = reader.u16()?;
@@ -519,41 +519,78 @@ impl IoRegisters {
         self.bg_reference_written[bg] = true;
     }
 
-    fn write_timer_control(&mut self, channel: usize, value: u16) {
-        if value & 0x80 != 0 && self.tm_control[channel] & 0x80 == 0 {
-            self.tm_counter[channel] = self.tm_reload[channel];
-            self.tm_cycles[channel] = 0;
+    fn write_timer_register(&mut self, offset: u32, value: u16) {
+        self.flush_timers();
+        let channel = ((offset - 0x100) / 4) as usize;
+        if offset & 2 == 0 {
+            self.tm_reload[channel] = value;
+        } else {
+            if value & 0x80 != 0 && self.tm_control[channel] & 0x80 == 0 {
+                self.tm_counter[channel] = self.tm_reload[channel];
+                self.tm_cycles[channel] = 0;
+            }
+            self.tm_control[channel] = value;
         }
-        self.tm_control[channel] = value;
+        self.timer_budget = self.cycles_until_next_overflow();
+    }
+
+    fn timer_shift(control: u16) -> u32 {
+        match control & 3 {
+            0 => 0,
+            1 => 6,
+            2 => 8,
+            _ => 10,
+        }
+    }
+
+    fn timer_counts(&self, channel: usize) -> bool {
+        let control = self.tm_control[channel];
+        control & 0x80 != 0 && (channel == 0 || control & 0x4 == 0)
+    }
+
+    fn timer_counter_now(&self, channel: usize) -> u16 {
+        if self.timer_counts(channel) {
+            let elapsed = (self.tm_cycles[channel] + self.timer_pending) >> Self::timer_shift(self.tm_control[channel]);
+            self.tm_counter[channel].wrapping_add(elapsed as u16)
+        } else {
+            self.tm_counter[channel]
+        }
     }
 
     #[inline(always)]
     pub fn tick_timers(&mut self, cycles: u32) -> u8 {
-        if (self.tm_control[0] | self.tm_control[1] | self.tm_control[2] | self.tm_control[3]) & 0x80 != 0 {
-            self.tick_enabled_timers(cycles)
-        } else {
+        self.timer_pending += cycles;
+        if self.timer_pending < self.timer_budget {
             0
+        } else {
+            self.flush_timers()
         }
     }
 
-    fn tick_enabled_timers(&mut self, cycles: u32) -> u8 {
-        self.timer_overflows = 0;
+    fn flush_timers(&mut self) -> u8 {
+        let cycles = std::mem::replace(&mut self.timer_pending, 0);
         for channel in 0..4 {
-            let control = self.tm_control[channel];
-            if control & 0x80 == 0 || (channel != 0 && control & 0x4 != 0) {
-                continue;
+            if self.timer_counts(channel) {
+                let shift = Self::timer_shift(self.tm_control[channel]);
+                let accumulated = self.tm_cycles[channel] + cycles;
+                self.tm_cycles[channel] = accumulated & ((1 << shift) - 1);
+                self.increment_timer(channel, accumulated >> shift);
             }
-            let shift = match control & 3 {
-                0 => 0,
-                1 => 6,
-                2 => 8,
-                _ => 10,
-            };
-            let accumulated = self.tm_cycles[channel] + cycles;
-            self.tm_cycles[channel] = accumulated & ((1 << shift) - 1);
-            self.increment_timer(channel, accumulated >> shift);
         }
-        self.timer_overflows
+        self.timer_budget = self.cycles_until_next_overflow();
+        std::mem::replace(&mut self.timer_overflows, 0)
+    }
+
+    fn cycles_until_next_overflow(&self) -> u32 {
+        let mut distance = 1 << 16;
+        for channel in 0..4 {
+            if self.timer_counts(channel) {
+                let shift = Self::timer_shift(self.tm_control[channel]);
+                let remaining = ((0x10000 - self.tm_counter[channel] as u32) << shift) - self.tm_cycles[channel];
+                distance = distance.min(remaining);
+            }
+        }
+        distance.max(1)
     }
 
     fn increment_timer(&mut self, channel: usize, ticks: u32) {
@@ -714,7 +751,10 @@ pub struct Memory {
     cycles: u32,
     next_fetch_sequential: bool,
     next_fetch_address: u32,
+    apu_pending: u32,
 }
+
+const APU_BATCH_CYCLES: u32 = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DmaTiming {
@@ -775,6 +815,7 @@ impl Memory {
             cycles: 0,
             next_fetch_sequential: false,
             next_fetch_address: 0,
+            apu_pending: 0,
         }
     }
 
@@ -1038,8 +1079,11 @@ impl Memory {
     }
 
     pub fn tick(&mut self, cycles: u32) {
+        self.apu_pending += cycles;
         let overflowed = self.io_registers.tick_timers(cycles);
-        self.apu.run(cycles);
+        if overflowed != 0 || self.apu_pending >= APU_BATCH_CYCLES {
+            self.flush_apu();
+        }
         for timer in 0..2u8 {
             if overflowed & (1 << timer) != 0 {
                 let refill = self.apu.timer_overflow(timer);
@@ -1049,6 +1093,13 @@ impl Memory {
                     }
                 }
             }
+        }
+    }
+
+    pub fn flush_apu(&mut self) {
+        let cycles = std::mem::replace(&mut self.apu_pending, 0);
+        if cycles > 0 {
+            self.apu.run(cycles);
         }
     }
 
@@ -1103,6 +1154,7 @@ impl Memory {
             RegionKey::Wram2(offset) => self.wram2[offset] = value,
             RegionKey::IoRegisters(offset) => {
                 if APU_REGISTERS.contains(&offset) {
+                    self.flush_apu();
                     let old = self.apu.read_u16(offset & !0b1);
                     let new = if offset & 1 == 0 { old & 0xFF00 | value as u16 } else { old & 0x00FF | (value as u16) << 8 };
                     self.apu.write_u16(offset & !0b1, new);
@@ -1126,6 +1178,7 @@ impl Memory {
             RegionKey::Wram2(offset) => write_halfword(&mut self.wram2[..], offset, value),
             RegionKey::IoRegisters(offset) => {
                 if APU_REGISTERS.contains(&offset) {
+                    self.flush_apu();
                     self.apu.write_u16(offset, value);
                 } else {
                     self.io_registers.write_u16(offset, value);
@@ -1153,6 +1206,7 @@ impl Memory {
                 0x0A0 => self.apu.write_fifo(0, value),
                 0x0A4 => self.apu.write_fifo(1, value),
                 _ if APU_REGISTERS.contains(&offset) => {
+                    self.flush_apu();
                     self.apu.write_u16(offset, value as u16);
                     self.apu.write_u16(offset + 2, (value >> 16) as u16);
                 }
@@ -1207,6 +1261,7 @@ impl Memory {
         writer.u32(self.cycles);
         writer.bool(self.next_fetch_sequential);
         writer.u32(self.next_fetch_address);
+        writer.u32(self.apu_pending);
     }
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
@@ -1237,6 +1292,7 @@ impl Memory {
         self.cycles = reader.u32()?;
         self.next_fetch_sequential = reader.bool()?;
         self.next_fetch_address = reader.u32()?;
+        self.apu_pending = reader.u32()?;
         Ok(())
     }
 

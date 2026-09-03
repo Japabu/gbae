@@ -200,6 +200,7 @@ impl Gba {
     }
 
     pub fn take_audio_samples(&mut self) -> Vec<i16> {
+        self.mem.flush_apu();
         self.mem.apu.take_samples()
     }
 

@@ -1,25 +1,18 @@
-use gbae::system::bios::Bios;
 use gbae::system::gba::Gba;
 use std::env;
 use std::fs;
-use std::path::Path;
 use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 4 {
-        eprintln!("usage: bench <bios or -> <rom> <frames>");
+    if args.len() != 3 {
+        eprintln!("usage: bench <rom> <frames>");
         std::process::exit(1);
     }
-    let bios = if args[1] == "-" {
-        Bios::Builtin
-    } else {
-        Bios::load(Path::new(&args[1])).expect("Failed to read BIOS")
-    };
-    let rom = fs::read(&args[2]).expect("Failed to read ROM");
-    let frames: u64 = args[3].parse().expect("Failed to parse frame count");
+    let rom = fs::read(&args[1]).expect("Failed to read ROM");
+    let frames: u64 = args[2].parse().expect("Failed to parse frame count");
 
-    let mut gba = Gba::new(bios, rom);
+    let mut gba = Gba::new(rom);
     let mut instructions = 0u64;
     let mut halted_steps = 0u64;
     let start = Instant::now();

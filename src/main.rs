@@ -4,16 +4,16 @@ mod font;
 mod menu;
 
 use audio::Audio;
-use config::{Settings, CONFIG_FILE};
+use config::Settings;
 use gbae::cartridge::CartridgeInfo;
 use gbae::system::apu::SAMPLE_RATE;
-use gbae::system::bios::Bios;
 use gbae::system::cpu::CPU_FREQUENCY;
 use gbae::system::gba::{Gba, CYCLES_PER_SCANLINE, SCANLINES_PER_FRAME};
 use gbae::system::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 use menu::{Action, Menu};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use winit::application::ApplicationHandler;
@@ -23,13 +23,37 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
+const USAGE: &str = "usage: gbae [-h | --help] [-V | --version] [ROM]";
 const SAVE_FLUSH_INTERVAL_FRAMES: u32 = 60;
-const TURBO_SLICE: Duration = Duration::from_millis(8);
-const MAX_FRAMES_PER_WAKE: u32 = 4;
+const WORK_SLICE: Duration = Duration::from_millis(8);
+const AUDIO_QUEUE_FRACTION_OF_SECOND: u32 = 20;
 const NOTICE_DURATION: Duration = Duration::from_millis(1500);
 
 fn frame_duration() -> Duration {
     Duration::from_secs_f64(CYCLES_PER_SCANLINE as f64 * SCANLINES_PER_FRAME as f64 / CPU_FREQUENCY as f64)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Arguments {
+    Run(Option<PathBuf>),
+    Help,
+    Version,
+}
+
+fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Arguments, String> {
+    let mut rom = None;
+    let mut options_ended = false;
+    for argument in arguments {
+        match argument.as_str() {
+            "--" if !options_ended => options_ended = true,
+            "-h" | "--help" if !options_ended => return Ok(Arguments::Help),
+            "-V" | "--version" if !options_ended => return Ok(Arguments::Version),
+            option if !options_ended && option.starts_with('-') && option != "-" => return Err(format!("unknown option {}", option)),
+            _ if rom.is_some() => return Err("more than one ROM given".to_string()),
+            _ => rom = Some(PathBuf::from(&argument)),
+        }
+    }
+    Ok(Arguments::Run(rom))
 }
 
 struct Notice {
@@ -39,13 +63,13 @@ struct Notice {
 
 struct Emulator {
     gba: Gba,
-    bios: Bios,
     rom: Vec<u8>,
     save_path: PathBuf,
     state_path: PathBuf,
     title: String,
     audio: Option<Audio>,
     settings: Settings,
+    config_path: Option<PathBuf>,
     menu: Menu,
     turbo: bool,
     notice: Option<Notice>,
@@ -53,30 +77,22 @@ struct Emulator {
 }
 
 impl Emulator {
-    fn new(bios: Bios, rom_path: Option<&Path>, settings: Settings) -> Emulator {
-        let audio = Audio::new(settings.volume);
-        if audio.is_none() {
-            eprintln!("No audio output available, running silently");
-        }
+    fn new(settings: Settings, config_path: Option<PathBuf>, audio: Option<Audio>) -> Emulator {
         let mut emulator = Emulator {
-            gba: Gba::new(bios.clone(), Vec::new()),
-            bios,
+            gba: Gba::new(Vec::new()),
             rom: Vec::new(),
             save_path: PathBuf::new(),
             state_path: PathBuf::new(),
             title: "no ROM".to_string(),
             audio,
             settings,
+            config_path,
             menu: Menu::new(),
             turbo: false,
             notice: None,
             frames_since_save_check: 0,
         };
         emulator.configure_audio();
-        match rom_path {
-            Some(rom_path) => emulator.load_rom(rom_path),
-            None => emulator.menu.browse(&std::env::current_dir().unwrap_or_default()),
-        }
         emulator
     }
 
@@ -94,12 +110,25 @@ impl Emulator {
         self.gba.set_audio_sample_rate((f64::from(sample_rate) / multiplier).round() as u32);
     }
 
+    fn needs_audio(&self) -> bool {
+        self.audio
+            .as_ref()
+            .is_some_and(|audio| audio.queued_frames() < (audio.sample_rate() / AUDIO_QUEUE_FRACTION_OF_SECOND) as usize)
+    }
+
+    fn save_settings(&self) {
+        match &self.config_path {
+            Some(path) => self.settings.save(path),
+            None => eprintln!("gbae: no configuration directory, settings are not saved"),
+        }
+    }
+
     fn apply_settings(&mut self) {
         if let Some(audio) = &self.audio {
             audio.set_volume(self.settings.volume);
         }
         self.configure_audio();
-        self.settings.save(Path::new(CONFIG_FILE));
+        self.save_settings();
     }
 
     fn toggle_turbo(&mut self) {
@@ -120,14 +149,8 @@ impl Emulator {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
     }
 
-    fn load_rom(&mut self, rom_path: &Path) {
-        let rom = match std::fs::read(rom_path) {
-            Ok(rom) => rom,
-            Err(error) => {
-                eprintln!("Could not read {}: {}", rom_path.display(), error);
-                return;
-            }
-        };
+    fn load_rom(&mut self, rom_path: &Path) -> std::io::Result<()> {
+        let rom = std::fs::read(rom_path)?;
         self.flush_save(true);
         self.title = CartridgeInfo::parse(&rom).map(|cartridge| cartridge.title.trim().to_string()).unwrap_or_default();
         let rom_path = rom_path.canonicalize().unwrap_or_else(|_| rom_path.to_path_buf());
@@ -137,11 +160,12 @@ impl Emulator {
         self.reset();
         self.menu.set_directory(&self.rom_directory());
         eprintln!("Loaded {} ({}), save type {:?}", rom_path.display(), self.title, self.gba.save_type());
+        Ok(())
     }
 
     fn reset(&mut self) {
         self.flush_save(true);
-        self.gba = Gba::new(self.bios.clone(), self.rom.clone());
+        self.gba = Gba::new(self.rom.clone());
         self.configure_audio();
         if let Ok(save) = std::fs::read(&self.save_path) {
             self.gba.load_save_data(&save);
@@ -170,7 +194,7 @@ impl Emulator {
     fn flush_save(&mut self, force: bool) {
         if (self.gba.take_save_dirty() || force) && !self.gba.save_data().is_empty() && !self.save_path.as_os_str().is_empty() {
             if let Err(error) = std::fs::write(&self.save_path, self.gba.save_data()) {
-                eprintln!("Could not write {}: {}", self.save_path.display(), error);
+                eprintln!("gbae: cannot write {}: {}", self.save_path.display(), error);
             }
         }
     }
@@ -178,7 +202,7 @@ impl Emulator {
     fn save_state(&self) {
         match std::fs::write(&self.state_path, self.gba.save_state()) {
             Ok(()) => eprintln!("State saved to {}", self.state_path.display()),
-            Err(error) => eprintln!("Could not write {}: {}", self.state_path.display(), error),
+            Err(error) => eprintln!("gbae: cannot write {}: {}", self.state_path.display(), error),
         }
     }
 
@@ -186,7 +210,7 @@ impl Emulator {
         let bytes = match std::fs::read(&self.state_path) {
             Ok(bytes) => bytes,
             Err(error) => {
-                eprintln!("Could not read {}: {}", self.state_path.display(), error);
+                eprintln!("gbae: cannot read {}: {}", self.state_path.display(), error);
                 return;
             }
         };
@@ -198,7 +222,7 @@ impl Emulator {
                 eprintln!("State loaded from {}", self.state_path.display());
             }
             Err(error) => {
-                eprintln!("Could not load state: {}", error);
+                eprintln!("gbae: cannot load state: {}", error);
                 self.reset();
             }
         }
@@ -283,40 +307,43 @@ impl App {
     }
 
     fn run_pending_frames(&mut self) {
-        let now = Instant::now();
-        match self.emulator.speed() {
-            None => {
-                let deadline = now + TURBO_SLICE;
-                while Instant::now() < deadline {
+        let started = Instant::now();
+        let mut ran = false;
+        match (self.emulator.speed(), self.emulator.audio.is_some()) {
+            (None, _) => {
+                while started.elapsed() < WORK_SLICE {
                     self.emulator.run_frame();
+                    ran = true;
                 }
-                self.next_frame = Instant::now();
             }
-            Some(multiplier) => {
-                if now < self.next_frame {
-                    return;
+            (Some(_), true) => {
+                while self.emulator.needs_audio() && started.elapsed() < WORK_SLICE {
+                    self.emulator.run_frame();
+                    ran = true;
                 }
+            }
+            (Some(multiplier), false) => {
                 let interval = frame_duration().div_f64(multiplier);
-                for _ in 0..MAX_FRAMES_PER_WAKE {
+                while self.next_frame <= started && started.elapsed() < WORK_SLICE {
                     self.emulator.run_frame();
                     self.next_frame += interval;
-                    if now < self.next_frame {
-                        break;
-                    }
+                    ran = true;
                 }
-                if now >= self.next_frame {
-                    self.next_frame = now;
+                if self.next_frame < started {
+                    self.next_frame = started;
                 }
             }
         }
-        if let Some(window) = &self.window {
-            window.request_redraw();
+        if ran {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
     }
 
     fn quit(&mut self, event_loop: &ActiveEventLoop) {
         self.emulator.flush_save(true);
-        self.emulator.settings.save(Path::new(CONFIG_FILE));
+        self.emulator.save_settings();
         event_loop.exit();
     }
 }
@@ -333,6 +360,8 @@ impl ApplicationHandler for App {
         self.surface = Some(surface);
         self.next_frame = Instant::now();
     }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, (): ()) {}
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
         match event {
@@ -367,13 +396,15 @@ impl ApplicationHandler for App {
                         self.emulator.load_state();
                         self.emulator.menu.toggle();
                     }
-                    Action::LoadRom(path) => {
-                        self.emulator.load_rom(&path);
-                        if let Some(window) = &self.window {
-                            window.set_title(&format!("gbae - {}", self.emulator.title));
+                    Action::LoadRom(path) => match self.emulator.load_rom(&path) {
+                        Ok(()) => {
+                            if let Some(window) = &self.window {
+                                window.set_title(&format!("gbae - {}", self.emulator.title));
+                            }
+                            self.emulator.menu.toggle();
                         }
-                        self.emulator.menu.toggle();
-                    }
+                        Err(error) => eprintln!("gbae: cannot read {}: {}", path.display(), error),
+                    },
                     Action::Quit => self.quit(event_loop),
                     Action::None | Action::SettingsChanged => {}
                 }
@@ -389,24 +420,55 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if self.emulator.menu.open {
             event_loop.set_control_flow(ControlFlow::Wait);
-        } else {
-            self.run_pending_frames();
-            event_loop.set_control_flow(match self.emulator.speed() {
-                None => ControlFlow::Poll,
-                Some(_) => ControlFlow::WaitUntil(self.next_frame),
-            });
+            return;
         }
+        self.run_pending_frames();
+        event_loop.set_control_flow(match (self.emulator.speed(), self.emulator.audio.is_some()) {
+            (None, _) => ControlFlow::Poll,
+            (Some(_), true) => ControlFlow::Wait,
+            (Some(_), false) => ControlFlow::WaitUntil(self.next_frame),
+        });
     }
 }
 
-fn main() {
-    let bios_path = std::env::var("GBA_BIOS").unwrap_or_else(|_| "gba_bios.bin".to_string());
-    let bios = Bios::load(Path::new(&bios_path)).inspect(|_| eprintln!("Using BIOS {}", bios_path)).unwrap_or(Bios::Builtin);
-    let rom_path = std::env::args().nth(1).map(PathBuf::from).or_else(|| Path::new("rom.gba").exists().then(|| PathBuf::from("rom.gba")));
-    let settings = Settings::load(Path::new(CONFIG_FILE));
-    let emulator = Emulator::new(bios, rom_path.as_deref(), settings);
+fn main() -> ExitCode {
+    let rom_path = match parse_arguments(std::env::args().skip(1)) {
+        Ok(Arguments::Run(rom_path)) => rom_path,
+        Ok(Arguments::Help) => {
+            println!("{}", USAGE);
+            return ExitCode::SUCCESS;
+        }
+        Ok(Arguments::Version) => {
+            println!("gbae {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
+        Err(message) => {
+            eprintln!("gbae: {}\n{}", message, USAGE);
+            return ExitCode::from(2);
+        }
+    };
+    let config_path = config::config_path();
+    let settings = config_path.as_deref().map(Settings::load).unwrap_or_default();
 
-    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let event_loop = EventLoop::with_user_event().build().expect("Failed to create event loop");
+    let proxy = event_loop.create_proxy();
+    let audio = Audio::new(settings.volume, move || {
+        let _ = proxy.send_event(());
+    });
+    if audio.is_none() {
+        eprintln!("gbae: no audio output available, running silently");
+    }
+    let mut emulator = Emulator::new(settings, config_path, audio);
+    match rom_path {
+        Some(rom_path) => {
+            if let Err(error) = emulator.load_rom(&rom_path) {
+                eprintln!("gbae: cannot read {}: {}", rom_path.display(), error);
+                return ExitCode::FAILURE;
+            }
+        }
+        None => emulator.menu.browse(&std::env::current_dir().unwrap_or_default()),
+    }
+
     let mut app = App {
         window: None,
         surface: None,
@@ -414,4 +476,25 @@ fn main() {
         next_frame: Instant::now(),
     };
     event_loop.run_app(&mut app).expect("Event loop failed");
+    ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(arguments: &[&str]) -> Result<Arguments, String> {
+        parse_arguments(arguments.iter().map(|argument| argument.to_string()))
+    }
+
+    #[test]
+    fn test_arguments() {
+        assert_eq!(parse(&[]), Ok(Arguments::Run(None)));
+        assert_eq!(parse(&["game.gba"]), Ok(Arguments::Run(Some(PathBuf::from("game.gba")))));
+        assert_eq!(parse(&["--help"]), Ok(Arguments::Help));
+        assert_eq!(parse(&["-V"]), Ok(Arguments::Version));
+        assert_eq!(parse(&["--", "-odd.gba"]), Ok(Arguments::Run(Some(PathBuf::from("-odd.gba")))));
+        assert_eq!(parse(&["--fast"]), Err("unknown option --fast".to_string()));
+        assert_eq!(parse(&["a.gba", "b.gba"]), Err("more than one ROM given".to_string()));
+    }
 }

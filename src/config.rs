@@ -1,9 +1,18 @@
 use gbae::system::memory::Key;
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-pub const CONFIG_FILE: &str = "gbae.cfg";
+pub fn config_path() -> Option<PathBuf> {
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+    };
+    base.map(|base| base.join("gbae").join("config"))
+}
 
 const DEFAULT_KEYS: [&str; 10] = ["KeyZ", "KeyX", "Backspace", "Enter", "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown", "KeyS", "KeyA"];
 
@@ -119,8 +128,9 @@ impl Settings {
     }
 
     pub fn save(&self, path: &Path) {
-        if let Err(error) = std::fs::write(path, self.to_string()) {
-            eprintln!("Could not write {}: {}", path.display(), error);
+        let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, self.to_string()));
+        if let Err(error) = written {
+            eprintln!("gbae: cannot write {}: {}", path.display(), error);
         }
     }
 
@@ -175,9 +185,11 @@ mod tests {
 
     #[test]
     fn test_settings_round_trip() {
-        let mut settings = Settings::default();
-        settings.volume = 40;
-        settings.turbo = Speed::Unlimited;
+        let mut settings = Settings {
+            volume: 40,
+            turbo: Speed::Unlimited,
+            ..Settings::default()
+        };
         settings.bind(Key::L, "KeyQ".to_string());
         let parsed: Settings = settings.to_string().parse().unwrap();
         assert_eq!(parsed.volume, 40);

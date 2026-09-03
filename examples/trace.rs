@@ -1,4 +1,3 @@
-use gbae::system::bios::Bios;
 use gbae::system::cpu::Register;
 use gbae::system::gba::Gba;
 use gbae::system::instructions::{format_instruction_arm, format_instruction_thumb};
@@ -6,7 +5,6 @@ use std::collections::VecDeque;
 use std::env;
 use std::fs;
 use std::panic;
-use std::path::Path;
 
 struct Snapshot {
     pc: u32,
@@ -29,16 +27,11 @@ impl Snapshot {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("usage: trace <bios or -> <rom> [max_steps] [watch=<hex>] [break=<hex>] [break_cpsr=<mask>:<value>] [pc_min=<hex>]");
+    if args.len() < 2 {
+        eprintln!("usage: trace <rom> [max_steps] [watch=<hex>] [break=<hex>] [break_cpsr=<mask>:<value>] [pc_min=<hex>]");
         std::process::exit(1);
     }
-    let bios = if args[1] == "-" {
-        Bios::Builtin
-    } else {
-        Bios::load(Path::new(&args[1])).expect("Failed to read BIOS")
-    };
-    let rom = fs::read(&args[2]).expect("Failed to read ROM");
+    let rom = fs::read(&args[1]).expect("Failed to read ROM");
     let mut max_steps = u64::MAX;
     let mut watch: Option<u32> = None;
     let mut break_pc: Option<u32> = None;
@@ -46,7 +39,7 @@ fn main() {
     let mut pc_min = 0u32;
     let mut profile: Option<(u64, u64)> = None;
     let mut profile_counts: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
-    for arg in &args[3..] {
+    for arg in &args[2..] {
         if let Some(value) = arg.strip_prefix("watch=") {
             watch = u32::from_str_radix(value.trim_start_matches("0x"), 16).ok();
         } else if let Some(value) = arg.strip_prefix("break=") {
@@ -64,7 +57,7 @@ fn main() {
         }
     }
 
-    let mut gba = Gba::new(bios, rom);
+    let mut gba = Gba::new(rom);
     let mut history: VecDeque<Snapshot> = VecDeque::new();
     let mut steps = 0u64;
     let mut watched_value = watch.map_or(0, |address| gba.mem.read_u32(address));

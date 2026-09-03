@@ -1,7 +1,6 @@
 use crate::bits::Bits;
 
 use super::{
-    bios::Bios,
     cpu::CPU,
     memory::{DmaTiming, Interrupt, Key, Memory},
     ppu::{Framebuffer, PPU},
@@ -38,10 +37,10 @@ pub struct Gba {
 }
 
 impl Gba {
-    pub fn new(bios: Bios, cartridge_data: Vec<u8>) -> Gba {
+    pub fn new(cartridge_data: Vec<u8>) -> Gba {
         let mut gba = Gba {
             cpu: CPU::new(),
-            mem: Memory::new(bios, cartridge_data),
+            mem: Memory::new(cartridge_data),
             ppu: PPU::new(),
             scanline_counter: 0,
             next_event_cycles: HDRAW_CYCLES,

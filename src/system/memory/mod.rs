@@ -15,7 +15,7 @@ use self::{
 };
 use super::{
     apu::{Apu, FIFO_A, FIFO_B},
-    bios::Bios,
+    bios,
     rtc::Gpio,
     save::{Backup, SaveType},
     state::{Reader, StateError, Writer},
@@ -106,18 +106,13 @@ pub struct Memory {
     bios_last_opcode: u32,
     last_opcode: u32,
     executing_from_bios: bool,
-    builtin_bios: bool,
     intr_waiting: bool,
     apu_pending: u32,
 }
 
 impl Memory {
-    pub fn new(bios: Bios, game_pak: Vec<u8>) -> Memory {
-        let builtin_bios = bios.is_builtin();
-        let image = bios.bytes();
-        let mut bios = Box::new([0; BIOS_LEN]);
-        let length = image.len().min(BIOS_LEN);
-        bios[..length].copy_from_slice(&image[..length]);
+    pub fn new(game_pak: Vec<u8>) -> Memory {
+        let bios: Box<[u8; BIOS_LEN]> = bios::image().try_into().expect("the built-in BIOS image has the BIOS size");
         let backup = Backup::new(SaveType::detect(&game_pak));
         let game_pak_hash = game_pak
             .iter()
@@ -137,14 +132,9 @@ impl Memory {
             bios_last_opcode: 0,
             last_opcode: 0,
             executing_from_bios: true,
-            builtin_bios,
             intr_waiting: false,
             apu_pending: 0,
         }
-    }
-
-    pub fn has_builtin_bios(&self) -> bool {
-        self.builtin_bios
     }
 
     pub fn intr_waiting(&self) -> bool {
@@ -662,7 +652,7 @@ mod tests {
     use super::*;
 
     fn memory(rom: Vec<u8>) -> Memory {
-        Memory::new(Bios::Image(vec![0; BIOS_LEN]), rom)
+        Memory::new(rom)
     }
 
     #[test]
@@ -735,15 +725,14 @@ mod tests {
 
     #[test]
     fn test_bios_reads_outside_bios_return_last_fetched_opcode() {
-        let mut bios = vec![0u8; BIOS_LEN];
-        bios[0x100..0x104].copy_from_slice(&0x1234_5678u32.to_le_bytes());
-        let mut mem = Memory::new(Bios::Image(bios), vec![]);
-        assert_eq!(mem.fetch_u32(0x100), 0x1234_5678);
-        assert_eq!(mem.read_u32(0x200), 0);
+        let mut mem = memory(vec![]);
+        let reset_vector = mem.fetch_u32(0x000);
+        assert_ne!(reset_vector, 0);
+        assert_ne!(mem.read_u32(0x200), reset_vector);
         mem.fetch_u32(0x0800_0000);
-        assert_eq!(mem.read_u32(0x200), 0x1234_5678);
-        assert_eq!(mem.read_u16(0x202), 0x1234);
-        assert_eq!(mem.read_u8(0x201), 0x56);
+        assert_eq!(mem.read_u32(0x200), reset_vector);
+        assert_eq!(mem.read_u16(0x202), (reset_vector >> 16) as u16);
+        assert_eq!(mem.read_u8(0x201), (reset_vector >> 8) as u8);
     }
 
     #[test]

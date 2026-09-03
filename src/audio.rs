@@ -13,20 +13,20 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn new(volume: u8) -> Option<Audio> {
+    pub fn new(volume: u8, wake: impl Fn() + Send + 'static) -> Option<Audio> {
         let device = cpal::default_host().default_output_device()?;
         let config = device.default_output_config().ok()?;
         let queue = Arc::new(Mutex::new(VecDeque::new()));
         let volume = Arc::new(AtomicU8::new(volume));
         let channels = config.channels() as usize;
         let sample_rate = config.sample_rate();
-        let stream_config: cpal::StreamConfig = config.clone().into();
+        let stream_config: cpal::StreamConfig = config.into();
         let stream = match config.sample_format() {
-            cpal::SampleFormat::I16 => build_stream::<i16>(&device, stream_config, queue.clone(), volume.clone(), channels),
-            cpal::SampleFormat::U16 => build_stream::<u16>(&device, stream_config, queue.clone(), volume.clone(), channels),
-            _ => build_stream::<f32>(&device, stream_config, queue.clone(), volume.clone(), channels),
+            cpal::SampleFormat::I16 => build_stream::<i16>(&device, stream_config, queue.clone(), volume.clone(), channels, wake),
+            cpal::SampleFormat::U16 => build_stream::<u16>(&device, stream_config, queue.clone(), volume.clone(), channels, wake),
+            _ => build_stream::<f32>(&device, stream_config, queue.clone(), volume.clone(), channels, wake),
         }
-        .map_err(|error| eprintln!("Could not open audio output: {}", error))
+        .map_err(|error| eprintln!("gbae: cannot open audio output: {}", error))
         .ok()?;
         stream.play().ok()?;
         Some(Audio {
@@ -43,6 +43,10 @@ impl Audio {
 
     pub fn set_volume(&self, volume: u8) {
         self.volume.store(volume, Ordering::Relaxed);
+    }
+
+    pub fn queued_frames(&self) -> usize {
+        self.queue.lock().unwrap().len() / 2
     }
 
     pub fn push(&self, samples: &[i16]) {
@@ -64,6 +68,7 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     queue: Arc<Mutex<VecDeque<i16>>>,
     volume: Arc<AtomicU8>,
     channels: usize,
+    wake: impl Fn() + Send + 'static,
 ) -> Result<cpal::Stream, cpal::Error> {
     device.build_output_stream(
         config,
@@ -77,8 +82,10 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     *sample = T::from_sample(if channel % 2 == 0 { left } else { right });
                 }
             }
+            drop(queue);
+            wake();
         },
-        |error| eprintln!("Audio stream error: {}", error),
+        |error| eprintln!("gbae: audio stream error: {}", error),
         None,
     )
 }

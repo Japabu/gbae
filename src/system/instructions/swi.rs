@@ -1,15 +1,9 @@
 use crate::{
     bits::Bits,
-    system::{
-        bios,
-        cpu::{Mode, CPU},
-        memory::Memory,
-    },
+    system::{bios, cpu::CPU, memory::Memory},
 };
 
 use super::{Condition, Instruction};
-
-const SWI_VECTOR: u32 = 0x08;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SoftwareInterrupt {
@@ -29,12 +23,8 @@ pub fn decode_thumb(word: u16) -> Instruction {
 impl SoftwareInterrupt {
     #[inline(always)]
     pub fn execute(self, cpu: &mut CPU, mem: &mut Memory) {
-        if mem.has_builtin_bios() {
-            let function = if cpu.thumb() { self.comment } else { self.comment.bits(16..24) };
-            bios::call(function, cpu, mem);
-        } else {
-            cpu.take_exception(Mode::Supervisor, SWI_VECTOR, cpu.next_pc());
-        }
+        let function = if cpu.thumb() { self.comment } else { self.comment.bits(16..24) };
+        bios::call(function, cpu, mem);
     }
 
     pub fn encode_arm(self) -> Option<u32> {

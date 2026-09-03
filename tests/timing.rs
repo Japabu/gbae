@@ -1,7 +1,3 @@
-mod common;
-
-use common::*;
-use gbae::system::bios::Bios;
 use gbae::system::cpu::Register;
 use gbae::system::gba::Gba;
 use gbae::system::instructions::asm::{registers::*, *};
@@ -40,20 +36,16 @@ fn nops(asm: &mut Assembler, instruction: Instruction, count: usize) {
     }
 }
 
-fn machine(entry: u32, rom: Vec<u8>) -> Gba {
-    let mut asm = Assembler::new(0);
-    asm.ldr_literal(R0, entry).emit(bx(R0)).pool().pad_to(BIOS_LEN);
-    Gba::new(Bios::Image(asm.finish()), rom)
-}
-
 fn boot(entry: u32, rom: Vec<u8>) -> Gba {
-    let mut gba = machine(entry, rom);
+    let mut gba = Gba::new(rom);
     run_to(&mut gba, entry);
     gba
 }
 
 fn boot_in_ram(entry: u32, code: &[u8]) -> Gba {
-    let mut gba = machine(entry, vec![0; 0x100]);
+    let mut asm = Assembler::new(ROM_CODE);
+    asm.ldr_literal(R0, entry).emit(bx(R0)).pool();
+    let mut gba = Gba::new(asm.finish());
     for (offset, byte) in code.iter().enumerate() {
         gba.mem.write_u8((entry & !1) + offset as u32, *byte);
     }
@@ -70,7 +62,7 @@ fn boot_with_thumb(entry: u32, build: impl FnOnce(&mut Assembler)) -> Gba {
 }
 
 fn run_to(gba: &mut Gba, entry: u32) {
-    assert!(gba.run_until(|gba| gba.cpu.pc() == entry & !1, 100));
+    assert!(gba.run_until(|gba| gba.cpu.pc() == entry & !1, 10_000));
     gba.mem.take_cycles();
 }
 
@@ -162,16 +154,20 @@ fn waitcnt_changes_rom_timing() {
 
 #[test]
 fn prefetch_buffer_fills_during_internal_cycles() {
+    let entry = (ROM_CODE + 8) | 1;
     let rom = || {
-        assemble(ROM_CODE, true, |asm| {
+        assemble(ROM_CODE, false, |asm| {
+            asm.ldr_literal(R0, entry).emit(bx(R0));
+            asm.thumb();
             asm.emit(movs(R2, imm(3))).emit(muls(R0, R2, R0));
             nops(asm, thumb_nop(), 8);
+            asm.pool();
         })
     };
-    let mut gba = boot(ROM_CODE | 1, rom());
+    let mut gba = boot(entry, rom());
     assert_eq!(cycles_per_step(&mut gba, 4), [3, 7, 3, 3]);
 
-    let mut gba = boot(ROM_CODE | 1, rom());
+    let mut gba = boot(entry, rom());
     gba.mem.write_u16(WAITCNT, 0x4000);
     gba.mem.take_cycles();
     assert_eq!(cycles_per_step(&mut gba, 5), [5, 7, 1, 1, 3]);

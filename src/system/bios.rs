@@ -8,29 +8,6 @@ use super::{
     memory::{Memory, BIOS_LEN, OAM_LEN, PALETTE_RAM_LEN, VRAM_LEN, WRAM1_LEN, WRAM2_LEN},
 };
 
-#[derive(Debug, Clone)]
-pub enum Bios {
-    Builtin,
-    Image(Vec<u8>),
-}
-
-impl Bios {
-    pub fn load(path: &std::path::Path) -> std::io::Result<Bios> {
-        std::fs::read(path).map(Bios::Image)
-    }
-
-    pub fn bytes(&self) -> Vec<u8> {
-        match self {
-            Bios::Builtin => image(),
-            Bios::Image(bytes) => bytes.clone(),
-        }
-    }
-
-    pub fn is_builtin(&self) -> bool {
-        matches!(self, Bios::Builtin)
-    }
-}
-
 const ROM_ENTRY: u32 = 0x0800_0000;
 const EWRAM_ENTRY: u32 = 0x0200_0000;
 const EWRAM: u32 = 0x0200_0000;
@@ -136,7 +113,7 @@ pub fn call(function: u32, cpu: &mut CPU, mem: &mut Memory) {
             mem.write_u8(RESET_FLAG, 0);
             soft_reset(cpu, mem);
         }
-        _ => {}
+        _ => panic!("BIOS function {:#04X} is not implemented (called from {:#010X})", function, cpu.pc()),
     }
 }
 
@@ -462,7 +439,7 @@ fn run_length(reader: &mut Reader, length: usize) -> Vec<u8> {
         let flag = reader.byte();
         if flag.bit(7) {
             let byte = reader.byte();
-            output.extend(std::iter::repeat(byte).take(usize::from(flag & 0x7F) + 3));
+            output.extend(std::iter::repeat_n(byte, usize::from(flag & 0x7F) + 3));
         } else {
             output.extend((0..=flag & 0x7F).map(|_| reader.byte()));
         }

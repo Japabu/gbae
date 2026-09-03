@@ -1,7 +1,6 @@
 mod common;
 
 use common::*;
-use gbae::system::bios::Bios;
 use gbae::system::cpu::{Mode, Register};
 use gbae::system::gba::Gba;
 use gbae::system::instructions::asm::{registers::*, *};
@@ -32,7 +31,7 @@ fn program(build: impl FnOnce(&mut Assembler)) -> Gba {
     asm.b(end);
     let mut rom = asm.finish();
     rom.resize(rom.len().max(0x100), 0);
-    Gba::new(Bios::Builtin, rom)
+    Gba::new(rom)
 }
 
 fn run_until_done(gba: &mut Gba) {

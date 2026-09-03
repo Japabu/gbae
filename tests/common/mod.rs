@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use gbae::system::bios::Bios;
 use gbae::system::gba::Gba;
 use gbae::system::instructions::asm::Assembler;
 use gbae::system::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
@@ -25,13 +24,13 @@ pub fn rom_that_loops() -> Vec<u8> {
 }
 
 pub fn gba_without_rom() -> Gba {
-    Gba::new(Bios::Builtin, rom_that_loops())
+    Gba::new(rom_that_loops())
 }
 
 pub fn gba_with_save_marker(marker: &str) -> Gba {
     let mut rom = rom_that_loops();
     rom[0xC0..0xC0 + marker.len()].copy_from_slice(marker.as_bytes());
-    Gba::new(Bios::Builtin, rom)
+    Gba::new(rom)
 }
 
 pub fn project_dir() -> PathBuf {

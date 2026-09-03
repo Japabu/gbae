@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 
-use super::cpu::CPU_FREQUENCY;
+use super::{
+    cpu::CPU_FREQUENCY,
+    state::{Reader, StateError, Writer},
+};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 const FRAME_SEQUENCER_CYCLES: u32 = 32_768;
@@ -39,6 +42,23 @@ impl Envelope {
 
     fn dac_enabled(&self) -> bool {
         self.initial_volume != 0 || self.increase
+    }
+
+    fn save_state(&self, writer: &mut Writer) {
+        writer.u8(self.initial_volume);
+        writer.bool(self.increase);
+        writer.u8(self.step_time);
+        writer.u8(self.volume);
+        writer.u8(self.counter);
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.initial_volume = reader.u8()?;
+        self.increase = reader.bool()?;
+        self.step_time = reader.u8()?;
+        self.volume = reader.u8()?;
+        self.counter = reader.u8()?;
+        Ok(())
     }
 
     fn tick(&mut self) {
@@ -82,6 +102,17 @@ impl Length {
         }
     }
 
+    fn save_state(&self, writer: &mut Writer) {
+        writer.bool(self.enabled);
+        writer.u16(self.counter);
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.enabled = reader.bool()?;
+        self.counter = reader.u16()?;
+        Ok(())
+    }
+
     fn tick(&mut self) -> bool {
         if self.enabled && self.counter > 0 {
             self.counter -= 1;
@@ -118,6 +149,25 @@ impl Sweep {
         self.counter = if self.time == 0 { 8 } else { self.time };
         self.enabled = self.time != 0 || self.shift != 0;
         self.shift != 0 && self.next_frequency() > 2047
+    }
+
+    fn save_state(&self, writer: &mut Writer) {
+        writer.u8(self.shift);
+        writer.bool(self.decrease);
+        writer.u8(self.time);
+        writer.u8(self.counter);
+        writer.u16(self.shadow_frequency);
+        writer.bool(self.enabled);
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.shift = reader.u8()?;
+        self.decrease = reader.bool()?;
+        self.time = reader.u8()?;
+        self.counter = reader.u8()?;
+        self.shadow_frequency = reader.u16()?;
+        self.enabled = reader.bool()?;
+        Ok(())
     }
 
     fn next_frequency(&self) -> u16 {
@@ -220,6 +270,29 @@ impl Square {
         } else {
             0
         }
+    }
+
+    fn save_state(&self, writer: &mut Writer) {
+        self.sweep.save_state(writer);
+        writer.u8(self.duty);
+        self.length.save_state(writer);
+        self.envelope.save_state(writer);
+        writer.u16(self.frequency);
+        writer.bool(self.enabled);
+        writer.u8(self.phase);
+        writer.i32(self.cycles);
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.sweep.load_state(reader)?;
+        self.duty = reader.u8()? & 0b11;
+        self.length.load_state(reader)?;
+        self.envelope.load_state(reader)?;
+        self.frequency = reader.u16()? & 0x7FF;
+        self.enabled = reader.bool()?;
+        self.phase = reader.u8()? & 7;
+        self.cycles = reader.i32()?;
+        Ok(())
     }
 
     fn tick_sweep(&mut self) {
@@ -335,6 +408,37 @@ impl Wave {
     fn accessible_bank(&self) -> usize {
         (self.playing_bank + 1) % 2
     }
+
+    fn save_state(&self, writer: &mut Writer) {
+        writer.bool(self.two_banks);
+        writer.u8(self.playing_bank as u8);
+        writer.bool(self.playback);
+        self.length.save_state(writer);
+        writer.u8(self.volume);
+        writer.bool(self.force_75);
+        writer.u16(self.frequency);
+        writer.bool(self.enabled);
+        writer.bytes(&self.ram[0]);
+        writer.bytes(&self.ram[1]);
+        writer.u8(self.position);
+        writer.i32(self.cycles);
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.two_banks = reader.bool()?;
+        self.playing_bank = reader.u8()? as usize & 1;
+        self.playback = reader.bool()?;
+        self.length.load_state(reader)?;
+        self.volume = reader.u8()?;
+        self.force_75 = reader.bool()?;
+        self.frequency = reader.u16()? & 0x7FF;
+        self.enabled = reader.bool()?;
+        reader.bytes_into(&mut self.ram[0])?;
+        reader.bytes_into(&mut self.ram[1])?;
+        self.position = reader.u8()? % 64;
+        self.cycles = reader.i32()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -401,6 +505,29 @@ impl Noise {
         }
     }
 
+    fn save_state(&self, writer: &mut Writer) {
+        self.length.save_state(writer);
+        self.envelope.save_state(writer);
+        writer.u8(self.divisor);
+        writer.bool(self.seven_bits);
+        writer.u8(self.shift);
+        writer.bool(self.enabled);
+        writer.u16(self.lfsr);
+        writer.i32(self.cycles);
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.length.load_state(reader)?;
+        self.envelope.load_state(reader)?;
+        self.divisor = reader.u8()?;
+        self.seven_bits = reader.bool()?;
+        self.shift = reader.u8()?;
+        self.enabled = reader.bool()?;
+        self.lfsr = reader.u16()?;
+        self.cycles = reader.i32()?;
+        Ok(())
+    }
+
     fn sample(&self) -> u8 {
         if self.enabled && self.lfsr & 1 == 0 {
             self.envelope.volume
@@ -435,6 +562,18 @@ impl Fifo {
     fn reset(&mut self) {
         self.samples.clear();
         self.current = 0;
+    }
+
+    fn save_state(&self, writer: &mut Writer) {
+        let bytes: Vec<u8> = self.samples.iter().map(|sample| *sample as u8).collect();
+        writer.sized_bytes(&bytes);
+        writer.u8(self.current as u8);
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.samples = reader.sized_bytes()?.iter().map(|byte| *byte as i8).collect();
+        self.current = reader.u8()? as i8;
+        Ok(())
     }
 }
 
@@ -689,6 +828,56 @@ impl Apu {
             side(self.psg_volume_left, self.psg_enable_left, self.fifo_enable_left),
             side(self.psg_volume_right, self.psg_enable_right, self.fifo_enable_right),
         )
+    }
+
+    pub fn save_state(&self, writer: &mut Writer) {
+        self.square1.save_state(writer);
+        self.square2.save_state(writer);
+        self.wave.save_state(writer);
+        self.noise.save_state(writer);
+        self.fifo[0].save_state(writer);
+        self.fifo[1].save_state(writer);
+        writer.u8(self.psg_volume_right);
+        writer.u8(self.psg_volume_left);
+        writer.u8(self.psg_enable_right);
+        writer.u8(self.psg_enable_left);
+        writer.u8(self.psg_scale);
+        writer.bools(&self.fifo_full_volume);
+        writer.bools(&self.fifo_enable_right);
+        writer.bools(&self.fifo_enable_left);
+        writer.bytes(&self.fifo_timer);
+        writer.bool(self.master_enable);
+        writer.u16(self.bias);
+        writer.u32(self.frame_sequencer_cycles);
+        writer.u8(self.frame_sequencer_step);
+        writer.u64(self.sample_cycles);
+        writer.i32(self.channel_cycles);
+    }
+
+    pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.square1.load_state(reader)?;
+        self.square2.load_state(reader)?;
+        self.wave.load_state(reader)?;
+        self.noise.load_state(reader)?;
+        self.fifo[0].load_state(reader)?;
+        self.fifo[1].load_state(reader)?;
+        self.psg_volume_right = reader.u8()?;
+        self.psg_volume_left = reader.u8()?;
+        self.psg_enable_right = reader.u8()?;
+        self.psg_enable_left = reader.u8()?;
+        self.psg_scale = reader.u8()?;
+        reader.bools(&mut self.fifo_full_volume)?;
+        reader.bools(&mut self.fifo_enable_right)?;
+        reader.bools(&mut self.fifo_enable_left)?;
+        reader.bytes_into(&mut self.fifo_timer)?;
+        self.master_enable = reader.bool()?;
+        self.bias = reader.u16()?;
+        self.frame_sequencer_cycles = reader.u32()?;
+        self.frame_sequencer_step = reader.u8()? & 7;
+        self.sample_cycles = reader.u64()?;
+        self.channel_cycles = reader.i32()?;
+        self.samples.clear();
+        Ok(())
     }
 
     pub fn take_samples(&mut self) -> Vec<i16> {

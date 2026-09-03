@@ -33,6 +33,7 @@ struct Emulator {
     bios: Vec<u8>,
     rom: Vec<u8>,
     save_path: PathBuf,
+    state_path: PathBuf,
     title: String,
     audio: Option<Audio>,
     settings: Settings,
@@ -51,6 +52,7 @@ impl Emulator {
             bios,
             rom: Vec::new(),
             save_path: PathBuf::new(),
+            state_path: PathBuf::new(),
             title: String::new(),
             audio,
             settings,
@@ -72,6 +74,7 @@ impl Emulator {
         self.flush_save(true);
         self.title = CartridgeInfo::parse(&rom).map(|cartridge| cartridge.title.trim().to_string()).unwrap_or_default();
         self.save_path = rom_path.with_extension("sav");
+        self.state_path = rom_path.with_extension("state");
         self.rom = rom;
         self.reset();
         eprintln!("Loaded {} ({}), save type {:?}", rom_path.display(), self.title, self.gba.save_type());
@@ -110,6 +113,35 @@ impl Emulator {
         if (self.gba.take_save_dirty() || force) && !self.gba.save_data().is_empty() {
             if let Err(error) = std::fs::write(&self.save_path, self.gba.save_data()) {
                 eprintln!("Could not write {}: {}", self.save_path.display(), error);
+            }
+        }
+    }
+
+    fn save_state(&self) {
+        match std::fs::write(&self.state_path, self.gba.save_state()) {
+            Ok(()) => eprintln!("State saved to {}", self.state_path.display()),
+            Err(error) => eprintln!("Could not write {}: {}", self.state_path.display(), error),
+        }
+    }
+
+    fn load_state(&mut self) {
+        let bytes = match std::fs::read(&self.state_path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprintln!("Could not read {}: {}", self.state_path.display(), error);
+                return;
+            }
+        };
+        match self.gba.load_state(&bytes) {
+            Ok(()) => {
+                if let Some(audio) = &self.audio {
+                    audio.clear();
+                }
+                eprintln!("State loaded from {}", self.state_path.display());
+            }
+            Err(error) => {
+                eprintln!("Could not load state: {}", error);
+                self.reset();
             }
         }
     }
@@ -254,6 +286,14 @@ impl ApplicationHandler for App {
                     Action::Close => self.emulator.menu.toggle(),
                     Action::Reset => {
                         self.emulator.reset();
+                        self.emulator.menu.toggle();
+                    }
+                    Action::SaveState => {
+                        self.emulator.save_state();
+                        self.emulator.menu.toggle();
+                    }
+                    Action::LoadState => {
+                        self.emulator.load_state();
                         self.emulator.menu.toggle();
                     }
                     Action::LoadRom => {

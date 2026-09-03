@@ -1,3 +1,5 @@
+use super::state::{Reader, StateError, Writer};
+
 const PIN_SCK: u8 = 1 << 0;
 const PIN_SIO: u8 = 1 << 1;
 const PIN_CS: u8 = 1 << 2;
@@ -29,6 +31,20 @@ impl Gpio {
 
     pub fn readable(&self) -> bool {
         self.readable
+    }
+
+    pub fn save_state(&self, writer: &mut Writer) {
+        writer.u8(self.data);
+        writer.u8(self.direction);
+        writer.bool(self.readable);
+        self.rtc.save_state(writer);
+    }
+
+    pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.data = reader.u8()?;
+        self.direction = reader.u8()?;
+        self.readable = reader.bool()?;
+        self.rtc.load_state(reader)
     }
 
     pub fn read(&self, offset: u32) -> u16 {
@@ -102,6 +118,42 @@ impl Rtc {
 
     fn sio_output(&self) -> bool {
         self.sio_output
+    }
+
+    fn save_state(&self, writer: &mut Writer) {
+        writer.u64(self.unix_seconds);
+        writer.i64(self.offset_seconds);
+        writer.u8(self.status);
+        writer.u8(self.pins);
+        writer.u8(self.transfer as u8);
+        writer.u32(self.bit_count);
+        writer.u8(self.byte);
+        writer.u8(self.command);
+        writer.bytes(&self.buffer);
+        writer.u8(self.buffer_length as u8);
+        writer.u8(self.buffer_index as u8);
+        writer.bool(self.sio_output);
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.unix_seconds = reader.u64()?;
+        self.offset_seconds = reader.i64()?;
+        self.status = reader.u8()?;
+        self.pins = reader.u8()?;
+        self.transfer = match reader.u8()? {
+            0 => Transfer::Command,
+            1 => Transfer::Reading,
+            2 => Transfer::Writing,
+            _ => return Err(StateError::Corrupt),
+        };
+        self.bit_count = reader.u32()?;
+        self.byte = reader.u8()?;
+        self.command = reader.u8()?;
+        reader.bytes_into(&mut self.buffer)?;
+        self.buffer_length = reader.u8()? as usize % 8;
+        self.buffer_index = reader.u8()? as usize % 8;
+        self.sio_output = reader.bool()?;
+        Ok(())
     }
 
     fn update(&mut self, pins: u8) {

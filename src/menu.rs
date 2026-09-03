@@ -10,7 +10,7 @@ const DIM: [u8; 3] = [120, 120, 120];
 const PANEL: [u8; 3] = [24, 24, 32];
 const BORDER: [u8; 3] = [90, 90, 110];
 
-const MAIN_ITEMS: [&str; 5] = ["Resume", "Reset", "Load ROM...", "Settings", "Quit"];
+const MAIN_ITEMS: [&str; 7] = ["Resume", "Reset", "Save state", "Load state", "Load ROM...", "Settings", "Quit"];
 const SETTINGS_ITEMS: [&str; 4] = ["Volume", "Speed", "Controls...", "Back"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +18,8 @@ pub enum Action {
     None,
     Close,
     Reset,
+    SaveState,
+    LoadState,
     LoadRom,
     Quit,
     SettingsChanged,
@@ -98,8 +100,10 @@ impl Menu {
             Screen::Main => match self.index {
                 0 => Action::Close,
                 1 => Action::Reset,
-                2 => Action::LoadRom,
-                3 => {
+                2 => Action::SaveState,
+                3 => Action::LoadState,
+                4 => Action::LoadRom,
+                5 => {
                     self.screen = Screen::Settings;
                     self.index = 0;
                     Action::None
@@ -131,7 +135,7 @@ impl Menu {
             Screen::Main => Action::Close,
             Screen::Settings => {
                 self.screen = Screen::Main;
-                self.index = 3;
+                self.index = 5;
                 Action::None
             }
             Screen::Controls => {

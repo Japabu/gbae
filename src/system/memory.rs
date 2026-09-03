@@ -32,6 +32,7 @@ use super::{
     apu::{Apu, FIFO_A, FIFO_B},
     rtc::Gpio,
     save::{Backup, SaveType},
+    state::{Reader, StateError, Writer},
 };
 
 const APU_REGISTERS: std::ops::Range<u32> = 0x060..0x0A8;
@@ -403,6 +404,109 @@ impl IoRegisters {
         }
     }
 
+    pub fn save_state(&self, writer: &mut Writer) {
+        writer.u16(self.disp_cnt);
+        writer.u16(self.disp_stat);
+        writer.u16(self.v_count);
+        writer.u16s(&self.bg_cnt);
+        writer.u16s(&self.bg_h_offset);
+        writer.u16s(&self.bg_v_offset);
+        for parameters in &self.bg_parameters {
+            writer.u16s(parameters);
+        }
+        for reference in &self.bg_reference {
+            writer.u32s(reference);
+        }
+        writer.bools(&self.bg_reference_written);
+        writer.u16s(&self.win_h);
+        writer.u16s(&self.win_v);
+        writer.u16(self.win_in);
+        writer.u16(self.win_out);
+        writer.u16(self.mosaic);
+        writer.u16(self.blend_cnt);
+        writer.u16(self.blend_alpha);
+        writer.u16(self.blend_y);
+        writer.u32s(&self.dma_sad);
+        writer.u32s(&self.dma_dad);
+        writer.u16s(&self.dma_cnt_l);
+        writer.u16s(&self.dma_cnt_h);
+        writer.u16s(&self.tm_reload);
+        writer.u16s(&self.tm_control);
+        writer.u16s(&self.tm_counter);
+        writer.u32s(&self.tm_cycles);
+        writer.u8(self.timer_overflows);
+        writer.u32(self.sio_data32);
+        writer.u16(self.sio_multi2);
+        writer.u16(self.sio_multi3);
+        writer.u16(self.sio_cnt);
+        writer.u16(self.sio_data8);
+        writer.u16(self.key_input);
+        writer.u16(self.key_cnt);
+        writer.u16(self.rcnt);
+        writer.u16(self.joy_cnt);
+        writer.u32(self.joy_recv);
+        writer.u32(self.joy_trans);
+        writer.u16(self.joy_stat);
+        writer.u16(self.ie);
+        writer.u16(self.irf);
+        writer.u16(self.wait_cnt);
+        writer.bool(self.ime);
+        writer.bool(self.post_flg);
+        writer.bool(self.halted);
+    }
+
+    pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.disp_cnt = reader.u16()?;
+        self.disp_stat = reader.u16()?;
+        self.v_count = reader.u16()?;
+        reader.u16s(&mut self.bg_cnt)?;
+        reader.u16s(&mut self.bg_h_offset)?;
+        reader.u16s(&mut self.bg_v_offset)?;
+        for parameters in &mut self.bg_parameters {
+            reader.u16s(parameters)?;
+        }
+        for reference in &mut self.bg_reference {
+            reader.u32s(reference)?;
+        }
+        reader.bools(&mut self.bg_reference_written)?;
+        reader.u16s(&mut self.win_h)?;
+        reader.u16s(&mut self.win_v)?;
+        self.win_in = reader.u16()?;
+        self.win_out = reader.u16()?;
+        self.mosaic = reader.u16()?;
+        self.blend_cnt = reader.u16()?;
+        self.blend_alpha = reader.u16()?;
+        self.blend_y = reader.u16()?;
+        reader.u32s(&mut self.dma_sad)?;
+        reader.u32s(&mut self.dma_dad)?;
+        reader.u16s(&mut self.dma_cnt_l)?;
+        reader.u16s(&mut self.dma_cnt_h)?;
+        reader.u16s(&mut self.tm_reload)?;
+        reader.u16s(&mut self.tm_control)?;
+        reader.u16s(&mut self.tm_counter)?;
+        reader.u32s(&mut self.tm_cycles)?;
+        self.timer_overflows = reader.u8()?;
+        self.sio_data32 = reader.u32()?;
+        self.sio_multi2 = reader.u16()?;
+        self.sio_multi3 = reader.u16()?;
+        self.sio_cnt = reader.u16()?;
+        self.sio_data8 = reader.u16()?;
+        self.key_input = reader.u16()?;
+        self.key_cnt = reader.u16()?;
+        self.rcnt = reader.u16()?;
+        self.joy_cnt = reader.u16()?;
+        self.joy_recv = reader.u32()?;
+        self.joy_trans = reader.u32()?;
+        self.joy_stat = reader.u16()?;
+        self.ie = reader.u16()?;
+        self.irf = reader.u16()?;
+        self.wait_cnt = reader.u16()?;
+        self.ime = reader.bool()?;
+        self.post_flg = reader.bool()?;
+        self.halted = reader.bool()?;
+        Ok(())
+    }
+
     fn write_bg_reference(&mut self, bg: usize, axis: usize, value: u16, high: bool) {
         let reference = &mut self.bg_reference[bg][axis];
         *reference = if high { *reference & 0x0000_FFFF | (value as u32) << 16 } else { *reference & 0xFFFF_0000 | value as u32 };
@@ -591,6 +695,7 @@ pub struct Memory {
     vram: Box<[u8; VRAM_LEN]>,
     oam: Box<[u8; OAM_LEN]>,
     game_pak: Vec<u8>,
+    game_pak_hash: u64,
     backup: Backup,
     gpio: Gpio,
     dma: [DmaChannel; 4],
@@ -638,6 +743,7 @@ impl Memory {
         bios_buffer[..bios_len].copy_from_slice(&bios[..bios_len]);
 
         let backup = Backup::new(SaveType::detect(&game_pak));
+        let game_pak_hash = game_pak.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| (hash ^ *byte as u64).wrapping_mul(0x0000_0100_0000_01b3));
 
         Self {
             bios: bios_buffer,
@@ -649,6 +755,7 @@ impl Memory {
             vram: boxed_zeroed(),
             oam: boxed_zeroed(),
             game_pak,
+            game_pak_hash,
             backup,
             gpio: Gpio::new(),
             dma: [DmaChannel::default(); 4],
@@ -1055,6 +1162,70 @@ impl Memory {
             RegionKey::Backup(_) => self.backup.write(address, selected_byte),
             RegionKey::Bios(_) | RegionKey::GamePak(_) | RegionKey::Unmapped => {}
         }
+    }
+
+    pub fn rom_identity(&self) -> Vec<u8> {
+        let mut identity = (self.game_pak.len() as u64).to_le_bytes().to_vec();
+        identity.extend_from_slice(&self.game_pak_hash.to_le_bytes());
+        identity
+    }
+
+    pub fn save_state(&self, writer: &mut Writer) {
+        writer.bytes(&self.wram1[..]);
+        writer.bytes(&self.wram2[..]);
+        writer.bytes(&self.palette_ram[..]);
+        writer.bytes(&self.vram[..]);
+        writer.bytes(&self.oam[..]);
+        self.io_registers.save_state(writer);
+        self.apu.save_state(writer);
+        self.backup.save_state(writer);
+        self.gpio.save_state(writer);
+        for channel in &self.dma {
+            writer.bool(channel.armed);
+            writer.u32(channel.source);
+            writer.u32(channel.destination);
+            writer.u32(channel.count);
+        }
+        writer.bool(self.dma_active);
+        writer.u32(self.bios_last_opcode);
+        writer.bool(self.executing_from_bios);
+        writer.bool(self.prefetch.active);
+        writer.u32(self.prefetch.start);
+        writer.u32(self.prefetch.buffered);
+        writer.u32(self.prefetch.progress);
+        writer.u32(self.cycles);
+        writer.bool(self.next_fetch_sequential);
+        writer.u32(self.next_fetch_address);
+    }
+
+    pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        reader.bytes_into(&mut self.wram1[..])?;
+        reader.bytes_into(&mut self.wram2[..])?;
+        reader.bytes_into(&mut self.palette_ram[..])?;
+        reader.bytes_into(&mut self.vram[..])?;
+        reader.bytes_into(&mut self.oam[..])?;
+        self.io_registers.load_state(reader)?;
+        self.wait = WaitStates::decode(self.io_registers.wait_cnt);
+        self.apu.load_state(reader)?;
+        self.backup.load_state(reader)?;
+        self.gpio.load_state(reader)?;
+        for channel in &mut self.dma {
+            channel.armed = reader.bool()?;
+            channel.source = reader.u32()?;
+            channel.destination = reader.u32()?;
+            channel.count = reader.u32()?;
+        }
+        self.dma_active = reader.bool()?;
+        self.bios_last_opcode = reader.u32()?;
+        self.executing_from_bios = reader.bool()?;
+        self.prefetch.active = reader.bool()?;
+        self.prefetch.start = reader.u32()?;
+        self.prefetch.buffered = reader.u32()?;
+        self.prefetch.progress = reader.u32()?;
+        self.cycles = reader.u32()?;
+        self.next_fetch_sequential = reader.bool()?;
+        self.next_fetch_address = reader.u32()?;
+        Ok(())
     }
 
     pub fn save_type(&self) -> SaveType {

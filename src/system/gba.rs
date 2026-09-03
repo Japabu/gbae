@@ -3,6 +3,7 @@ use super::{
     memory::{DmaTiming, Key, Memory},
     ppu::{Framebuffer, PPU},
     save::SaveType,
+    state::{Reader, StateError, Writer},
 };
 
 pub const CYCLES_PER_SCANLINE: u64 = 1232;
@@ -170,6 +171,32 @@ impl Gba {
 
     pub fn set_time(&mut self, unix_seconds: u64) {
         self.mem.set_time(unix_seconds);
+    }
+
+    pub fn save_state(&self) -> Vec<u8> {
+        let mut writer = Writer::new();
+        writer.sized_bytes(&self.mem.rom_identity());
+        self.cpu.save_state(&mut writer);
+        self.mem.save_state(&mut writer);
+        self.ppu.save_state(&mut writer);
+        writer.u64(self.scanline_counter);
+        writer.u64(self.next_event_cycles);
+        writer.bool(self.in_hblank);
+        writer.finish()
+    }
+
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        let mut reader = Reader::new(bytes)?;
+        if reader.sized_bytes()? != self.mem.rom_identity() {
+            return Err(StateError::DifferentRom);
+        }
+        self.cpu.load_state(&mut reader)?;
+        self.mem.load_state(&mut reader)?;
+        self.ppu.load_state(&mut reader)?;
+        self.scanline_counter = reader.u64()?;
+        self.next_event_cycles = reader.u64()?;
+        self.in_hblank = reader.bool()?;
+        Ok(())
     }
 
     pub fn take_audio_samples(&mut self) -> Vec<i16> {

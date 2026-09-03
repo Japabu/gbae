@@ -1,6 +1,9 @@
 use crate::bitutil::sign_extend32;
 
-use super::memory::{IoRegisters, Memory};
+use super::{
+    memory::{IoRegisters, Memory},
+    state::{Reader, StateError, Writer},
+};
 
 pub const FRAMEBUFFER_WIDTH: usize = 240;
 pub const FRAMEBUFFER_HEIGHT: usize = 160;
@@ -106,6 +109,29 @@ impl PPU {
 
     pub fn framebuffer(&self) -> &Framebuffer {
         &self.framebuffer
+    }
+
+    pub fn save_state(&self, writer: &mut Writer) {
+        for row in self.framebuffer.iter() {
+            for pixel in row {
+                writer.bytes(pixel);
+            }
+        }
+        for reference in &self.affine_reference {
+            writer.i32s(reference);
+        }
+    }
+
+    pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        for row in self.framebuffer.iter_mut() {
+            for pixel in row.iter_mut() {
+                reader.bytes_into(pixel)?;
+            }
+        }
+        for reference in &mut self.affine_reference {
+            reader.i32s(reference)?;
+        }
+        Ok(())
     }
 
     pub fn latch_affine_references(&mut self, io: &mut IoRegisters) {

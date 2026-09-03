@@ -1,5 +1,7 @@
 use std::cell::Cell;
 
+use super::state::{Reader, StateError, Writer};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaveType {
     None,
@@ -133,6 +135,34 @@ impl Backup {
     pub fn take_dirty(&mut self) -> bool {
         std::mem::replace(&mut self.dirty, false)
     }
+
+    pub fn save_state(&self, writer: &mut Writer) {
+        writer.u8(self.save_type() as u8);
+        writer.sized_bytes(self.data());
+        match &self.medium {
+            Medium::Flash(flash) => flash.save_state(writer),
+            Medium::Eeprom(eeprom) => eeprom.save_state(writer),
+            Medium::None | Medium::Sram(_) => {}
+        }
+    }
+
+    pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        if reader.u8()? != self.save_type() as u8 {
+            return Err(StateError::Corrupt);
+        }
+        let data = reader.sized_bytes()?;
+        if data.len() != self.data().len() {
+            return Err(StateError::Corrupt);
+        }
+        self.load(data);
+        match &mut self.medium {
+            Medium::Flash(flash) => flash.load_state(reader)?,
+            Medium::Eeprom(eeprom) => eeprom.load_state(reader)?,
+            Medium::None | Medium::Sram(_) => {}
+        }
+        self.dirty = true;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +175,24 @@ enum FlashCommand {
     ErasePrefix3,
     Program,
     BankSwitch,
+}
+
+impl FlashCommand {
+    fn from_state(value: u8) -> Result<FlashCommand, StateError> {
+        [
+            FlashCommand::None,
+            FlashCommand::Prefix1,
+            FlashCommand::Prefix2,
+            FlashCommand::ErasePrefix1,
+            FlashCommand::ErasePrefix2,
+            FlashCommand::ErasePrefix3,
+            FlashCommand::Program,
+            FlashCommand::BankSwitch,
+        ]
+        .get(value as usize)
+        .copied()
+        .ok_or(StateError::Corrupt)
+    }
 }
 
 pub struct Flash {
@@ -168,6 +216,19 @@ impl Flash {
 
     fn address(&self, offset: u32) -> usize {
         self.bank * 0x10000 + (offset & 0xFFFF) as usize
+    }
+
+    fn save_state(&self, writer: &mut Writer) {
+        writer.u8(self.bank as u8);
+        writer.bool(self.id_mode);
+        writer.u8(self.command as u8);
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.bank = reader.u8()? as usize % (self.data.len() / 0x10000);
+        self.id_mode = reader.bool()?;
+        self.command = FlashCommand::from_state(reader.u8()?)?;
+        Ok(())
     }
 
     fn read(&self, offset: u32) -> u8 {
@@ -264,6 +325,30 @@ impl Eeprom {
             read_data: 0,
             read_position: Cell::new(0),
         }
+    }
+
+    fn save_state(&self, writer: &mut Writer) {
+        writer.u32(self.address_bits);
+        writer.u8(self.state as u8);
+        writer.u32(self.received_bits);
+        writer.u128(self.request);
+        writer.u64(self.read_data);
+        writer.u32(self.read_position.get());
+    }
+
+    fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.address_bits = reader.u32()?;
+        self.state = match reader.u8()? {
+            0 => EepromState::Idle,
+            1 => EepromState::Receiving,
+            2 => EepromState::Reading,
+            _ => return Err(StateError::Corrupt),
+        };
+        self.received_bits = reader.u32()?;
+        self.request = reader.u128()?;
+        self.read_data = reader.u64()?;
+        self.read_position.set(reader.u32()?);
+        Ok(())
     }
 
     fn begin_transfer(&mut self, length: u32) {

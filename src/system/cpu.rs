@@ -8,6 +8,7 @@ use super::{
         lut::{index_arm, index_thumb, ARM_LUT, THUMB_LUT},
     },
     memory::Memory,
+    state::{Reader, StateError, Writer},
 };
 
 pub const MODE_USR: u8 = 0b10000;
@@ -346,6 +347,36 @@ impl CPU {
             self.r[REGISTER_PC as usize] = 0x18;
             self.flush_pipeline(mem);
         }
+    }
+
+    pub fn save_state(&self, writer: &mut Writer) {
+        writer.u32(self.cpsr);
+        writer.u32s(&self.r);
+        for bank in &self.banked {
+            writer.u32s(bank);
+        }
+        writer.u32s(&self.spsr);
+        writer.u8(self.bank as u8);
+        writer.u32s(&self.pipeline);
+        writer.bool(self.branch_happened);
+        writer.u64(self.cycles);
+    }
+
+    pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
+        self.cpsr = reader.u32()?;
+        reader.u32s(&mut self.r)?;
+        for bank in &mut self.banked {
+            reader.u32s(bank)?;
+        }
+        reader.u32s(&mut self.spsr)?;
+        self.bank = reader.u8()? as usize;
+        if self.bank >= BANK_COUNT {
+            return Err(StateError::Corrupt);
+        }
+        reader.u32s(&mut self.pipeline)?;
+        self.branch_happened = reader.bool()?;
+        self.cycles = reader.u64()?;
+        Ok(())
     }
 
     pub fn print_registers(&self) {

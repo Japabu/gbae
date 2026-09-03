@@ -1,7 +1,7 @@
 use gbae::system::cpu::Register;
 use gbae::system::gba::Gba;
 use gbae::system::instructions::asm::{registers::*, *};
-use gbae::system::instructions::Instruction;
+use gbae::system::instructions::{Condition, Instruction};
 
 const IWRAM_CODE: u32 = 0x0300_0100;
 const IWRAM_DATA: u32 = 0x0300_0200;
@@ -181,4 +181,123 @@ fn dma_stalls_the_cpu() {
     gba.mem.write_u16(DMA3CNT_L, 16);
     gba.mem.write_u16(DMA3CNT_H, 1 << 15 | 1 << 10);
     assert_eq!(step_cycles(&mut gba), 1 + 2 + 2 + 30);
+}
+
+#[test]
+fn writing_pc_refills_the_pipeline() {
+    let mut gba = boot_with_arm(IWRAM_CODE, |asm| {
+        asm.ldr_literal(R1, IWRAM_CODE + 12).emit(mov(PC, R1)).emit(nop());
+        nops(asm, nop(), 2);
+        asm.pool();
+    });
+    assert_eq!(cycles_per_step(&mut gba, 3), [3, 3, 1]);
+    assert_eq!(gba.cpu.pc(), IWRAM_CODE + 16);
+}
+
+#[test]
+fn loading_pc_adds_the_refill_to_the_load() {
+    let mut gba = boot_with_arm(IWRAM_CODE, |asm| {
+        asm.ldr_literal(R1, IWRAM_DATA).emit(ldr(PC, at(R1)));
+        nops(asm, nop(), 2);
+        asm.pool();
+    });
+    gba.mem.write_u32(IWRAM_DATA, IWRAM_CODE + 8);
+    assert_eq!(cycles_per_step(&mut gba, 3), [3, 5, 1]);
+}
+
+#[test]
+fn ldm_with_pc_reloads_the_pipeline() {
+    let mut gba = boot_with_arm(IWRAM_CODE, |asm| {
+        asm.ldr_literal(R1, IWRAM_DATA).emit(ldmia(R1, false, registers([R0, PC])));
+        nops(asm, nop(), 2);
+        asm.pool();
+    });
+    gba.mem.write_u32(IWRAM_DATA, 0x1234);
+    gba.mem.write_u32(IWRAM_DATA + 4, IWRAM_CODE + 8);
+    assert_eq!(cycles_per_step(&mut gba, 3), [3, 6, 1]);
+    assert_eq!(gba.cpu.r(Register::R0), 0x1234);
+}
+
+#[test]
+fn accumulating_and_long_multiplies_add_internal_cycles() {
+    let mut gba = boot_with_arm(IWRAM_CODE, |asm| {
+        asm.emit(mov(R2, imm(0x12)))
+            .emit(mla(R0, R1, R2, R3))
+            .emit(umull(R0, R1, R3, R2))
+            .emit(smlal(R0, R1, R3, R2))
+            .emit(nop());
+    });
+    assert_eq!(cycles_per_step(&mut gba, 5), [1, 3, 3, 4, 1]);
+}
+
+#[test]
+fn untaken_branch_costs_one_cycle() {
+    let mut gba = boot_with_arm(IWRAM_CODE, |asm| {
+        let target = asm.label();
+        asm.emit(cmp(R0, imm(1))).b_if(Condition::EQ, target).emit(nop()).place(target);
+        nops(asm, nop(), 2);
+    });
+    assert_eq!(cycles_per_step(&mut gba, 3), [1, 1, 1]);
+}
+
+#[test]
+fn bx_into_thumb_code() {
+    let mut gba = boot_with_arm(IWRAM_CODE, |asm| {
+        asm.ldr_literal(R1, (IWRAM_CODE + 8) | 1).emit(bx(R1));
+        asm.thumb();
+        nops(asm, thumb_nop(), 4);
+        asm.pool();
+    });
+    assert_eq!(cycles_per_step(&mut gba, 4), [3, 3, 1, 1]);
+    assert!(gba.cpu.thumb());
+}
+
+#[test]
+fn thumb_loads_stores_and_stack() {
+    let mut gba = boot_with_thumb(IWRAM_CODE | 1, |asm| {
+        asm.ldr_literal(R1, IWRAM_DATA)
+            .emit(ldr(R0, at(R1)))
+            .emit(str(R0, at(R1)))
+            .emit(push(registers([R0, R1, R2, R3])))
+            .emit(pop(registers([R0, R1, R2, R3])))
+            .emit(thumb_nop());
+        asm.pool();
+    });
+    assert_eq!(cycles_per_step(&mut gba, 6), [3, 3, 2, 5, 6, 1]);
+}
+
+#[test]
+fn thumb_branches() {
+    let mut gba = boot_with_thumb(IWRAM_CODE | 1, |asm| {
+        let target = asm.label();
+        let subroutine = asm.label();
+        asm.b(target).emit(thumb_nop()).place(target).bl(subroutine).emit(thumb_nop()).place(subroutine);
+        nops(asm, thumb_nop(), 2);
+    });
+    assert_eq!(cycles_per_step(&mut gba, 4), [3, 1, 3, 1]);
+    assert_eq!(gba.cpu.r(Register::LR), (IWRAM_CODE + 8) | 1);
+}
+
+#[test]
+fn data_accesses_pay_the_bus_of_their_region() {
+    let mut gba = boot_with_arm(IWRAM_CODE, |asm| {
+        asm.emit(mov(R1, imm(0x0200_0000)))
+            .emit(ldr(R0, at(R1)))
+            .emit(str(R0, at(R1)))
+            .emit(ldrh(R0, at(R1)))
+            .emit(mov(R1, imm(0x0600_0000)))
+            .emit(ldr(R0, at(R1)))
+            .emit(str(R0, at(R1)))
+            .emit(mov(R1, imm(0x0800_0000)))
+            .emit(ldr(R0, at(R1)))
+            .emit(ldrh(R0, at(R1)))
+            .emit(nop());
+    });
+    assert_eq!(cycles_per_step(&mut gba, 11), [1, 8, 7, 5, 1, 4, 3, 1, 10, 7, 1]);
+}
+
+#[test]
+fn arm_code_in_ewram_pays_two_halfword_fetches() {
+    let mut gba = boot_with_arm(EWRAM_CODE, |asm| nops(asm, nop(), 8));
+    assert_eq!(cycles_per_step(&mut gba, 3), [6, 6, 6]);
 }

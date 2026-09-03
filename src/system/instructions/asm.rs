@@ -354,6 +354,36 @@ pub fn muls(d: Register, m: Register, s: Register) -> Instruction {
     multiply(true, d, m, s)
 }
 
+pub fn mla(d: Register, m: Register, s: Register, n: Register) -> Instruction {
+    Instruction::Multiply(Multiply {
+        opcode: multiply::Opcode::MLA,
+        set_flags: false,
+        d,
+        n,
+        s,
+        m,
+    })
+}
+
+fn long_multiply(opcode: multiply::Opcode, lo: Register, hi: Register, m: Register, s: Register) -> Instruction {
+    Instruction::Multiply(Multiply {
+        opcode,
+        set_flags: false,
+        d: hi,
+        n: lo,
+        s,
+        m,
+    })
+}
+
+pub fn umull(lo: Register, hi: Register, m: Register, s: Register) -> Instruction {
+    long_multiply(multiply::Opcode::UMULL, lo, hi, m, s)
+}
+
+pub fn smlal(lo: Register, hi: Register, m: Register, s: Register) -> Instruction {
+    long_multiply(multiply::Opcode::SMLAL, lo, hi, m, s)
+}
+
 pub fn offset_address(n: Register, offset: u32) -> AddressingMode {
     let (add, offset) = if offset.wrapping_neg() < offset { (false, offset.wrapping_neg()) } else { (true, offset) };
     AddressingMode {

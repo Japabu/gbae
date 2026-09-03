@@ -1,0 +1,20 @@
+name: ToyOS toolchain
+description: Installs the ToyOS Rust toolchain release that matches the toyos-abi crate in Cargo.lock as `toyos`, with its linker on PATH
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        sdk=$(grep -A1 '^name = "toyos-abi"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+        tag=$(gh release download --repo ToyOSOrg/ToyOS "toolchain-linux-x86_64-sdk-$sdk" --pattern TOOLCHAIN --output - | sed -n 's/^toolchain //p')
+        echo "toolchain: $tag"
+        mkdir -p "$RUNNER_TEMP/toyos"
+        gh release download --repo ToyOSOrg/ToyOS "$tag" --pattern toyos-toolchain.tar.zst --output - | zstd -dc | tar -C "$RUNNER_TEMP/toyos" -x
+        stage2="$RUNNER_TEMP/toyos/x86_64-unknown-linux-gnu/stage2"
+        rustup toolchain link toyos "$stage2"
+        ln -s "$(rustup which cargo)" "$stage2/bin/cargo"
+        echo "$stage2/bin" >> "$GITHUB_PATH"
+        rustc +toyos -vV

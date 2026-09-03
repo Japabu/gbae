@@ -38,3 +38,12 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
       - run: cargo test --locked
+
+  toyos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/toyos-toolchain
+      - run: cargo +toyos build --release --locked --target x86_64-unknown-toyos

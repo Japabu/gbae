@@ -22,6 +22,8 @@ jobs:
             name: macos-universal
           - os: windows-latest
             name: windows-x86_64
+          - os: ubuntu-latest
+            name: toyos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -33,23 +35,29 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - if: runner.os == 'Linux'
+      - if: matrix.name == 'linux-x86_64'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - if: matrix.name == 'toyos-x86_64'
+        uses: ./.github/actions/toyos-toolchain
       - name: Build
         shell: bash
         run: |
           mkdir -p dist/gbae
-          case "$RUNNER_OS" in
-            macOS)
+          case "${{ matrix.name }}" in
+            macos-universal)
               cargo build --release --locked --target aarch64-apple-darwin
               cargo build --release --locked --target x86_64-apple-darwin
               lipo -create -output dist/gbae/gbae target/aarch64-apple-darwin/release/gbae target/x86_64-apple-darwin/release/gbae
               ;;
-            Windows)
+            windows-x86_64)
               cargo build --release --locked
               cp target/release/gbae.exe dist/gbae/
               ;;
-            *)
+            toyos-x86_64)
+              cargo +toyos build --release --locked --target x86_64-unknown-toyos
+              cp target/x86_64-unknown-toyos/release/gbae dist/gbae/
+              ;;
+            linux-x86_64)
               cargo build --release --locked
               cp target/release/gbae dist/gbae/
               ;;

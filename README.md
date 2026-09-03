@@ -8,7 +8,7 @@ dependencies. The window build adds `winit`, `softbuffer` and `cpal`.
 
 ## Running
 
-Binaries for Linux, macOS and Windows are on the
+Binaries for Linux, macOS, Windows and ToyOS are on the
 [Releases](https://github.com/Japabu/gbae/releases) page, or build one:
 
 ```
@@ -19,6 +19,20 @@ Building on Linux needs the ALSA headers (`libasound2-dev` and
 `pkg-config` on Debian and Ubuntu). The release binaries are unsigned:
 macOS asks you to open the first one from the right-click menu, or run
 `xattr -d com.apple.quarantine gbae`; Windows shows a SmartScreen prompt.
+
+The ToyOS binary needs the ToyOS Rust toolchain, which has the
+`x86_64-unknown-toyos` target, and its linker `toyos-ld`. Both come from a
+[ToyOS toolchain release](https://github.com/ToyOSOrg/ToyOS/releases) on a
+Linux x86-64 host, or from a ToyOS checkout elsewhere:
+
+```
+rustup toolchain link toyos <stage2 directory>
+PATH=<directory with toyos-ld>:$PATH cargo +toyos build --release --target x86_64-unknown-toyos
+```
+
+winit, softbuffer and cpal come from the ToyOS forks on GitHub, which add a
+ToyOS backend to each crate and are otherwise the upstream releases; every
+platform builds from the same lockfile.
 
 `gbae [ROM]` runs a ROM; without one the menu opens on its file browser.
 `--help` and `--version` are the only options. Games boot with the
@@ -62,9 +76,11 @@ rules. Golden-frame tests compare rendered frames with PNGs in
 the new image.
 
 CI runs fmt, clippy and the tests on Linux, macOS and Windows for every
-push. A release is a tag: bump the version in `Cargo.toml`, commit, then
-`git tag v0.2.0` and `git push origin v0.2.0`; the workflow builds the
-three archives and publishes them with checksums and the commit list.
+push, and builds the ToyOS binary with the ToyOS toolchain release that matches
+the `toyos-abi` crate in `Cargo.lock`. A release is a tag:
+bump the version in `Cargo.toml`, commit, then `git tag v0.3.0` and
+`git push origin v0.3.0`; the workflow builds the four archives and
+publishes them with checksums and the commit list.
 
 `benchmark.rs` assembles a workload ROM: a scrolling tiled background,
 moving sprites, a DMA tile animation, a Thumb loop in IWRAM, an ARM loop in

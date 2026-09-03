@@ -106,6 +106,12 @@ pub struct IoRegisters {
     pub halted: bool,
 }
 
+impl Default for IoRegisters {
+    fn default() -> IoRegisters {
+        IoRegisters::new()
+    }
+}
+
 impl IoRegisters {
     pub fn new() -> IoRegisters {
         IoRegisters {

@@ -67,6 +67,12 @@ macro_rules! numbers {
 
 numbers!(u8 u8s: u8, u16 u16s: u16, u32 u32s: u32, i32 i32s: i32, u64 u64s: u64, i64 i64s: i64, u128 u128s: u128);
 
+impl Default for Writer {
+    fn default() -> Writer {
+        Writer::new()
+    }
+}
+
 impl Writer {
     pub fn new() -> Writer {
         let mut writer = Writer { bytes: Vec::new() };

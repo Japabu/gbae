@@ -269,10 +269,10 @@ impl DataProcessing {
         let word = match (self.opcode, self.operand, self.set_flags) {
             (Opcode::MOV, ShifterOperand::ShiftImmediate { shift, m, amount }, true) if low(d) && low(m) && shift != Shift::ROR => shift.bits() << 11 | amount << 6 | m.number() << 3 | d.number(),
             (Opcode::ADD | Opcode::SUB, ShifterOperand::Register(m), true) if low(d) && low(n) && low(m) => {
-                0b000_11 << 11 | u32::from(self.opcode == Opcode::SUB) << 9 | m.number() << 6 | n.number() << 3 | d.number()
+                0b11 << 11 | u32::from(self.opcode == Opcode::SUB) << 9 | m.number() << 6 | n.number() << 3 | d.number()
             }
             (Opcode::ADD | Opcode::SUB, ShifterOperand::Immediate { value, .. }, true) if low(d) && low(n) && value < 8 => {
-                0b000_11 << 11 | 1 << 10 | u32::from(self.opcode == Opcode::SUB) << 9 | value << 6 | n.number() << 3 | d.number()
+                0b11 << 11 | 1 << 10 | u32::from(self.opcode == Opcode::SUB) << 9 | value << 6 | n.number() << 3 | d.number()
             }
             (Opcode::MOV | Opcode::CMP | Opcode::ADD | Opcode::SUB, ShifterOperand::Immediate { value, .. }, true) if low(d) && n == d && value < 256 => {
                 let opcode = match self.opcode {
@@ -304,10 +304,10 @@ impl DataProcessing {
                 };
                 0b010001 << 10 | opcode << 8 | d.number().bits(3..4) << 7 | m.number() << 3 | d.number().bits(0..3)
             }
-            (Opcode::ADD, ShifterOperand::Immediate { value, .. }, false) if low(d) && n == Register::SP && value % 4 == 0 && value < 1024 => 0b1010_1 << 11 | d.number() << 8 | value / 4,
-            (Opcode::ADR, ShifterOperand::Immediate { value, .. }, false) if low(d) && n == Register::PC && value % 4 == 0 && value < 1024 => 0b1010_0 << 11 | d.number() << 8 | value / 4,
+            (Opcode::ADD, ShifterOperand::Immediate { value, .. }, false) if low(d) && n == Register::SP && value % 4 == 0 && value < 1024 => 0b1_0101 << 11 | d.number() << 8 | (value / 4),
+            (Opcode::ADR, ShifterOperand::Immediate { value, .. }, false) if low(d) && n == Register::PC && value % 4 == 0 && value < 1024 => 0b1_0100 << 11 | d.number() << 8 | (value / 4),
             (Opcode::ADD | Opcode::SUB, ShifterOperand::Immediate { value, .. }, false) if d == Register::SP && n == Register::SP && value % 4 == 0 && value < 512 => {
-                0b1011_0000 << 8 | u32::from(self.opcode == Opcode::SUB) << 7 | value / 4
+                0b1011_0000 << 8 | u32::from(self.opcode == Opcode::SUB) << 7 | (value / 4)
             }
             _ => return None,
         };

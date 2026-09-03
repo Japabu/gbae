@@ -85,7 +85,7 @@ impl Assembler {
     }
 
     pub fn align(&mut self) -> &mut Assembler {
-        while self.code.len() % 4 != 0 {
+        while !self.code.len().is_multiple_of(4) {
             self.code.push(0);
         }
         self

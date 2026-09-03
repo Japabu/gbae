@@ -153,11 +153,11 @@ fn background_with_lower_priority_value_is_drawn_on_top() {
     gba.mem.write_u16(SCREEN_BASE_1, 1);
     gba.mem.write_u16(SCREEN_BASE_2, 3);
     gba.mem.write_u16(BG0CNT, 1 << 8 | 1);
-    gba.mem.write_u16(BG1CNT, 2 << 8 | 0);
+    gba.mem.write_u16(BG1CNT, 2 << 8);
     gba.run_frame();
     assert_eq!(gba.framebuffer()[0][0], rgb(0, 31, 0));
 
-    gba.mem.write_u16(BG0CNT, 1 << 8 | 0);
+    gba.mem.write_u16(BG0CNT, 1 << 8);
     gba.mem.write_u16(BG1CNT, 2 << 8 | 1);
     gba.run_frame();
     assert_eq!(gba.framebuffer()[0][0], rgb(31, 0, 0));
@@ -236,7 +236,7 @@ fn window0_limits_background_to_its_rectangle() {
         gba.mem.write_u16(SCREEN_BASE_1 + tile_x * 2, 1);
     }
     gba.mem.write_u16(WIN0H, 8 << 8 | 16);
-    gba.mem.write_u16(WIN0V, 0 << 8 | 160);
+    gba.mem.write_u16(WIN0V, 160);
     gba.mem.write_u16(WININ, 1);
     gba.mem.write_u16(WINOUT, 0);
     gba.run_frame();

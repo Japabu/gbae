@@ -276,9 +276,11 @@ impl LoadStore {
         let low = |register: Register| register.is_low();
         let word = match (offset, self.length, self.sign_extend) {
             (ShifterOperand::Immediate { value, .. }, Length::Word, false) if n == Register::PC && self.opcode == Opcode::LDR && low(d) && value % 4 == 0 && value < 1024 => {
-                0b01001 << 11 | d.number() << 8 | value / 4
+                0b1001 << 11 | d.number() << 8 | (value / 4)
             }
-            (ShifterOperand::Immediate { value, .. }, Length::Word, false) if n == Register::SP && low(d) && value % 4 == 0 && value < 1024 => 0b1001 << 12 | load << 11 | d.number() << 8 | value / 4,
+            (ShifterOperand::Immediate { value, .. }, Length::Word, false) if n == Register::SP && low(d) && value % 4 == 0 && value < 1024 => {
+                0b1001 << 12 | load << 11 | d.number() << 8 | (value / 4)
+            }
             (ShifterOperand::Immediate { value, .. }, Length::Word, false) if low(d) && low(n) && value % 4 == 0 && value < 128 => {
                 0b011 << 13 | load << 11 | (value / 4) << 6 | n.number() << 3 | d.number()
             }

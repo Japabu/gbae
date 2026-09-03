@@ -158,7 +158,7 @@ impl BranchExchange {
     }
 
     pub fn encode_thumb(self) -> Option<u16> {
-        u16::try_from(0b0100_0111_0 << 7 | self.m.number() << 3).ok()
+        u16::try_from(0b0100_0111 << 8 | self.m.number() << 3).ok()
     }
 
     pub fn disassemble(self, cond: Condition) -> String {

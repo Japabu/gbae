@@ -275,6 +275,12 @@ pub struct CPU {
     cycles: u64,
 }
 
+impl Default for CPU {
+    fn default() -> CPU {
+        CPU::new()
+    }
+}
+
 impl CPU {
     pub fn new() -> CPU {
         CPU {

@@ -137,7 +137,7 @@ impl Multiply {
 
     pub fn encode_thumb(self) -> Option<u16> {
         let fits = self.opcode == Opcode::MUL && self.set_flags && self.d.is_low() && self.m.is_low() && self.s == self.d && self.n == Register::R0;
-        fits.then(|| u16::try_from(0b010000_1101 << 6 | self.m.number() << 3 | self.d.number()).ok()).flatten()
+        fits.then(|| u16::try_from(0b01_0000_1101 << 6 | self.m.number() << 3 | self.d.number()).ok()).flatten()
     }
 
     pub fn disassemble(self, cond: Condition) -> String {

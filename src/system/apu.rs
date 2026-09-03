@@ -489,7 +489,7 @@ impl Wave {
         }
         let bank = (self.playing_bank + usize::from(self.position >= 32)) % 2;
         let byte = self.ram[bank][usize::from(self.position % 32) / 2];
-        let nibble = if self.position % 2 == 0 { byte >> 4 } else { byte & 0xF };
+        let nibble = if self.position.is_multiple_of(2) { byte >> 4 } else { byte & 0xF };
         if self.force_three_quarters {
             nibble * 3 / 4
         } else {
@@ -740,6 +740,12 @@ pub struct Apu {
     synth: [Synth; 2],
 }
 
+impl Default for Apu {
+    fn default() -> Apu {
+        Apu::new()
+    }
+}
+
 impl Apu {
     pub fn new() -> Apu {
         Apu {
@@ -923,7 +929,7 @@ impl Apu {
     fn tick_frame_sequencer(&mut self) {
         let step = self.frame_sequencer_step;
         self.frame_sequencer_step = (step + 1) % 8;
-        if step % 2 == 0 {
+        if step.is_multiple_of(2) {
             if self.square1.length.tick() {
                 self.square1.enabled = false;
             }
@@ -1102,7 +1108,7 @@ mod tests {
     fn test_direct_sound_steps_stay_sharp() {
         let mut apu = enabled_apu();
         apu.write_u16(0x82, 0x2 | 0x4 | 0x100 | 0x200);
-        stream_fifo(&mut apu, 4096, std::iter::repeat(0).take(40).chain(std::iter::repeat(0x40).take(40)));
+        stream_fifo(&mut apu, 4096, std::iter::repeat_n(0, 40).chain(std::iter::repeat_n(0x40, 40)));
         let left: Vec<i32> = apu.take_samples().iter().step_by(2).map(|sample| i32::from(*sample)).collect();
         let edge = left.iter().position(|sample| *sample > left.iter().max().unwrap() / 2).unwrap();
         let level = left[edge + 20];

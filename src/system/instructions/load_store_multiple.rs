@@ -238,10 +238,10 @@ impl LoadStoreMultiple {
         let low = self.registers.is_subset_of(RegisterList::LOW);
         let word = match (self.opcode, self.n, self.addressing) {
             (Opcode::STM, Register::SP, AddressingMode::DecrementBefore) if self.writeback && self.registers.is_subset_of(RegisterList::LOW.with(Register::LR)) => {
-                0b1011_010 << 9 | u32::from(self.registers.contains(Register::LR)) << 8 | self.registers.bits().bits(0..8)
+                0b101_1010 << 9 | u32::from(self.registers.contains(Register::LR)) << 8 | self.registers.bits().bits(0..8)
             }
             (Opcode::LDM, Register::SP, AddressingMode::IncrementAfter) if self.writeback && self.registers.is_subset_of(RegisterList::LOW.with(Register::PC)) => {
-                0b1011_110 << 9 | u32::from(self.registers.contains(Register::PC)) << 8 | self.registers.bits().bits(0..8)
+                0b101_1110 << 9 | u32::from(self.registers.contains(Register::PC)) << 8 | self.registers.bits().bits(0..8)
             }
             (opcode, n, AddressingMode::IncrementAfter) if n.is_low() && low && self.writeback == !(opcode == Opcode::LDM && self.registers.contains(n)) => {
                 0b1100 << 12 | opcode.load_bit() << 11 | n.number() << 8 | self.registers.bits()

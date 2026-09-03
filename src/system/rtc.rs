@@ -21,6 +21,12 @@ pub struct Gpio {
     pub rtc: Rtc,
 }
 
+impl Default for Gpio {
+    fn default() -> Gpio {
+        Gpio::new()
+    }
+}
+
 impl Gpio {
     pub fn new() -> Gpio {
         Gpio {
@@ -283,7 +289,7 @@ impl Rtc {
 }
 
 fn bcd(value: u8) -> u8 {
-    (value / 10) << 4 | value % 10
+    ((value / 10) << 4) | (value % 10)
 }
 
 fn from_bcd(value: u8) -> u8 {

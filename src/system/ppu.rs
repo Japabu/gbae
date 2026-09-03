@@ -57,11 +57,11 @@ impl Color {
     }
 
     fn brighten(self, evy: u32) -> Color {
-        Color::from_channels(self.channels().map(|channel| channel + ((Color::MAX_CHANNEL - channel) * evy >> 4)))
+        Color::from_channels(self.channels().map(|channel| channel + (((Color::MAX_CHANNEL - channel) * evy) >> 4)))
     }
 
     fn darken(self, evy: u32) -> Color {
-        Color::from_channels(self.channels().map(|channel| channel - (channel * evy >> 4)))
+        Color::from_channels(self.channels().map(|channel| channel - ((channel * evy) >> 4)))
     }
 
     fn rgb888(self) -> [u8; 3] {
@@ -419,8 +419,8 @@ const NO_OBJ_PIXEL: ObjPixel = ObjPixel {
 };
 
 pub struct PPU {
+    drawing: Box<Framebuffer>,
     framebuffer: Box<Framebuffer>,
-    finished: Box<Framebuffer>,
     affine_reference: [[i32; 2]; 2],
     affine_mosaic_reference: [[i32; 2]; 2],
     bg_lines: [[Pixel; FRAMEBUFFER_WIDTH]; 4],
@@ -430,11 +430,17 @@ pub struct PPU {
     layer_count: usize,
 }
 
+impl Default for PPU {
+    fn default() -> PPU {
+        PPU::new()
+    }
+}
+
 impl PPU {
     pub fn new() -> PPU {
         PPU {
+            drawing: Box::new([[[0; 3]; FRAMEBUFFER_WIDTH]; FRAMEBUFFER_HEIGHT]),
             framebuffer: Box::new([[[0; 3]; FRAMEBUFFER_WIDTH]; FRAMEBUFFER_HEIGHT]),
-            finished: Box::new([[[0; 3]; FRAMEBUFFER_WIDTH]; FRAMEBUFFER_HEIGHT]),
             affine_reference: [[0; 2]; 2],
             affine_mosaic_reference: [[0; 2]; 2],
             bg_lines: [[None; FRAMEBUFFER_WIDTH]; 4],
@@ -446,15 +452,15 @@ impl PPU {
     }
 
     pub fn framebuffer(&self) -> &Framebuffer {
-        &self.finished
+        &self.framebuffer
     }
 
     pub fn finish_frame(&mut self) {
-        std::mem::swap(&mut self.framebuffer, &mut self.finished);
+        std::mem::swap(&mut self.drawing, &mut self.framebuffer);
     }
 
     pub fn save_state(&self, writer: &mut Writer) {
-        for pixel in self.finished.iter().flatten() {
+        for pixel in self.framebuffer.iter().flatten() {
             writer.bytes(pixel);
         }
         for reference in self.affine_reference.iter().chain(&self.affine_mosaic_reference) {
@@ -463,10 +469,10 @@ impl PPU {
     }
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
-        for pixel in self.finished.iter_mut().flatten() {
+        for pixel in self.framebuffer.iter_mut().flatten() {
             reader.bytes_into(pixel)?;
         }
-        *self.framebuffer = *self.finished;
+        *self.drawing = *self.framebuffer;
         for reference in self.affine_reference.iter_mut().chain(&mut self.affine_mosaic_reference) {
             reader.i32s(reference)?;
         }
@@ -492,14 +498,14 @@ impl PPU {
         }
 
         if display.forced_blank() {
-            self.framebuffer[y] = [[255; 3]; FRAMEBUFFER_WIDTH];
+            self.drawing[y] = [[255; 3]; FRAMEBUFFER_WIDTH];
         } else {
             self.render_backgrounds(y, io, mem.vram(), mem.palette_ram());
-            self.render_objects(y, io, mem.vram(), mem.palette_ram(), mem.oam());
+            self.render_objects(y, mem);
             self.sort_layers(io);
             self.compose(y, io, mem.palette_ram());
             if io.green_swap.bit(0) {
-                for pair in self.framebuffer[y].chunks_exact_mut(2) {
+                for pair in self.drawing[y].chunks_exact_mut(2) {
                     let green = pair[0][1];
                     pair[0][1] = pair[1][1];
                     pair[1][1] = green;
@@ -624,26 +630,27 @@ impl PPU {
         apply_horizontal_mosaic(line, mosaic);
     }
 
-    fn render_objects(&mut self, y: usize, io: &IoRegisters, vram: &[u8], palette: &[u8], oam: &[u8]) {
+    fn render_objects(&mut self, y: usize, mem: &Memory) {
         self.obj_line.fill(NO_OBJ_PIXEL);
         self.obj_window.fill(false);
-        let display = DisplayControl(io.disp_cnt);
+        let display = DisplayControl(mem.io().disp_cnt);
         if !display.objects_enabled() {
             return;
         }
         let mut budget = if display.hblank_interval_free() { OBJ_CYCLES_PER_LINE_HBLANK_FREE } else { OBJ_CYCLES_PER_LINE };
         for index in 0..OBJ_COUNT {
-            budget -= self.render_object(Object::read(oam, index), y, io, vram, palette, oam, budget);
+            budget -= self.render_object(Object::read(mem.oam(), index), y, mem, budget);
             if budget <= 0 {
                 break;
             }
         }
     }
 
-    fn render_object(&mut self, object: Object, y: usize, io: &IoRegisters, vram: &[u8], palette: &[u8], oam: &[u8], budget: i32) -> i32 {
+    fn render_object(&mut self, object: Object, y: usize, mem: &Memory, budget: i32) -> i32 {
         if object.is_disabled() {
             return 0;
         }
+        let (io, vram, palette, oam) = (mem.io(), mem.vram(), mem.palette_ram(), mem.oam());
         let display = DisplayControl(io.disp_cnt);
         let (width, height) = object.size();
         let (box_width, box_height) = object.bounding_box();
@@ -732,7 +739,7 @@ impl PPU {
                     _ => top_color,
                 }
             };
-            self.framebuffer[y][x] = color.rgb888();
+            self.drawing[y][x] = color.rgb888();
         }
     }
 
@@ -807,7 +814,7 @@ fn bg_tile_color(vram: &[u8], palette: &[u8], tile_offset: usize, px: usize, py:
         palette_color(palette, usize::from(vram[tile_offset + py * 8 + px]))
     } else {
         let byte = vram[tile_offset + py * 4 + px / 2];
-        let index = usize::from(if px % 2 == 0 { byte.bits(0..4) } else { byte.bits(4..8) });
+        let index = usize::from(if px.is_multiple_of(2) { byte.bits(0..4) } else { byte.bits(4..8) });
         (index != 0).then(|| Color::from_palette(palette, palette_bank * 16 + index))
     }
 }
@@ -817,7 +824,7 @@ fn obj_tile_pixel(vram: &[u8], tile: usize, px: usize, py: usize, eight_bit: boo
         usize::from(vram[OBJ_TILE_BASE + ((tile * 32 + py * 8 + px) & OBJ_TILE_MASK)])
     } else {
         let byte = vram[OBJ_TILE_BASE + ((tile * 32 + py * 4 + px / 2) & OBJ_TILE_MASK)];
-        usize::from(if px % 2 == 0 { byte.bits(0..4) } else { byte.bits(4..8) })
+        usize::from(if px.is_multiple_of(2) { byte.bits(0..4) } else { byte.bits(4..8) })
     }
 }
 
@@ -849,7 +856,7 @@ mod tests {
     fn test_window_ranges() {
         assert!(inside_range(8, 8 << 8 | 16, 240));
         assert!(!inside_range(16, 8 << 8 | 16, 240));
-        assert!(inside_range(239, 8 << 8 | 0, 240));
+        assert!(inside_range(239, 8 << 8, 240));
         assert!(!inside_range(100, 200 << 8 | 100, 240));
         assert!(inside_range(210, 200 << 8 | 100, 240));
     }

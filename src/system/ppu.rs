@@ -1,4 +1,4 @@
-use crate::bitutil::sign_extend32;
+use crate::bits::Bits;
 
 use super::{
     memory::{IoRegisters, Memory},
@@ -14,11 +14,7 @@ const OBJ_TILE_BASE: usize = 0x1_0000;
 const OBJ_TILE_MASK: usize = 0x7FFF;
 const OBJ_PALETTE_BASE: usize = 0x200;
 const NO_OBJ_PRIORITY: u8 = 4;
-const OBJ_SIZES: [[(i32, i32); 4]; 3] = [
-    [(8, 8), (16, 16), (32, 32), (64, 64)],
-    [(16, 8), (32, 8), (32, 16), (64, 32)],
-    [(8, 16), (8, 32), (16, 32), (32, 64)],
-];
+const OBJ_SIZES: [[(i32, i32); 4]; 3] = [[(8, 8), (16, 16), (32, 32), (64, 64)], [(16, 8), (32, 8), (32, 16), (64, 32)], [(8, 16), (8, 32), (16, 32), (32, 64)]];
 
 const DISPCNT_FRAME_SELECT: u16 = 1 << 4;
 const DISPCNT_HBLANK_INTERVAL_FREE: u16 = 1 << 5;
@@ -148,7 +144,7 @@ impl PPU {
     pub fn latch_affine_references(&mut self, io: &mut IoRegisters) {
         for bg in 0..2 {
             if io.v_count == 0 || io.bg_reference_written[bg] {
-                self.affine_reference[bg] = [sign_extend32(io.bg_reference[bg][0], 28) as i32, sign_extend32(io.bg_reference[bg][1], 28) as i32];
+                self.affine_reference[bg] = [(io.bg_reference[bg][0]).sign_extended(28) as i32, (io.bg_reference[bg][1]).sign_extended(28) as i32];
                 io.bg_reference_written[bg] = false;
             }
         }
@@ -324,7 +320,11 @@ impl PPU {
         self.obj_line.fill(NO_OBJ_PIXEL);
         self.obj_window.fill(false);
         if io.disp_cnt & DISPCNT_OBJ != 0 {
-            let mut budget = if io.disp_cnt & DISPCNT_HBLANK_INTERVAL_FREE != 0 { OBJ_CYCLES_PER_LINE_HBLANK_FREE } else { OBJ_CYCLES_PER_LINE };
+            let mut budget = if io.disp_cnt & DISPCNT_HBLANK_INTERVAL_FREE != 0 {
+                OBJ_CYCLES_PER_LINE_HBLANK_FREE
+            } else {
+                OBJ_CYCLES_PER_LINE
+            };
             for index in 0..128 {
                 budget -= self.render_object(index, y, io, vram, palette, oam, budget);
                 if budget <= 0 {
@@ -376,7 +376,11 @@ impl PPU {
         let priority = ((attribute2 >> 10) & 0b11) as u8;
         let palette_bank = (attribute2 >> 12) as usize;
         let tiles_per_unit = if eight_bit { 2 } else { 1 };
-        let stride = if io.disp_cnt & DISPCNT_OBJ_ONE_DIMENSIONAL != 0 { (width as usize / 8) * tiles_per_unit } else { 32 };
+        let stride = if io.disp_cnt & DISPCNT_OBJ_ONE_DIMENSIONAL != 0 {
+            (width as usize / 8) * tiles_per_unit
+        } else {
+            32
+        };
         let [pa, pb, pc, pd] = if affine {
             let group = ((attribute1 >> 9) & 0x1F) as usize * 32;
             [6, 14, 22, 30].map(|offset| halfword(oam, group + offset) as i16 as i32)

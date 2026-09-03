@@ -210,7 +210,13 @@ impl Menu {
         draw_text(frame, 24, top, title, HIGHLIGHT);
         for (i, (text, selected, enabled)) in lines.iter().enumerate() {
             let y = top + (i + 2) * (GLYPH_HEIGHT + 2);
-            let color = if *selected { HIGHLIGHT } else if *enabled { TEXT } else { DIM };
+            let color = if *selected {
+                HIGHLIGHT
+            } else if *enabled {
+                TEXT
+            } else {
+                DIM
+            };
             draw_text(frame, 24, y, if *selected { ">" } else { " " }, HIGHLIGHT);
             draw_text(frame, 24 + GLYPH_WIDTH * 2, y, text, color);
         }
@@ -234,7 +240,11 @@ impl Menu {
                     .iter()
                     .enumerate()
                     .map(|(i, key)| {
-                        let binding = if self.capturing == Some(*key) { "press a key".to_string() } else { settings.keys[*key as usize].clone() };
+                        let binding = if self.capturing == Some(*key) {
+                            "press a key".to_string()
+                        } else {
+                            settings.keys[*key as usize].clone()
+                        };
                         (format!("{:<8}{}", key_label(*key), binding), i == self.index, true)
                     })
                     .collect();

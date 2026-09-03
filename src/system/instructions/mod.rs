@@ -1,16 +1,20 @@
-use std::fmt::{Debug, Display};
+use std::fmt::Display;
 
-use super::{cpu::CPU, memory::Memory};
-use crate::bitutil::{get_bit, get_bits32};
+use crate::bits::Bits;
 
-mod branch;
-mod ctrl_ext;
-mod data_processing;
-mod load_store;
-mod load_store_multiple;
-mod multiply;
-mod swi;
+use super::{
+    cpu::{Psr, CPU},
+    memory::Memory,
+};
+
+pub mod branch;
+pub mod ctrl_ext;
+pub mod data_processing;
+pub mod load_store;
+pub mod load_store_multiple;
 pub mod lut;
+pub mod multiply;
+pub mod swi;
 
 pub type ArmHandler = fn(&mut CPU, &mut Memory, u32);
 pub type ThumbHandler = fn(&mut CPU, &mut Memory, u16);
@@ -82,57 +86,57 @@ macro_rules! match_pattern {
 
 impl Instruction {
     #[inline(always)]
-    pub fn decode_arm(instruction: u32) -> Instruction {
-        match_pattern!(lut::index_arm(instruction) as u32, {
-            "00010x00 0000" => ctrl_ext::decode_mrs_arm(instruction),
-            "00010x10 0000" => ctrl_ext::decode_msr_arm(instruction),
-            "00010010 0001" => branch::decode_bx_arm(instruction),
-            "000000xx 1001" => multiply::decode_arm(instruction),
-            "00001xxx 1001" => multiply::decode_arm(instruction),
-            "00010x00 1001" => load_store::decode_swap_arm(instruction),
-            "000xxxxx 1xx1" => load_store::decode_extra_arm(instruction),
-            "00010xx0 xxxx" => Instruction::Unknown(instruction),
-            "000xxxxx xxxx" => data_processing::decode_arm(instruction),
-            "00110x00 xxxx" => Instruction::Unknown(instruction),
-            "00110x10 xxxx" => ctrl_ext::decode_msr_arm(instruction),
-            "001xxxxx xxxx" => data_processing::decode_arm(instruction),
-            "010xxxxx xxxx" => load_store::decode_arm(instruction),
-            "011xxxxx xxx0" => load_store::decode_arm(instruction),
-            "100xxxxx xxxx" => load_store_multiple::decode_arm(instruction),
-            "1010xxxx xxxx" => branch::decode_b_arm(instruction),
-            "1011xxxx xxxx" => branch::decode_bl_arm(instruction),
-            "1111xxxx xxxx" => swi::decode_arm(instruction),
-            _ => Instruction::Unknown(instruction),
+    pub fn decode_arm(word: u32) -> Instruction {
+        match_pattern!(lut::index_arm(word) as u32, {
+            "00010x00 0000" => ctrl_ext::decode_mrs_arm(word),
+            "00010x10 0000" => ctrl_ext::decode_msr_arm(word),
+            "00010010 0001" => branch::decode_bx_arm(word),
+            "000000xx 1001" => multiply::decode_arm(word),
+            "00001xxx 1001" => multiply::decode_arm(word),
+            "00010x00 1001" => load_store::decode_swap_arm(word),
+            "000xxxxx 1xx1" => load_store::decode_extra_arm(word),
+            "00010xx0 xxxx" => Instruction::Unknown(word),
+            "000xxxxx xxxx" => data_processing::decode_arm(word),
+            "00110x00 xxxx" => Instruction::Unknown(word),
+            "00110x10 xxxx" => ctrl_ext::decode_msr_arm(word),
+            "001xxxxx xxxx" => data_processing::decode_arm(word),
+            "010xxxxx xxxx" => load_store::decode_arm(word),
+            "011xxxxx xxx0" => load_store::decode_arm(word),
+            "100xxxxx xxxx" => load_store_multiple::decode_arm(word),
+            "1010xxxx xxxx" => branch::decode_b_arm(word),
+            "1011xxxx xxxx" => branch::decode_bl_arm(word),
+            "1111xxxx xxxx" => swi::decode_arm(word),
+            _ => Instruction::Unknown(word),
         })
     }
 
     #[inline(always)]
-    pub fn decode_thumb(instruction: u16) -> Instruction {
-        match_pattern!((instruction >> 8) as u32, {
-            "000 11 0 xx" => data_processing::decode_add_sub_register_thumb(instruction),
-            "000 11 1 xx" => data_processing::decode_add_sub_immediate_thumb(instruction),
-            "000 xx x xx" => data_processing::decode_shift_imm_thumb(instruction),
-            "001 xxxxx" => data_processing::decode_mov_cmp_add_sub_immediate_thumb(instruction),
-            "010000 xx" => data_processing::decode_register_thumb(instruction),
-            "010001 11" => branch::decode_branch_exchange_thumb(instruction),
-            "010001 xx" => data_processing::decode_special_thumb(instruction),
-            "01001 xxx" => load_store::decode_load_from_literal_pool_thumb(instruction),
-            "0101 xxxx" => load_store::decode_register_offset_thumb(instruction),
-            "011x xxxx" => load_store::decode_word_byte_thumb(instruction),
-            "1000 xxxx" => load_store::decode_halfword_thumb(instruction),
-            "1001 xxxx" => load_store::decode_stack_thumb(instruction),
-            "1010 xxxx" => data_processing::decode_add_sp_pc_thumb(instruction),
-            "1011 0000" => data_processing::decode_adjust_sp_thumb(instruction),
-            "1011 010x" => load_store_multiple::decode_push_thumb(instruction),
-            "1011 110x" => load_store_multiple::decode_pop_thumb(instruction),
-            "1100 xxxx" => load_store_multiple::decode_ldm_stm_thumb(instruction),
-            "1101 1110" => Instruction::Unknown(instruction as u32),
-            "1101 1111" => swi::decode_thumb(instruction),
-            "1101 xxxx" => branch::decode_conditional_branch_thumb(instruction),
-            "11100 xxx" => branch::decode_unconditional_branch_thumb(instruction),
-            "11110 xxx" => branch::decode_bl_prefix_thumb(instruction),
-            "11111 xxx" => branch::decode_bl_suffix_thumb(instruction),
-            _ => Instruction::Unknown(instruction as u32),
+    pub fn decode_thumb(word: u16) -> Instruction {
+        match_pattern!(u32::from(word).bits(8..), {
+            "000 11 0 xx" => data_processing::decode_add_sub_register_thumb(word),
+            "000 11 1 xx" => data_processing::decode_add_sub_immediate_thumb(word),
+            "000 xx x xx" => data_processing::decode_shift_imm_thumb(word),
+            "001 xxxxx" => data_processing::decode_mov_cmp_add_sub_immediate_thumb(word),
+            "010000 xx" => data_processing::decode_register_thumb(word),
+            "010001 11" => branch::decode_branch_exchange_thumb(word),
+            "010001 xx" => data_processing::decode_special_thumb(word),
+            "01001 xxx" => load_store::decode_load_from_literal_pool_thumb(word),
+            "0101 xxxx" => load_store::decode_register_offset_thumb(word),
+            "011x xxxx" => load_store::decode_word_byte_thumb(word),
+            "1000 xxxx" => load_store::decode_halfword_thumb(word),
+            "1001 xxxx" => load_store::decode_stack_thumb(word),
+            "1010 xxxx" => data_processing::decode_add_sp_pc_thumb(word),
+            "1011 0000" => data_processing::decode_adjust_sp_thumb(word),
+            "1011 010x" => load_store_multiple::decode_push_thumb(word),
+            "1011 110x" => load_store_multiple::decode_pop_thumb(word),
+            "1100 xxxx" => load_store_multiple::decode_ldm_stm_thumb(word),
+            "1101 1110" => Instruction::Unknown(u32::from(word)),
+            "1101 1111" => swi::decode_thumb(word),
+            "1101 xxxx" => branch::decode_conditional_branch_thumb(word),
+            "11100 xxx" => branch::decode_unconditional_branch_thumb(word),
+            "11110 xxx" => branch::decode_bl_prefix_thumb(word),
+            "11111 xxx" => branch::decode_bl_suffix_thumb(word),
+            _ => Instruction::Unknown(u32::from(word)),
         })
     }
 
@@ -151,7 +155,48 @@ impl Instruction {
             Instruction::Mrs(instruction) => instruction.execute(cpu, mem),
             Instruction::Msr(instruction) => instruction.execute(cpu, mem),
             Instruction::SoftwareInterrupt(instruction) => instruction.execute(cpu, mem),
-            Instruction::Unknown(encoding) => panic!("Tried to execute unknown instruction {:08X} at {:08X}", encoding, cpu.curr_instruction_address_from_execution_stage()),
+            Instruction::Unknown(word) => panic!("Tried to execute unknown instruction {:08X} at {:08X}", word, cpu.pc()),
+        }
+    }
+
+    pub fn encode_arm(self, cond: Condition) -> Option<u32> {
+        let mut cond = cond;
+        let word = match self {
+            Instruction::DataProcessing(instruction) => instruction.encode_arm()?,
+            Instruction::Multiply(instruction) => instruction.encode_arm(),
+            Instruction::LoadStore(instruction) => instruction.encode_arm()?,
+            Instruction::Swap(instruction) => instruction.encode_arm(),
+            Instruction::LoadStoreMultiple(instruction) => instruction.encode_arm(),
+            Instruction::Branch(instruction) => {
+                if instruction.cond != Condition::AL {
+                    if cond != Condition::AL && cond != instruction.cond {
+                        return None;
+                    }
+                    cond = instruction.cond;
+                }
+                instruction.encode_arm()?
+            }
+            Instruction::BranchExchange(instruction) => instruction.encode_arm(),
+            Instruction::Mrs(instruction) => instruction.encode_arm(),
+            Instruction::Msr(instruction) => instruction.encode_arm()?,
+            Instruction::SoftwareInterrupt(instruction) => instruction.encode_arm()?,
+            Instruction::BranchLinkPrefix(_) | Instruction::BranchLinkSuffix(_) | Instruction::Unknown(_) => return None,
+        };
+        Some(word | cond.bits() << 28)
+    }
+
+    pub fn encode_thumb(self) -> Option<u16> {
+        match self {
+            Instruction::DataProcessing(instruction) => instruction.encode_thumb(),
+            Instruction::Multiply(instruction) => instruction.encode_thumb(),
+            Instruction::LoadStore(instruction) => instruction.encode_thumb(),
+            Instruction::LoadStoreMultiple(instruction) => instruction.encode_thumb(),
+            Instruction::Branch(instruction) => instruction.encode_thumb(),
+            Instruction::BranchExchange(instruction) => instruction.encode_thumb(),
+            Instruction::BranchLinkPrefix(instruction) => instruction.encode_thumb(),
+            Instruction::BranchLinkSuffix(instruction) => instruction.encode_thumb(),
+            Instruction::SoftwareInterrupt(instruction) => instruction.encode_thumb(),
+            Instruction::Swap(_) | Instruction::Mrs(_) | Instruction::Msr(_) | Instruction::Unknown(_) => None,
         }
     }
 
@@ -169,63 +214,39 @@ impl Instruction {
             Instruction::Mrs(instruction) => instruction.disassemble(cond),
             Instruction::Msr(instruction) => instruction.disassemble(cond),
             Instruction::SoftwareInterrupt(instruction) => instruction.disassemble(cond),
-            Instruction::Unknown(encoding) => format!("???: {:08X}", encoding),
+            Instruction::Unknown(word) => format!("???: {:08X}", word),
         }
     }
 }
 
-pub fn format_instruction_arm(instruction: u32, base_address: u32) -> String {
+fn bit_table(word: u32, groups: &[&[u32]]) -> String {
+    let row = |cell: &dyn Fn(u32) -> String| {
+        groups
+            .iter()
+            .map(|group| group.iter().map(|index| cell(*index)).collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join("   ")
+    };
     format!(
-        "{} ({:08X})\n\
-            Bit Index:   27 26 25 24 23 22 21 20   07 06 05 04\n\
-            Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<4} {:<2} {:<2} {:<2} {:<2}",
-        Instruction::decode_arm(instruction).disassemble(Condition::decode_arm(instruction), base_address),
-        instruction,
-        get_bit(instruction, 27) as u32,
-        get_bit(instruction, 26) as u32,
-        get_bit(instruction, 25) as u32,
-        get_bit(instruction, 24) as u32,
-        get_bit(instruction, 23) as u32,
-        get_bit(instruction, 22) as u32,
-        get_bit(instruction, 21) as u32,
-        get_bit(instruction, 20) as u32,
-        get_bit(instruction, 7) as u32,
-        get_bit(instruction, 6) as u32,
-        get_bit(instruction, 5) as u32,
-        get_bit(instruction, 4) as u32,
+        "Bit Index:   {}\nValues:      {}",
+        row(&|index| format!("{:02}", index)),
+        row(&|index| format!("{:<2}", u32::from(word.bit(index))))
     )
 }
 
-pub fn format_instruction_thumb(instruction: u16, next_instruction: u16, base_address: u32) -> String {
-    let decoded = Instruction::decode_thumb(instruction);
-    let text = match (decoded, Instruction::decode_thumb(next_instruction)) {
-        (Instruction::BranchLinkPrefix(prefix), Instruction::BranchLinkSuffix(suffix)) => format!("BL #{:08X}", prefix.target(suffix, base_address)),
-        _ => decoded.disassemble(Condition::AL, base_address),
+pub fn format_instruction_arm(word: u32, address: u32) -> String {
+    let text = Instruction::decode_arm(word).disassemble(Condition::decode_arm(word), address);
+    format!("{} ({:08X})\n{}", text, word, bit_table(word, &[&[27, 26, 25, 24, 23, 22, 21, 20], &[7, 6, 5, 4]]))
+}
+
+pub fn format_instruction_thumb(word: u16, next_word: u16, address: u32) -> String {
+    let decoded = Instruction::decode_thumb(word);
+    let text = match (decoded, Instruction::decode_thumb(next_word)) {
+        (Instruction::BranchLinkPrefix(prefix), Instruction::BranchLinkSuffix(suffix)) => format!("BL #{:08X}", prefix.target(suffix, address)),
+        _ => decoded.disassemble(Condition::AL, address),
     };
-    format!(
-        "{} ({:04X}, next: {:04X})\n\
-            Bit Index:   15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00\n\
-            Values:      {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2} {:<2}",
-        text,
-        instruction,
-        next_instruction,
-        get_bit(instruction as u32, 15) as u32,
-        get_bit(instruction as u32, 14) as u32,
-        get_bit(instruction as u32, 13) as u32,
-        get_bit(instruction as u32, 12) as u32,
-        get_bit(instruction as u32, 11) as u32,
-        get_bit(instruction as u32, 10) as u32,
-        get_bit(instruction as u32, 9) as u32,
-        get_bit(instruction as u32, 8) as u32,
-        get_bit(instruction as u32, 7) as u32,
-        get_bit(instruction as u32, 6) as u32,
-        get_bit(instruction as u32, 5) as u32,
-        get_bit(instruction as u32, 4) as u32,
-        get_bit(instruction as u32, 3) as u32,
-        get_bit(instruction as u32, 2) as u32,
-        get_bit(instruction as u32, 1) as u32,
-        get_bit(instruction as u32, 0) as u32,
-    )
+    let indices: Vec<u32> = (0..16).rev().collect();
+    format!("{} ({:04X}, next: {:04X})\n{}", text, word, next_word, bit_table(u32::from(word), &[&indices]))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,8 +270,8 @@ pub enum Condition {
 }
 
 impl Condition {
-    pub const fn parse(cond: u8) -> Condition {
-        match cond {
+    pub const fn from_bits(bits: u32) -> Condition {
+        match bits & 0xF {
             0b0000 => Condition::EQ,
             0b0001 => Condition::NE,
             0b0010 => Condition::CS,
@@ -270,8 +291,12 @@ impl Condition {
         }
     }
 
-    pub const fn decode_arm(instruction: u32) -> Condition {
-        Condition::parse(get_bits32(instruction, 28, 4) as u8)
+    pub const fn bits(self) -> u32 {
+        self as u32
+    }
+
+    pub fn decode_arm(word: u32) -> Condition {
+        Condition::from_bits(word.bits(28..))
     }
 
     pub const fn passes(self, nzcv: u32) -> bool {
@@ -301,7 +326,7 @@ impl Condition {
 
     #[inline(always)]
     pub fn check(self, cpu: &CPU) -> bool {
-        self.passes(cpu.get_cpsr() >> 28)
+        self.passes(cpu.cpsr().flags())
     }
 }
 
@@ -313,7 +338,7 @@ const fn build_condition_lut() -> [u16; 16] {
     while cond < 16 {
         let mut flags = 0;
         while flags < 16 {
-            if Condition::parse(cond as u8).passes(flags) {
+            if Condition::from_bits(cond as u32).passes(flags) {
                 lut[cond] |= 1 << flags;
             }
             flags += 1;
@@ -324,8 +349,8 @@ const fn build_condition_lut() -> [u16; 16] {
 }
 
 #[inline(always)]
-pub fn condition_passed(cond: u32, cpsr: u32) -> bool {
-    CONDITION_LUT[cond as usize] >> (cpsr >> 28) & 1 != 0
+pub fn condition_passed(cond: u32, psr: Psr) -> bool {
+    CONDITION_LUT[cond as usize].bit(psr.flags())
 }
 
 impl Display for Condition {
@@ -343,29 +368,20 @@ mod tests {
 
     #[test]
     fn test_decode_arm() {
-        assert_eq!(Condition::decode_arm(0b0000_0000_0000_0000_0000_0000_0000_0000), Condition::EQ);
-        assert_eq!(Condition::decode_arm(0b0001_0000_0000_0000_0000_0000_0000_0000), Condition::NE);
-        assert_eq!(Condition::decode_arm(0b0010_0000_0000_0000_0000_0000_0000_0000), Condition::CS);
-        assert_eq!(Condition::decode_arm(0b0011_0000_0000_0000_0000_0000_0000_0000), Condition::CC);
-        assert_eq!(Condition::decode_arm(0b0100_0000_0000_0000_0000_0000_0000_0000), Condition::MI);
-        assert_eq!(Condition::decode_arm(0b0101_0000_0000_0000_0000_0000_0000_0000), Condition::PL);
-        assert_eq!(Condition::decode_arm(0b0110_0000_0000_0000_0000_0000_0000_0000), Condition::VS);
-        assert_eq!(Condition::decode_arm(0b0111_0000_0000_0000_0000_0000_0000_0000), Condition::VC);
-        assert_eq!(Condition::decode_arm(0b1000_0000_0000_0000_0000_0000_0000_0000), Condition::HI);
-        assert_eq!(Condition::decode_arm(0b1001_0000_0000_0000_0000_0000_0000_0000), Condition::LS);
-        assert_eq!(Condition::decode_arm(0b1010_0000_0000_0000_0000_0000_0000_0000), Condition::GE);
-        assert_eq!(Condition::decode_arm(0b1011_0000_0000_0000_0000_0000_0000_0000), Condition::LT);
-        assert_eq!(Condition::decode_arm(0b1100_0000_0000_0000_0000_0000_0000_0000), Condition::GT);
-        assert_eq!(Condition::decode_arm(0b1101_0000_0000_0000_0000_0000_0000_0000), Condition::LE);
-        assert_eq!(Condition::decode_arm(0b1110_0000_0000_0000_0000_0000_0000_0000), Condition::AL);
-        assert_eq!(Condition::decode_arm(0x39_00_00_00), Condition::CC);
+        assert_eq!(Condition::decode_arm(0x0000_0000), Condition::EQ);
+        assert_eq!(Condition::decode_arm(0x1000_0000), Condition::NE);
+        assert_eq!(Condition::decode_arm(0xE000_0000), Condition::AL);
+        assert_eq!(Condition::decode_arm(0x3900_0000), Condition::CC);
+        for bits in 0..16 {
+            assert_eq!(Condition::from_bits(bits).bits(), bits);
+        }
     }
 
     #[test]
     fn test_condition_lut_matches_passes() {
-        for cond in 0..16u32 {
-            for flags in 0..16u32 {
-                assert_eq!(condition_passed(cond, flags << 28), Condition::parse(cond as u8).passes(flags));
+        for cond in 0..16 {
+            for flags in 0..16 {
+                assert_eq!(condition_passed(cond, Psr::from(flags << 28)), Condition::from_bits(cond).passes(flags));
             }
         }
     }
@@ -425,5 +441,49 @@ mod tests {
     #[test]
     fn test_thumb_bl_pair_is_formatted_as_one_branch() {
         assert!(format_instruction_thumb(0xF000, 0xF802, 0x0800_0000).starts_with("BL #08000008"));
+    }
+
+    fn xorshift(state: &mut u32) -> u32 {
+        *state ^= *state << 13;
+        *state ^= *state >> 17;
+        *state ^= *state << 5;
+        *state
+    }
+
+    #[test]
+    fn test_every_arm_encoding_round_trips() {
+        let mut state = 0x2545_F491;
+        for index in 0..lut::LUT_ARM_SIZE {
+            for _ in 0..8 {
+                let word = lut::with_index_arm(xorshift(&mut state), index);
+                let decoded = Instruction::decode_arm(word);
+                if matches!(decoded, Instruction::Unknown(_)) {
+                    continue;
+                }
+                let cond = Condition::decode_arm(word);
+                let encoded = decoded.encode_arm(cond).unwrap_or_else(|| panic!("{:08X} {:?} has no encoding", word, decoded));
+                assert_eq!(Instruction::decode_arm(encoded), decoded, "{:08X} re-encoded as {:08X}", word, encoded);
+                assert_eq!(Condition::decode_arm(encoded), cond, "{:08X} re-encoded as {:08X}", word, encoded);
+            }
+        }
+    }
+
+    #[test]
+    fn test_every_thumb_encoding_round_trips() {
+        for word in 0..=u16::MAX {
+            let decoded = Instruction::decode_thumb(word);
+            if matches!(decoded, Instruction::Unknown(_)) {
+                continue;
+            }
+            let encoded = decoded.encode_thumb().unwrap_or_else(|| panic!("{:04X} {:?} has no encoding", word, decoded));
+            assert_eq!(Instruction::decode_thumb(encoded), decoded, "{:04X} re-encoded as {:04X}", word, encoded);
+        }
+    }
+
+    #[test]
+    fn test_thumb_instructions_encode_as_arm_equivalents() {
+        for (thumb, arm) in [(0x2001, 0xE3B0_0001), (0x1888, 0xE091_0002), (0x4770, 0xE12F_FF1E), (0x6801, 0xE590_1000), (0xB510, 0xE92D_4010)] {
+            assert_eq!(Instruction::decode_thumb(thumb).encode_arm(Condition::AL), Some(arm), "{:04X}", thumb);
+        }
     }
 }

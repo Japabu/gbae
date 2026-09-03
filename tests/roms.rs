@@ -35,7 +35,11 @@ fn fuzzarm(name: &str) {
     assert!(
         gba.run_until(
             |gba| {
-                stalled_steps = if gba.cpu.pc() == previous_pc && !gba.mem.get_io_registers().halted { stalled_steps + 1 } else { 0 };
+                stalled_steps = if gba.cpu.pc() == previous_pc && !gba.mem.get_io_registers().halted {
+                    stalled_steps + 1
+                } else {
+                    0
+                };
                 previous_pc = gba.cpu.pc();
                 stalled_steps == 1000
             },

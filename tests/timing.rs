@@ -1,5 +1,7 @@
 mod common;
 
+use gbae::system::cpu::Register;
+
 use common::*;
 use gbae::system::gba::Gba;
 
@@ -70,9 +72,9 @@ fn rom_with_thumb(code: &[u16]) -> Vec<u8> {
 }
 
 fn step_cycles(gba: &mut Gba) -> u64 {
-    let before = gba.cpu.get_cycles();
+    let before = gba.cpu.cycles();
     gba.step();
-    gba.cpu.get_cycles() - before
+    gba.cpu.cycles() - before
 }
 
 fn cycles_per_step(gba: &mut Gba, steps: usize) -> Vec<u64> {
@@ -95,7 +97,7 @@ fn register_shift_adds_an_internal_cycle() {
 fn loads_and_stores_in_iwram() {
     let mut gba = boot_with_arm(IWRAM_CODE, &[0xE3A0_1403, 0xE281_1F80, 0xE591_0000, 0xE581_0000, 0xE891_003C, 0xE881_003C, ARM_NOP, ARM_NOP]);
     assert_eq!(cycles_per_step(&mut gba, 7), [1, 1, 3, 2, 6, 5, 1]);
-    assert_eq!(gba.cpu.get_r(1), IWRAM_DATA);
+    assert_eq!(gba.cpu.r(Register::R1), IWRAM_DATA);
 }
 
 #[test]
@@ -106,7 +108,10 @@ fn branch_refills_the_pipeline() {
 
 #[test]
 fn multiply_cycles_depend_on_the_multiplier() {
-    let mut gba = boot_with_arm(IWRAM_CODE, &[0xE3A0_2012, 0xE000_0291, 0xE3E0_2000, 0xE000_0291, 0xE3A0_2712, 0xE000_0291, 0xE3A0_2412, 0xE000_0291, ARM_NOP]);
+    let mut gba = boot_with_arm(
+        IWRAM_CODE,
+        &[0xE3A0_2012, 0xE000_0291, 0xE3E0_2000, 0xE000_0291, 0xE3A0_2712, 0xE000_0291, 0xE3A0_2412, 0xE000_0291, ARM_NOP],
+    );
     assert_eq!(cycles_per_step(&mut gba, 8), [1, 2, 1, 2, 1, 4, 1, 5]);
 }
 

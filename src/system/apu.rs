@@ -89,11 +89,7 @@ struct Length {
 
 impl Length {
     fn new(maximum: u16) -> Length {
-        Length {
-            enabled: false,
-            counter: 0,
-            maximum,
-        }
+        Length { enabled: false, counter: 0, maximum }
     }
 
     fn write(&mut self, value: u16) {
@@ -697,12 +693,7 @@ impl Apu {
             0x74 => self.wave.read_frequency(),
             0x78 => self.noise.envelope.read(),
             0x7C => self.noise.read_frequency(),
-            0x80 => {
-                self.psg_volume_right as u16
-                    | (self.psg_volume_left as u16) << 4
-                    | (self.psg_enable_right as u16) << 8
-                    | (self.psg_enable_left as u16) << 12
-            }
+            0x80 => self.psg_volume_right as u16 | (self.psg_volume_left as u16) << 4 | (self.psg_enable_right as u16) << 8 | (self.psg_enable_left as u16) << 12,
             0x82 => {
                 self.psg_scale as u16
                     | (self.fifo_full_volume[0] as u16) << 2
@@ -714,13 +705,7 @@ impl Apu {
                     | (self.fifo_enable_left[1] as u16) << 13
                     | (self.fifo_timer[1] as u16) << 14
             }
-            0x84 => {
-                self.square1.enabled as u16
-                    | (self.square2.enabled as u16) << 1
-                    | (self.wave.enabled as u16) << 2
-                    | (self.noise.enabled as u16) << 3
-                    | (self.master_enable as u16) << 7
-            }
+            0x84 => self.square1.enabled as u16 | (self.square2.enabled as u16) << 1 | (self.wave.enabled as u16) << 2 | (self.noise.enabled as u16) << 3 | (self.master_enable as u16) << 7,
             0x88 => self.bias,
             0x90..=0x9F => {
                 let bank = &self.wave.ram[self.wave.accessible_bank()];

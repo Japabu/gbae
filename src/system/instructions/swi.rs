@@ -1,12 +1,14 @@
 use crate::{
-    bitutil::{get_bits16, get_bits32},
+    bits::Bits,
     system::{
-        cpu::{CPU, MODE_SVC, REGISTER_LR, REGISTER_PC},
+        cpu::{Mode, CPU},
         memory::Memory,
     },
 };
 
 use super::{Condition, Instruction};
+
+const SWI_VECTOR: u32 = 0x08;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SoftwareInterrupt {
@@ -14,34 +16,43 @@ pub struct SoftwareInterrupt {
 }
 
 #[inline(always)]
-pub fn decode_arm(instruction: u32) -> Instruction {
-    Instruction::SoftwareInterrupt(SoftwareInterrupt {
-        comment: get_bits32(instruction, 0, 24),
-    })
+pub fn decode_arm(word: u32) -> Instruction {
+    Instruction::SoftwareInterrupt(SoftwareInterrupt { comment: word.bits(0..24) })
 }
 
 #[inline(always)]
-pub fn decode_thumb(instruction: u16) -> Instruction {
-    Instruction::SoftwareInterrupt(SoftwareInterrupt {
-        comment: get_bits16(instruction, 0, 8) as u32,
-    })
+pub fn decode_thumb(word: u16) -> Instruction {
+    Instruction::SoftwareInterrupt(SoftwareInterrupt { comment: u32::from(word).bits(0..8) })
 }
 
 impl SoftwareInterrupt {
     #[inline(always)]
     pub fn execute(self, cpu: &mut CPU, _mem: &mut Memory) {
-        let return_address = cpu.next_instruction_address_from_execution_stage();
-        let old_cpsr = cpu.get_cpsr();
+        cpu.take_exception(Mode::Supervisor, SWI_VECTOR, cpu.next_pc());
+    }
 
-        cpu.set_mode(MODE_SVC);
-        cpu.set_spsr(old_cpsr);
-        cpu.set_r(REGISTER_LR, return_address);
-        cpu.set_irq_disable(true);
-        cpu.set_thumb_state(false);
-        cpu.set_r(REGISTER_PC, 0x0000_0008);
+    pub fn encode_arm(self) -> Option<u32> {
+        (self.comment < 1 << 24).then_some(0b1111 << 24 | self.comment)
+    }
+
+    pub fn encode_thumb(self) -> Option<u16> {
+        u16::try_from(0b1101_1111 << 8 | self.comment).ok().filter(|_| self.comment < 1 << 8)
     }
 
     pub fn disassemble(self, cond: Condition) -> String {
         format!("SWI{} #{:#X}", cond, self.comment)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encoding_matches_known_words() {
+        assert_eq!(Instruction::decode_arm(0xEF00_0005).encode_arm(Condition::AL), Some(0xEF00_0005));
+        assert_eq!(Instruction::decode_thumb(0xDF05).encode_thumb(), Some(0xDF05));
+        assert_eq!(Instruction::decode_thumb(0xDF05).encode_arm(Condition::AL), Some(0xEF00_0005));
+        assert_eq!(Instruction::decode_arm(0xEF01_0000).encode_thumb(), None);
     }
 }

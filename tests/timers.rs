@@ -14,11 +14,11 @@ const PRESCALER_64: u16 = 1;
 const TIMER0_IRQ: u16 = 1 << 3;
 
 fn steps(gba: &mut gbae::system::gba::Gba, count: u32) -> u64 {
-    let start = gba.cpu.get_cycles();
+    let start = gba.cpu.cycles();
     for _ in 0..count {
         gba.step();
     }
-    gba.cpu.get_cycles() - start
+    gba.cpu.cycles() - start
 }
 
 #[test]

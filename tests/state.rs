@@ -24,11 +24,11 @@ fn machine_with_activity() -> gbae::system::gba::Gba {
 fn state_round_trip_restores_the_machine() {
     let mut original = machine_with_activity();
     let state = original.save_state();
-    let cycles = original.cpu.get_cycles();
+    let cycles = original.cpu.cycles();
 
     let mut restored = gba_with_save_marker("SRAM_V");
     restored.load_state(&state).unwrap();
-    assert_eq!(restored.cpu.get_cycles(), cycles);
+    assert_eq!(restored.cpu.cycles(), cycles);
     assert_eq!(restored.cpu.pc(), original.cpu.pc());
     assert_eq!(restored.frame_count(), original.frame_count());
     assert_eq!(restored.mem.read_u32(IWRAM + 0x100), 0xCAFE_BABE);
@@ -42,7 +42,7 @@ fn state_round_trip_restores_the_machine() {
         original.run_frame();
         restored.run_frame();
     }
-    assert_eq!(restored.cpu.get_cycles(), original.cpu.get_cycles());
+    assert_eq!(restored.cpu.cycles(), original.cpu.cycles());
     assert_eq!(frame_hash(restored.framebuffer()), frame_hash(original.framebuffer()));
     assert_eq!(restored.take_audio_samples().len(), original.take_audio_samples().len());
 }

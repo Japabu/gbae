@@ -515,7 +515,11 @@ impl IoRegisters {
 
     fn write_bg_reference(&mut self, bg: usize, axis: usize, value: u16, high: bool) {
         let reference = &mut self.bg_reference[bg][axis];
-        *reference = if high { *reference & 0x0000_FFFF | (value as u32) << 16 } else { *reference & 0xFFFF_0000 | value as u32 };
+        *reference = if high {
+            *reference & 0x0000_FFFF | (value as u32) << 16
+        } else {
+            *reference & 0xFFFF_0000 | value as u32
+        };
         self.bg_reference_written[bg] = true;
     }
 
@@ -842,12 +846,28 @@ impl Memory {
     fn access_cycles(&self, address: u32, bytes: u32, access: Access) -> u32 {
         let word = bytes == 4;
         match address >> 24 {
-            0x02 => if word { 6 } else { 3 },
-            0x05 | 0x06 => if word { 2 } else { 1 },
+            0x02 => {
+                if word {
+                    6
+                } else {
+                    3
+                }
+            }
+            0x05 | 0x06 => {
+                if word {
+                    2
+                } else {
+                    1
+                }
+            }
             0x08..=0x0D => {
                 let wait_state = ((address >> 25) - 4) as usize;
                 let sequential = access == Access::Sequential && address & 0x1_FFFF != 0;
-                let first = if sequential { self.wait.rom_sequential[wait_state] } else { self.wait.rom_nonsequential[wait_state] };
+                let first = if sequential {
+                    self.wait.rom_sequential[wait_state]
+                } else {
+                    self.wait.rom_nonsequential[wait_state]
+                };
                 if word {
                     first + self.wait.rom_sequential[wait_state]
                 } else {
@@ -907,7 +927,11 @@ impl Memory {
 
     #[inline]
     fn charge_fetch(&mut self, address: u32, bytes: u32) {
-        let access = if self.next_fetch_sequential && address == self.next_fetch_address { Access::Sequential } else { Access::Nonsequential };
+        let access = if self.next_fetch_sequential && address == self.next_fetch_address {
+            Access::Sequential
+        } else {
+            Access::Nonsequential
+        };
         let cycles = if is_rom(address) && self.wait.prefetch {
             self.prefetched_fetch_cycles(address, bytes)
         } else {
@@ -1405,7 +1429,9 @@ impl Memory {
         let unit_size = if control & 0x400 != 0 || fifo_transfer { 4 } else { 2 };
         let source_control = (control >> 7) & 3;
         let destination_control = if fifo_transfer { 2 } else { (control >> 5) & 3 };
-        let DmaChannel { count, mut source, mut destination, .. } = self.dma[channel];
+        let DmaChannel {
+            count, mut source, mut destination, ..
+        } = self.dma[channel];
         let count = if fifo_transfer { 4 } else { count };
         if self.decode_address(destination) == RegionKey::Eeprom {
             self.backup.eeprom_begin_transfer(count);

@@ -75,7 +75,11 @@ impl Emulator {
     }
 
     fn rom_directory(&self) -> PathBuf {
-        self.save_path.parent().map(Path::to_path_buf).filter(|directory| !directory.as_os_str().is_empty()).unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+        self.save_path
+            .parent()
+            .map(Path::to_path_buf)
+            .filter(|directory| !directory.as_os_str().is_empty())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
     }
 
     fn load_rom(&mut self, rom_path: &Path) {
@@ -339,7 +343,11 @@ impl ApplicationHandler for App {
             event_loop.set_control_flow(ControlFlow::Wait);
         } else {
             self.run_pending_frames();
-            event_loop.set_control_flow(if self.emulator.settings.turbo { ControlFlow::Poll } else { ControlFlow::WaitUntil(self.next_frame) });
+            event_loop.set_control_flow(if self.emulator.settings.turbo {
+                ControlFlow::Poll
+            } else {
+                ControlFlow::WaitUntil(self.next_frame)
+            });
         }
     }
 }

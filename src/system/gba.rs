@@ -48,7 +48,7 @@ impl Gba {
 
     #[inline]
     pub fn step(&mut self) {
-        while self.cpu.get_cycles() >= self.next_event_cycles {
+        while self.cpu.cycles() >= self.next_event_cycles {
             self.advance_event();
         }
         let stalled = self.mem.take_cycles() as u64;
@@ -56,15 +56,15 @@ impl Gba {
         self.mem.tick(stalled as u32);
         let io = self.mem.get_io_registers_mut();
         if io.halted && io.ie & io.irf == 0 {
-            let skipped = self.next_event_cycles.saturating_sub(self.cpu.get_cycles());
+            let skipped = self.next_event_cycles.saturating_sub(self.cpu.cycles());
             self.cpu.add_cycles(skipped);
             self.mem.tick(skipped as u32);
         } else {
             io.halted = false;
             self.cpu.handle_interrupts(&mut self.mem);
-            let cycles_before = self.cpu.get_cycles();
+            let cycles_before = self.cpu.cycles();
             self.cpu.cycle(&mut self.mem);
-            let elapsed = (self.cpu.get_cycles() - cycles_before) as u32;
+            let elapsed = (self.cpu.cycles() - cycles_before) as u32;
             self.mem.tick(elapsed);
         }
     }

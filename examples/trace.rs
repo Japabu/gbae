@@ -1,3 +1,4 @@
+use gbae::system::cpu::Register;
 use gbae::system::gba::Gba;
 use gbae::system::instructions::{format_instruction_arm, format_instruction_thumb};
 use std::collections::VecDeque;
@@ -59,21 +60,22 @@ fn main() {
                 break;
             }
             if let Some((mask, expected)) = break_cpsr {
-                if pc >= pc_min && gba.cpu.get_cpsr() & mask == expected {
-                    println!("cpsr break at {:08X} after {} steps, cpsr {:08X}", pc, steps, gba.cpu.get_cpsr());
+                if pc >= pc_min && gba.cpu.cpsr().bits() & mask == expected {
+                    println!("cpsr break at {:08X} after {} steps, cpsr {:08X}", pc, steps, gba.cpu.cpsr().bits());
                     break;
                 }
             }
-            let thumb = gba.cpu.get_thumb_state();
-            let word = if thumb { gba.mem.read_u16(pc) as u32 | (gba.mem.read_u16(pc + 2) as u32) << 16 } else { gba.mem.read_u32(pc) };
-            let mut registers = [0u32; 16];
-            for i in 0..16 {
-                registers[i] = gba.cpu.get_r(i as u8);
-            }
+            let thumb = gba.cpu.thumb();
+            let word = if thumb {
+                gba.mem.read_u16(pc) as u32 | (gba.mem.read_u16(pc + 2) as u32) << 16
+            } else {
+                gba.mem.read_u32(pc)
+            };
+            let registers: [u32; 16] = std::array::from_fn(|index| gba.cpu.r(Register::from(index as u32)));
             if history.len() == 40 {
                 history.pop_front();
             }
-            history.push_back((pc, thumb, word, registers, gba.cpu.get_cpsr()));
+            history.push_back((pc, thumb, word, registers, gba.cpu.cpsr().bits()));
             gba.step();
             steps += 1;
             if let Some(address) = watch {
@@ -92,15 +94,23 @@ fn main() {
         counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         println!("hottest addresses:");
         for (pc, count) in counts.iter().take(60) {
-            let thumb = pc & 1 == 1 || gba.cpu.get_thumb_state();
-            let text = if thumb { format_instruction_thumb(gba.mem.read_u16(*pc), gba.mem.read_u16(pc + 2), *pc) } else { format_instruction_arm(gba.mem.read_u32(*pc), *pc) };
+            let thumb = pc & 1 == 1 || gba.cpu.thumb();
+            let text = if thumb {
+                format_instruction_thumb(gba.mem.read_u16(*pc), gba.mem.read_u16(pc + 2), *pc)
+            } else {
+                format_instruction_arm(gba.mem.read_u32(*pc), *pc)
+            };
             println!("  {:08X} {:>9} {}", pc, count, text.lines().next().unwrap_or(""));
         }
         println!("distinct addresses: {}", counts.len());
     }
     println!("last instructions (oldest first):");
     for (pc, thumb, word, _, _) in history.iter() {
-        let text = if *thumb { format_instruction_thumb(*word as u16, (*word >> 16) as u16, *pc) } else { format_instruction_arm(*word, *pc) };
+        let text = if *thumb {
+            format_instruction_thumb(*word as u16, (*word >> 16) as u16, *pc)
+        } else {
+            format_instruction_arm(*word, *pc)
+        };
         println!("  {:08X} {} {}", pc, if *thumb { "T" } else { "A" }, text.lines().next().unwrap_or(""));
     }
     if let Some((_, _, _, registers, cpsr)) = history.back() {

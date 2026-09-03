@@ -1,221 +1,466 @@
-use std::time::Duration;
+use std::fmt::Display;
+use std::ops::Range;
 
-use crate::system::instructions::{format_instruction_arm, format_instruction_thumb};
+use crate::bits::Bits;
 
 use super::{
     instructions::{
-        condition_passed,
+        condition_passed, format_instruction_arm, format_instruction_thumb,
         lut::{index_arm, index_thumb, ARM_LUT, THUMB_LUT},
     },
     memory::Memory,
     state::{Reader, StateError, Writer},
 };
 
-pub const MODE_USR: u8 = 0b10000;
-pub const MODE_FIQ: u8 = 0b10001;
-pub const MODE_IRQ: u8 = 0b10010;
-pub const MODE_SVC: u8 = 0b10011;
-pub const MODE_ABT: u8 = 0b10111;
-pub const MODE_UND: u8 = 0b11011;
-pub const MODE_SYS: u8 = 0b11111;
-
-pub const REGISTER_SP: u8 = 13;
-pub const REGISTER_LR: u8 = 14;
-pub const REGISTER_PC: u8 = 15;
-
+pub const CPU_FREQUENCY: u64 = 16_777_216;
 pub const INSTRUCTION_LEN_ARM: u32 = 4;
 pub const INSTRUCTION_LEN_THUMB: u32 = 2;
 
-pub const CPU_FREQUENCY: u64 = 16_777_216;
-pub const INSTRUCTION_TIME: Duration = Duration::from_nanos(1_000_000_000 / CPU_FREQUENCY);
+const IRQ_VECTOR: u32 = 0x18;
 
-const BANK_USR: usize = 0;
-const BANK_FIQ: usize = 1;
-const BANK_IRQ: usize = 2;
-const BANK_SVC: usize = 3;
-const BANK_ABT: usize = 4;
-const BANK_UND: usize = 5;
-const BANK_COUNT: usize = 6;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Register(u8);
 
-const FLAG_N: u32 = 1 << 31;
-const FLAG_Z: u32 = 1 << 30;
-const FLAG_C: u32 = 1 << 29;
-const FLAG_V: u32 = 1 << 28;
-const FLAG_I: u32 = 1 << 7;
-const FLAG_F: u32 = 1 << 6;
-const FLAG_T: u32 = 1 << 5;
-const MODE_MASK: u32 = 0x1F;
+impl Register {
+    pub const R0: Register = Register(0);
+    pub const R1: Register = Register(1);
+    pub const R2: Register = Register(2);
+    pub const R3: Register = Register(3);
+    pub const R4: Register = Register(4);
+    pub const R5: Register = Register(5);
+    pub const R6: Register = Register(6);
+    pub const R7: Register = Register(7);
+    pub const R8: Register = Register(8);
+    pub const R9: Register = Register(9);
+    pub const R10: Register = Register(10);
+    pub const R11: Register = Register(11);
+    pub const R12: Register = Register(12);
+    pub const SP: Register = Register(13);
+    pub const LR: Register = Register(14);
+    pub const PC: Register = Register(15);
 
-pub fn format_mode(mode: u8) -> &'static str {
-    match mode {
-        MODE_USR => "USR",
-        MODE_FIQ => "FIQ",
-        MODE_IRQ => "IRQ",
-        MODE_SVC => "SVC",
-        MODE_ABT => "ABT",
-        MODE_UND => "UND",
-        MODE_SYS => "SYS",
-        _ => panic!("Invalid mode"),
+    pub fn all() -> impl Iterator<Item = Register> {
+        (0..16).map(Register)
+    }
+
+    pub const fn number(self) -> u32 {
+        self.0 as u32
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    pub const fn is_low(self) -> bool {
+        self.0 < 8
     }
 }
 
-fn bank_of(mode: u8) -> usize {
-    match mode {
-        MODE_USR | MODE_SYS => BANK_USR,
-        MODE_FIQ => BANK_FIQ,
-        MODE_IRQ => BANK_IRQ,
-        MODE_SVC => BANK_SVC,
-        MODE_ABT => BANK_ABT,
-        MODE_UND => BANK_UND,
-        _ => panic!("Invalid mode {:#04X}", mode),
+impl From<u32> for Register {
+    fn from(bits: u32) -> Register {
+        Register(bits.bits(0..4) as u8)
+    }
+}
+
+impl Display for Register {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "R{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    User,
+    Fiq,
+    Irq,
+    Supervisor,
+    Abort,
+    Undefined,
+    System,
+}
+
+impl Mode {
+    const ALL: [Mode; 7] = [Mode::User, Mode::Fiq, Mode::Irq, Mode::Supervisor, Mode::Abort, Mode::Undefined, Mode::System];
+
+    pub const fn bits(self) -> u32 {
+        match self {
+            Mode::User => 0b10000,
+            Mode::Fiq => 0b10001,
+            Mode::Irq => 0b10010,
+            Mode::Supervisor => 0b10011,
+            Mode::Abort => 0b10111,
+            Mode::Undefined => 0b11011,
+            Mode::System => 0b11111,
+        }
+    }
+
+    pub fn from_bits(bits: u32) -> Option<Mode> {
+        Mode::ALL.into_iter().find(|mode| mode.bits() == bits)
+    }
+
+    pub fn is_privileged(self) -> bool {
+        self != Mode::User
+    }
+
+    fn bank(self) -> Bank {
+        match self {
+            Mode::User | Mode::System => Bank::User,
+            Mode::Fiq => Bank::Fiq,
+            Mode::Irq => Bank::Irq,
+            Mode::Supervisor => Bank::Supervisor,
+            Mode::Abort => Bank::Abort,
+            Mode::Undefined => Bank::Undefined,
+        }
+    }
+}
+
+impl Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Mode::User => "USR",
+            Mode::Fiq => "FIQ",
+            Mode::Irq => "IRQ",
+            Mode::Supervisor => "SVC",
+            Mode::Abort => "ABT",
+            Mode::Undefined => "UND",
+            Mode::System => "SYS",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bank {
+    User,
+    Fiq,
+    Irq,
+    Supervisor,
+    Abort,
+    Undefined,
+}
+
+impl Bank {
+    const ALL: [Bank; 6] = [Bank::User, Bank::Fiq, Bank::Irq, Bank::Supervisor, Bank::Abort, Bank::Undefined];
+
+    fn low_bank(self) -> Bank {
+        if self == Bank::Fiq {
+            Bank::Fiq
+        } else {
+            Bank::User
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Psr(u32);
+
+impl Psr {
+    const NEGATIVE: u32 = 31;
+    const ZERO: u32 = 30;
+    const CARRY: u32 = 29;
+    const OVERFLOW: u32 = 28;
+    const FLAGS: Range<u32> = 28..32;
+    const IRQ_DISABLE: u32 = 7;
+    const FIQ_DISABLE: u32 = 6;
+    const THUMB: u32 = 5;
+    const MODE: Range<u32> = 0..5;
+
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    pub fn negative(self) -> bool {
+        self.0.bit(Self::NEGATIVE)
+    }
+
+    pub fn zero(self) -> bool {
+        self.0.bit(Self::ZERO)
+    }
+
+    pub fn carry(self) -> bool {
+        self.0.bit(Self::CARRY)
+    }
+
+    pub fn overflow(self) -> bool {
+        self.0.bit(Self::OVERFLOW)
+    }
+
+    pub fn flags(self) -> u32 {
+        self.0.bits(Self::FLAGS)
+    }
+
+    pub fn irq_disabled(self) -> bool {
+        self.0.bit(Self::IRQ_DISABLE)
+    }
+
+    pub fn fiq_disabled(self) -> bool {
+        self.0.bit(Self::FIQ_DISABLE)
+    }
+
+    pub fn thumb(self) -> bool {
+        self.0.bit(Self::THUMB)
+    }
+
+    pub fn mode(self) -> Mode {
+        let bits = self.0.bits(Self::MODE);
+        Mode::from_bits(bits).unwrap_or_else(|| panic!("Invalid processor mode {:#07b}", bits))
+    }
+
+    pub fn with_flags(self, negative: bool, zero: bool, carry: bool, overflow: bool) -> Psr {
+        let flags = u32::from(negative) << 3 | u32::from(zero) << 2 | u32::from(carry) << 1 | u32::from(overflow);
+        Psr(self.0.with_bits(Self::FLAGS, flags))
+    }
+
+    pub fn with_nz(self, result: u32) -> Psr {
+        self.with_flags(result.bit(31), result == 0, self.carry(), self.overflow())
+    }
+
+    pub fn with_nzc(self, result: u32, carry: bool) -> Psr {
+        self.with_flags(result.bit(31), result == 0, carry, self.overflow())
+    }
+
+    pub fn with_nzcv(self, result: u32, carry: bool, overflow: bool) -> Psr {
+        self.with_flags(result.bit(31), result == 0, carry, overflow)
+    }
+
+    pub fn with_irq_disabled(self, disabled: bool) -> Psr {
+        Psr(self.0.with_bit(Self::IRQ_DISABLE, disabled))
+    }
+
+    pub fn with_fiq_disabled(self, disabled: bool) -> Psr {
+        Psr(self.0.with_bit(Self::FIQ_DISABLE, disabled))
+    }
+
+    pub fn with_thumb(self, thumb: bool) -> Psr {
+        Psr(self.0.with_bit(Self::THUMB, thumb))
+    }
+
+    pub fn with_mode(self, mode: Mode) -> Psr {
+        Psr(self.0.with_bits(Self::MODE, mode.bits()))
+    }
+}
+
+impl From<u32> for Psr {
+    fn from(bits: u32) -> Psr {
+        Psr(bits)
+    }
+}
+
+impl Display for Psr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let flag = |set: bool, letter: char| if set { letter } else { '-' };
+        write!(
+            f,
+            "{:08X} [{}{}{}{}{}{}{}] {}",
+            self.0,
+            flag(self.negative(), 'N'),
+            flag(self.zero(), 'Z'),
+            flag(self.carry(), 'C'),
+            flag(self.overflow(), 'V'),
+            flag(self.irq_disabled(), 'I'),
+            flag(self.fiq_disabled(), 'F'),
+            flag(self.thumb(), 'T'),
+            self.mode()
+        )
     }
 }
 
 pub struct CPU {
-    cpsr: u32,
+    cpsr: Psr,
     r: [u32; 16],
-    banked: [[u32; 7]; BANK_COUNT],
-    spsr: [u32; BANK_COUNT],
-    bank: usize,
+    banked: [[u32; 7]; Bank::ALL.len()],
+    spsr: [Psr; Bank::ALL.len()],
+    bank: Bank,
     pipeline: [u32; 2],
     branch_happened: bool,
     cycles: u64,
 }
 
 impl CPU {
-    pub fn new() -> Self {
-        let mut cpu = CPU {
-            cpsr: MODE_SVC as u32,
+    pub fn new() -> CPU {
+        CPU {
+            cpsr: Psr(0).with_mode(Mode::Supervisor).with_irq_disabled(true).with_fiq_disabled(true),
             r: [0; 16],
-            banked: [[0; 7]; BANK_COUNT],
-            spsr: [0; BANK_COUNT],
-            bank: BANK_SVC,
+            banked: [[0; 7]; Bank::ALL.len()],
+            spsr: [Psr(0); Bank::ALL.len()],
+            bank: Bank::Supervisor,
             pipeline: [0; 2],
             branch_happened: false,
             cycles: 0,
-        };
-        cpu.set_cpsr(MODE_SVC as u32 | FLAG_I | FLAG_F);
-        cpu
+        }
     }
 
     pub fn reset(&mut self, mem: &mut Memory) {
-        self.set_cpsr(MODE_SVC as u32 | FLAG_I | FLAG_F);
-        self.r[REGISTER_PC as usize] = 0x00000000;
+        self.set_cpsr(Psr(0).with_mode(Mode::Supervisor).with_irq_disabled(true).with_fiq_disabled(true));
+        self.r[Register::PC.index()] = 0;
         self.flush_pipeline(mem);
     }
 
     pub fn flush_pipeline(&mut self, mem: &mut Memory) {
-        let pc = self.r[REGISTER_PC as usize];
+        let pc = self.r[Register::PC.index()];
         mem.invalidate_fetch_sequence();
-        if self.get_thumb_state() {
-            self.pipeline = [mem.fetch_u16(pc) as u32, mem.fetch_u16(pc.wrapping_add(INSTRUCTION_LEN_THUMB)) as u32];
-            self.r[REGISTER_PC as usize] = pc.wrapping_add(INSTRUCTION_LEN_THUMB * 2);
+        if self.thumb() {
+            self.pipeline = [u32::from(mem.fetch_u16(pc)), u32::from(mem.fetch_u16(pc.wrapping_add(INSTRUCTION_LEN_THUMB)))];
+            self.r[Register::PC.index()] = pc.wrapping_add(INSTRUCTION_LEN_THUMB * 2);
         } else {
             self.pipeline = [mem.fetch_u32(pc), mem.fetch_u32(pc.wrapping_add(INSTRUCTION_LEN_ARM))];
-            self.r[REGISTER_PC as usize] = pc.wrapping_add(INSTRUCTION_LEN_ARM * 2);
+            self.r[Register::PC.index()] = pc.wrapping_add(INSTRUCTION_LEN_ARM * 2);
         }
         self.branch_happened = false;
     }
 
     #[inline(always)]
     pub fn pc(&self) -> u32 {
-        self.curr_instruction_address_from_execution_stage()
+        self.r[Register::PC.index()].wrapping_sub(self.instruction_length() * 2)
     }
 
     #[inline(always)]
-    pub fn get_r(&self, r: u8) -> u32 {
-        self.r[r as usize]
+    pub fn next_pc(&self) -> u32 {
+        self.r[Register::PC.index()].wrapping_sub(self.instruction_length())
     }
 
     #[inline(always)]
-    pub fn set_r(&mut self, r: u8, value: u32) {
-        self.r[r as usize] = value;
-        if r == REGISTER_PC {
+    pub fn r(&self, register: Register) -> u32 {
+        self.r[register.index()]
+    }
+
+    #[inline(always)]
+    pub fn set_r(&mut self, register: Register, value: u32) {
+        self.r[register.index()] = value;
+        if register == Register::PC {
             self.branch_happened = true;
         }
     }
 
     #[inline(always)]
     pub fn set_pc(&mut self, value: u32) {
-        let mask = if self.get_thumb_state() { !0b1 } else { !0b11 };
-        self.r[REGISTER_PC as usize] = value & mask;
+        let alignment = if self.thumb() { 0b1 } else { 0b11 };
+        self.r[Register::PC.index()] = value & !alignment;
         self.branch_happened = true;
     }
 
-    fn bank_slot(&self, r: u8, bank: usize) -> Option<(usize, usize)> {
-        if bank == self.bank || r < 8 || r == REGISTER_PC {
+    fn banked_slot(&self, register: Register, bank: Bank) -> Option<(Bank, usize)> {
+        let slot = register.index().checked_sub(8)?;
+        if bank == self.bank || register == Register::PC {
             None
-        } else if r >= REGISTER_SP {
-            Some((bank, r as usize - 8))
-        } else if bank == BANK_FIQ {
-            Some((BANK_FIQ, r as usize - 8))
-        } else if self.bank == BANK_FIQ {
-            Some((BANK_USR, r as usize - 8))
+        } else if register >= Register::SP {
+            Some((bank, slot))
+        } else if bank == Bank::Fiq {
+            Some((Bank::Fiq, slot))
+        } else if self.bank == Bank::Fiq {
+            Some((Bank::User, slot))
         } else {
             None
         }
     }
 
-    pub fn get_r_in_mode(&self, r: u8, mode: u8) -> u32 {
-        match self.bank_slot(r, bank_of(mode)) {
-            Some((bank, slot)) => self.banked[bank][slot],
-            None => self.r[r as usize],
+    pub fn r_in_mode(&self, register: Register, mode: Mode) -> u32 {
+        match self.banked_slot(register, mode.bank()) {
+            Some((bank, slot)) => self.banked[bank as usize][slot],
+            None => self.r(register),
         }
     }
 
-    pub fn set_r_in_mode(&mut self, r: u8, mode: u8, value: u32) {
-        match self.bank_slot(r, bank_of(mode)) {
-            Some((bank, slot)) => self.banked[bank][slot] = value,
-            None => self.set_r(r, value),
+    pub fn set_r_in_mode(&mut self, register: Register, mode: Mode, value: u32) {
+        match self.banked_slot(register, mode.bank()) {
+            Some((bank, slot)) => self.banked[bank as usize][slot] = value,
+            None => self.set_r(register, value),
         }
     }
 
-    fn switch_bank(&mut self, new_bank: usize) {
+    fn switch_bank(&mut self, new_bank: Bank) {
         let old_bank = self.bank;
         if old_bank != new_bank {
-            let old_low_bank = if old_bank == BANK_FIQ { BANK_FIQ } else { BANK_USR };
-            let new_low_bank = if new_bank == BANK_FIQ { BANK_FIQ } else { BANK_USR };
-            self.banked[old_low_bank][0..5].copy_from_slice(&self.r[8..13]);
-            self.banked[old_bank][5..7].copy_from_slice(&self.r[13..15]);
-            self.r[8..13].copy_from_slice(&self.banked[new_low_bank][0..5]);
-            self.r[13..15].copy_from_slice(&self.banked[new_bank][5..7]);
+            self.banked[old_bank.low_bank() as usize][0..5].copy_from_slice(&self.r[8..13]);
+            self.banked[old_bank as usize][5..7].copy_from_slice(&self.r[13..15]);
+            self.r[8..13].copy_from_slice(&self.banked[new_bank.low_bank() as usize][0..5]);
+            self.r[13..15].copy_from_slice(&self.banked[new_bank as usize][5..7]);
             self.bank = new_bank;
         }
     }
 
     #[inline(always)]
-    pub fn get_cpsr(&self) -> u32 {
+    pub fn cpsr(&self) -> Psr {
         self.cpsr
     }
 
-    pub fn set_cpsr(&mut self, value: u32) {
-        self.switch_bank(bank_of((value & MODE_MASK) as u8));
+    pub fn set_cpsr(&mut self, value: Psr) {
+        self.switch_bank(value.mode().bank());
         self.cpsr = value;
     }
 
     #[inline(always)]
-    pub fn get_spsr(&self) -> u32 {
-        self.spsr[self.bank]
+    pub fn spsr(&self) -> Psr {
+        self.spsr[self.bank as usize]
     }
 
     #[inline(always)]
-    pub fn set_spsr(&mut self, value: u32) {
-        self.spsr[self.bank] = value;
+    pub fn set_spsr(&mut self, value: Psr) {
+        self.spsr[self.bank as usize] = value;
+    }
+
+    #[inline(always)]
+    pub fn has_spsr(&self) -> bool {
+        self.bank != Bank::User
+    }
+
+    #[inline(always)]
+    pub fn mode(&self) -> Mode {
+        self.cpsr.mode()
+    }
+
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.set_cpsr(self.cpsr.with_mode(mode));
+    }
+
+    #[inline(always)]
+    pub fn thumb(&self) -> bool {
+        self.cpsr.thumb()
+    }
+
+    #[inline(always)]
+    pub fn set_thumb(&mut self, thumb: bool) {
+        self.cpsr = self.cpsr.with_thumb(thumb);
+    }
+
+    #[inline(always)]
+    pub fn set_irq_disabled(&mut self, disabled: bool) {
+        self.cpsr = self.cpsr.with_irq_disabled(disabled);
+    }
+
+    #[inline(always)]
+    pub fn set_nz(&mut self, result: u32) {
+        self.cpsr = self.cpsr.with_nz(result);
+    }
+
+    #[inline(always)]
+    pub fn set_negative_zero(&mut self, negative: bool, zero: bool) {
+        self.cpsr = self.cpsr.with_flags(negative, zero, self.cpsr.carry(), self.cpsr.overflow());
+    }
+
+    #[inline(always)]
+    pub fn set_nzc(&mut self, result: u32, carry: bool) {
+        self.cpsr = self.cpsr.with_nzc(result, carry);
+    }
+
+    #[inline(always)]
+    pub fn set_nzcv(&mut self, result: u32, carry: bool, overflow: bool) {
+        self.cpsr = self.cpsr.with_nzcv(result, carry, overflow);
     }
 
     #[inline(always)]
     pub fn cycle(&mut self, mem: &mut Memory) {
-        let pc = self.r[REGISTER_PC as usize];
+        let pc = self.r[Register::PC.index()];
         let instruction = self.pipeline[0];
         self.pipeline[0] = self.pipeline[1];
         self.branch_happened = false;
 
-        if self.get_thumb_state() {
-            self.pipeline[1] = mem.fetch_u16(pc) as u32;
-            THUMB_LUT[index_thumb(instruction as u16)](self, mem, instruction as u16);
+        if self.thumb() {
+            self.pipeline[1] = u32::from(mem.fetch_u16(pc));
+            let instruction = instruction as u16;
+            THUMB_LUT[index_thumb(instruction)](self, mem, instruction);
         } else {
             self.pipeline[1] = mem.fetch_u32(pc);
-            if condition_passed(instruction >> 28, self.cpsr) {
+            if condition_passed(instruction.bits(28..), self.cpsr) {
                 ARM_LUT[index_arm(instruction)](self, mem, instruction);
             }
         }
@@ -223,15 +468,15 @@ impl CPU {
         if self.branch_happened {
             self.flush_pipeline(mem);
         } else {
-            self.r[REGISTER_PC as usize] = pc.wrapping_add(self.instruction_len_in_bytes());
+            self.r[Register::PC.index()] = pc.wrapping_add(self.instruction_length());
         }
 
-        self.cycles += mem.take_cycles() as u64;
+        self.cycles += u64::from(mem.take_cycles());
     }
 
     #[inline(always)]
-    pub fn instruction_len_in_bytes(&self) -> u32 {
-        if self.get_thumb_state() {
+    pub fn instruction_length(&self) -> u32 {
+        if self.thumb() {
             INSTRUCTION_LEN_THUMB
         } else {
             INSTRUCTION_LEN_ARM
@@ -239,95 +484,10 @@ impl CPU {
     }
 
     #[inline(always)]
-    pub fn next_instruction_address_from_execution_stage(&self) -> u32 {
-        self.r[REGISTER_PC as usize].wrapping_sub(self.instruction_len_in_bytes())
-    }
-
-    #[inline(always)]
-    pub fn curr_instruction_address_from_execution_stage(&self) -> u32 {
-        self.r[REGISTER_PC as usize].wrapping_sub(self.instruction_len_in_bytes() * 2)
-    }
-
-    #[inline(always)]
-    pub fn get_negative_flag(&self) -> bool {
-        self.cpsr & FLAG_N != 0
-    }
-    #[inline(always)]
-    pub fn get_zero_flag(&self) -> bool {
-        self.cpsr & FLAG_Z != 0
-    }
-    #[inline(always)]
-    pub fn get_carry_flag(&self) -> bool {
-        self.cpsr & FLAG_C != 0
-    }
-    #[inline(always)]
-    pub fn get_overflow_flag(&self) -> bool {
-        self.cpsr & FLAG_V != 0
-    }
-
-    #[inline(always)]
-    pub fn set_nz(&mut self, result: u32) {
-        self.set_nz_flags(result & FLAG_N != 0, result == 0);
-    }
-
-    #[inline(always)]
-    pub fn set_nz_flags(&mut self, negative: bool, zero: bool) {
-        self.cpsr = (self.cpsr & !(FLAG_N | FLAG_Z)) | (negative as u32) << 31 | (zero as u32) << 30;
-    }
-
-    #[inline(always)]
-    pub fn set_nzc(&mut self, result: u32, carry: bool) {
-        self.cpsr = (self.cpsr & !(FLAG_N | FLAG_Z | FLAG_C)) | (result & FLAG_N) | ((result == 0) as u32) << 30 | (carry as u32) << 29;
-    }
-
-    #[inline(always)]
-    pub fn set_nzcv(&mut self, result: u32, carry: bool, overflow: bool) {
-        self.cpsr = (self.cpsr & !(FLAG_N | FLAG_Z | FLAG_C | FLAG_V)) | (result & FLAG_N) | ((result == 0) as u32) << 30 | (carry as u32) << 29 | (overflow as u32) << 28;
-    }
-
-    #[inline(always)]
-    pub fn get_irq_disable(&self) -> bool {
-        self.cpsr & FLAG_I != 0
-    }
-    pub fn set_irq_disable(&mut self, v: bool) {
-        self.cpsr = (self.cpsr & !FLAG_I) | (v as u32) << 7;
-    }
-
-    pub fn get_fiq_disable(&self) -> bool {
-        self.cpsr & FLAG_F != 0
-    }
-    pub fn set_fiq_disable(&mut self, v: bool) {
-        self.cpsr = (self.cpsr & !FLAG_F) | (v as u32) << 6;
-    }
-
-    #[inline(always)]
-    pub fn get_thumb_state(&self) -> bool {
-        self.cpsr & FLAG_T != 0
-    }
-    #[inline(always)]
-    pub fn set_thumb_state(&mut self, v: bool) {
-        self.cpsr = (self.cpsr & !FLAG_T) | (v as u32) << 5;
-    }
-
-    #[inline(always)]
-    pub fn get_mode(&self) -> u8 {
-        (self.cpsr & MODE_MASK) as u8
-    }
-    pub fn set_mode(&mut self, v: u8) {
-        self.set_cpsr((self.cpsr & !MODE_MASK) | v as u32);
-    }
-    #[inline(always)]
-    pub fn current_mode_has_spsr(&self) -> bool {
-        self.bank != BANK_USR
-    }
-    #[inline(always)]
-    pub fn in_a_privileged_mode(&self) -> bool {
-        self.get_mode() != MODE_USR
-    }
-    #[inline(always)]
-    pub fn get_cycles(&self) -> u64 {
+    pub fn cycles(&self) -> u64 {
         self.cycles
     }
+
     #[inline(always)]
     pub fn add_cycles(&mut self, cycles: u64) {
         self.cycles += cycles;
@@ -336,26 +496,30 @@ impl CPU {
     #[inline(always)]
     pub fn handle_interrupts(&mut self, mem: &mut Memory) {
         let io = mem.get_io_registers();
-        if io.ime && !self.get_irq_disable() && io.ie & io.irf != 0 {
-            let old_cpsr = self.cpsr;
-            self.set_mode(MODE_IRQ);
-            self.set_spsr(old_cpsr);
-            self.set_irq_disable(true);
-            let return_addr = self.pc().wrapping_add(4);
-            self.set_r(REGISTER_LR, return_addr);
-            self.set_thumb_state(false);
-            self.r[REGISTER_PC as usize] = 0x18;
+        if io.ime && !self.cpsr.irq_disabled() && io.ie & io.irf != 0 {
+            self.take_exception(Mode::Irq, IRQ_VECTOR, self.pc().wrapping_add(4));
             self.flush_pipeline(mem);
         }
     }
 
+    pub fn take_exception(&mut self, mode: Mode, vector: u32, return_address: u32) {
+        let old_cpsr = self.cpsr;
+        self.set_mode(mode);
+        self.set_spsr(old_cpsr);
+        self.set_r(Register::LR, return_address);
+        self.cpsr = self.cpsr.with_irq_disabled(true).with_thumb(false);
+        self.set_r(Register::PC, vector);
+    }
+
     pub fn save_state(&self, writer: &mut Writer) {
-        writer.u32(self.cpsr);
+        writer.u32(self.cpsr.bits());
         writer.u32s(&self.r);
         for bank in &self.banked {
             writer.u32s(bank);
         }
-        writer.u32s(&self.spsr);
+        for spsr in &self.spsr {
+            writer.u32(spsr.bits());
+        }
         writer.u8(self.bank as u8);
         writer.u32s(&self.pipeline);
         writer.bool(self.branch_happened);
@@ -363,16 +527,15 @@ impl CPU {
     }
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
-        self.cpsr = reader.u32()?;
+        self.cpsr = Psr(reader.u32()?);
         reader.u32s(&mut self.r)?;
         for bank in &mut self.banked {
             reader.u32s(bank)?;
         }
-        reader.u32s(&mut self.spsr)?;
-        self.bank = reader.u8()? as usize;
-        if self.bank >= BANK_COUNT {
-            return Err(StateError::Corrupt);
+        for spsr in &mut self.spsr {
+            *spsr = Psr(reader.u32()?);
         }
+        self.bank = *Bank::ALL.get(usize::from(reader.u8()?)).ok_or(StateError::Corrupt)?;
         reader.u32s(&mut self.pipeline)?;
         self.branch_happened = reader.bool()?;
         self.cycles = reader.u64()?;
@@ -380,39 +543,24 @@ impl CPU {
     }
 
     pub fn print_registers(&self) {
-        for i in (0..16u8).step_by(4) {
+        for row in Register::all().collect::<Vec<_>>().chunks(4) {
             println!(
-                "r{:2}: {:08X}   r{:2}: {:08X}   r{:2}: {:08X}   r{:2}: {:08X}",
-                i,
-                self.get_r(i),
-                i + 1,
-                self.get_r(i + 1),
-                i + 2,
-                self.get_r(i + 2),
-                i + 3,
-                self.get_r(i + 3),
+                "{}",
+                row.iter()
+                    .map(|register| format!("{:>3}: {:08X}", register.to_string(), self.r(*register)))
+                    .collect::<Vec<_>>()
+                    .join("   ")
             );
         }
     }
 
     pub fn print_status(&self) {
-        println!(
-            "CPSR: {:08X} [{}{}{}{}{}{}{}] MODE: {}",
-            self.cpsr,
-            if self.get_negative_flag() { 'N' } else { '-' },
-            if self.get_zero_flag() { 'Z' } else { '-' },
-            if self.get_carry_flag() { 'C' } else { '-' },
-            if self.get_overflow_flag() { 'V' } else { '-' },
-            if self.get_irq_disable() { 'I' } else { '-' },
-            if self.get_fiq_disable() { 'F' } else { '-' },
-            if self.get_thumb_state() { 'T' } else { '-' },
-            format_mode(self.get_mode()),
-        );
+        println!("CPSR: {}", self.cpsr);
     }
 
     pub fn print_next_instruction(&self) {
         let pc = self.pc();
-        if self.get_thumb_state() {
+        if self.thumb() {
             println!(
                 "Next thumb instruction at {:08X}: {}",
                 pc,
@@ -431,34 +579,44 @@ mod tests {
     #[test]
     fn test_bank_switch_keeps_registers_per_mode() {
         let mut cpu = CPU::new();
-        cpu.set_r(13, 0x1000);
-        cpu.set_r(8, 0x88);
-        cpu.set_mode(MODE_IRQ);
-        assert_eq!(cpu.get_r(8), 0x88);
-        cpu.set_r(13, 0x2000);
-        cpu.set_mode(MODE_FIQ);
-        cpu.set_r(8, 0xF8);
-        cpu.set_r(13, 0x3000);
-        assert_eq!(cpu.get_r_in_mode(8, MODE_USR), 0x88);
-        assert_eq!(cpu.get_r_in_mode(13, MODE_IRQ), 0x2000);
-        assert_eq!(cpu.get_r_in_mode(13, MODE_SVC), 0x1000);
-        cpu.set_mode(MODE_SVC);
-        assert_eq!(cpu.get_r(8), 0x88);
-        assert_eq!(cpu.get_r(13), 0x1000);
-        assert_eq!(cpu.get_r_in_mode(8, MODE_FIQ), 0xF8);
-        assert_eq!(cpu.get_r_in_mode(13, MODE_FIQ), 0x3000);
+        cpu.set_r(Register::SP, 0x1000);
+        cpu.set_r(Register::R8, 0x88);
+        cpu.set_mode(Mode::Irq);
+        assert_eq!(cpu.r(Register::R8), 0x88);
+        cpu.set_r(Register::SP, 0x2000);
+        cpu.set_mode(Mode::Fiq);
+        cpu.set_r(Register::R8, 0xF8);
+        cpu.set_r(Register::SP, 0x3000);
+        assert_eq!(cpu.r_in_mode(Register::R8, Mode::User), 0x88);
+        assert_eq!(cpu.r_in_mode(Register::SP, Mode::Irq), 0x2000);
+        assert_eq!(cpu.r_in_mode(Register::SP, Mode::Supervisor), 0x1000);
+        cpu.set_mode(Mode::Supervisor);
+        assert_eq!(cpu.r(Register::R8), 0x88);
+        assert_eq!(cpu.r(Register::SP), 0x1000);
+        assert_eq!(cpu.r_in_mode(Register::R8, Mode::Fiq), 0xF8);
+        assert_eq!(cpu.r_in_mode(Register::SP, Mode::Fiq), 0x3000);
     }
 
     #[test]
     fn test_set_r_in_user_mode_from_privileged_mode() {
         let mut cpu = CPU::new();
-        cpu.set_mode(MODE_USR);
-        cpu.set_r(13, 0x1234);
-        cpu.set_mode(MODE_IRQ);
-        cpu.set_r_in_mode(13, MODE_USR, 0x5678);
-        cpu.set_r_in_mode(8, MODE_USR, 0x9);
-        assert_eq!(cpu.get_r(8), 0x9);
-        cpu.set_mode(MODE_SYS);
-        assert_eq!(cpu.get_r(13), 0x5678);
+        cpu.set_mode(Mode::User);
+        cpu.set_r(Register::SP, 0x1234);
+        cpu.set_mode(Mode::Irq);
+        cpu.set_r_in_mode(Register::SP, Mode::User, 0x5678);
+        cpu.set_r_in_mode(Register::R8, Mode::User, 0x9);
+        assert_eq!(cpu.r(Register::R8), 0x9);
+        cpu.set_mode(Mode::System);
+        assert_eq!(cpu.r(Register::SP), 0x5678);
+    }
+
+    #[test]
+    fn test_status_register_fields() {
+        let psr = Psr(0).with_mode(Mode::Irq).with_thumb(true).with_nzcv(0x8000_0000, true, false);
+        assert_eq!(psr.mode(), Mode::Irq);
+        assert!(psr.thumb() && psr.negative() && psr.carry() && !psr.zero() && !psr.overflow());
+        assert_eq!(psr.flags(), 0b1010);
+        assert_eq!(psr.with_nz(0).flags(), 0b0110);
+        assert_eq!(psr.to_string(), "A0000032 [N-C---T] IRQ");
     }
 }

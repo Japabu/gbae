@@ -266,7 +266,15 @@ impl Rtc {
         } else {
             bcd(hour % 12) | if hour >= 12 { 0x80 } else { 0 }
         };
-        [bcd((year % 100) as u8), bcd(month), bcd(day), weekday, hour, bcd((second_of_day / 60 % 60) as u8), bcd((second_of_day % 60) as u8)]
+        [
+            bcd((year % 100) as u8),
+            bcd(month),
+            bcd(day),
+            weekday,
+            hour,
+            bcd((second_of_day / 60 % 60) as u8),
+            bcd((second_of_day % 60) as u8),
+        ]
     }
 
     fn set_written_time(&mut self, time: [u8; 7]) {

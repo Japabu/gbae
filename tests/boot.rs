@@ -39,5 +39,10 @@ fn emerald_copyright_screen_matches_recorded_hash() {
     for _ in 0..400 {
         gba.run_frame();
     }
-    assert_eq!(frame_hash(gba.framebuffer()), EMERALD_COPYRIGHT_FRAME_HASH, "copyright screen changed, frame hash {:#018x}", frame_hash(gba.framebuffer()));
+    assert_eq!(
+        frame_hash(gba.framebuffer()),
+        EMERALD_COPYRIGHT_FRAME_HASH,
+        "copyright screen changed, frame hash {:#018x}",
+        frame_hash(gba.framebuffer())
+    );
 }

@@ -7,6 +7,7 @@ use super::{
     memory::Memory,
 };
 
+pub mod asm;
 pub mod branch;
 pub mod ctrl_ext;
 pub mod data_processing;

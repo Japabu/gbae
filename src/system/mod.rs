@@ -1,4 +1,5 @@
 pub mod apu;
+pub mod bios;
 pub mod cpu;
 pub mod gba;
 pub mod instructions;

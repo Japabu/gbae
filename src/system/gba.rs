@@ -1,4 +1,5 @@
 use super::{
+    bios::Bios,
     cpu::CPU,
     memory::{DmaTiming, Key, Memory},
     ppu::{Framebuffer, PPU},
@@ -32,7 +33,7 @@ pub struct Gba {
 }
 
 impl Gba {
-    pub fn new(bios: Vec<u8>, cartridge_data: Vec<u8>) -> Self {
+    pub fn new(bios: Bios, cartridge_data: Vec<u8>) -> Self {
         let mut gba = Self {
             cpu: CPU::new(),
             mem: Memory::new(bios, cartridge_data),

@@ -13,12 +13,14 @@ The window build adds `winit`, `softbuffer` and `cpal` and nothing else.
 ## Running
 
 ```
-cargo run --release              # loads gba_bios.bin and rom.gba from the current directory
+cargo run --release              # loads rom.gba from the current directory
 cargo run --release -- game.gba  # or a specific ROM
-GBA_BIOS=path/to/bios.bin cargo run --release
 ```
 
-Without a ROM the Escape menu opens on a file browser.
+Without a ROM the Escape menu opens on a file browser. The emulator has its
+own BIOS built in, so nothing else is needed; a `gba_bios.bin` next to the
+executable or a `GBA_BIOS=path` variable selects an original BIOS image
+instead, which restores the boot logo and its jingle.
 
 Default controls (change them in the menu, saved to `gbae.cfg`):
 
@@ -37,22 +39,21 @@ to the ROM, save states to `<rom>.state`.
 ## Tests
 
 ```
-cargo test --no-default-features                       # unit and integration tests, fast
-cargo test --release --test boot -- --ignored          # boots Pokémon Emerald to the copyright screen
-cargo test --release --test roms -- --ignored          # jsmolka's gba-tests and FuzzARM, needs tests/roms
+cargo test
 ```
 
-The golden-frame tests compare rendered frames with PNGs in `tests/golden`;
-run with `UPDATE_GOLDEN=1` to re-record after checking the new image. The ROM
-suites expect the ROMs under `tests/roms/jsmolka` and `tests/roms/fuzzarm`
-(both projects publish the prebuilt `.gba` files on GitHub).
+Everything the tests need is generated in the tests themselves: the machines
+boot the built-in BIOS into ROMs assembled from `Instruction` values, so a
+fresh clone runs the whole suite without downloading anything. Golden-frame
+tests compare rendered frames with PNGs in `tests/golden`; run with
+`UPDATE_GOLDEN=1` to re-record after checking the new image.
 
 Headless tools in `examples/`:
 
 ```
-cargo run --release --example render -- gba_bios.bin rom.gba 400 frame.png
-cargo run --release --example trace -- gba_bios.bin rom.gba 1000 break=0x08000100
-cargo run --release --example bench -- gba_bios.bin rom.gba 400
+cargo run --release --example render -- - rom.gba 400 frame.png     # "-" selects the built-in BIOS
+cargo run --release --example trace -- - rom.gba 1000 break=0x08000100
+cargo run --release --example bench -- - rom.gba 400
 ```
 
 ## Layout

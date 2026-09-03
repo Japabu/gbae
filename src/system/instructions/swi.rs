@@ -1,6 +1,7 @@
 use crate::{
     bits::Bits,
     system::{
+        bios,
         cpu::{Mode, CPU},
         memory::Memory,
     },
@@ -27,8 +28,13 @@ pub fn decode_thumb(word: u16) -> Instruction {
 
 impl SoftwareInterrupt {
     #[inline(always)]
-    pub fn execute(self, cpu: &mut CPU, _mem: &mut Memory) {
-        cpu.take_exception(Mode::Supervisor, SWI_VECTOR, cpu.next_pc());
+    pub fn execute(self, cpu: &mut CPU, mem: &mut Memory) {
+        if mem.has_builtin_bios() {
+            let function = if cpu.thumb() { self.comment } else { self.comment.bits(16..24) };
+            bios::call(function, cpu, mem);
+        } else {
+            cpu.take_exception(Mode::Supervisor, SWI_VECTOR, cpu.next_pc());
+        }
     }
 
     pub fn encode_arm(self) -> Option<u32> {

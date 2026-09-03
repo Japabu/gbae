@@ -1,5 +1,6 @@
 mod common;
 
+use gbae::system::bios::Bios;
 use gbae::system::cpu::Register;
 
 use common::*;
@@ -23,7 +24,7 @@ fn machine(entry: u32, rom: Vec<u8>) -> Gba {
     bios[..4].copy_from_slice(&0xE59F_0000u32.to_le_bytes());
     bios[4..8].copy_from_slice(&0xE12F_FF10u32.to_le_bytes());
     bios[8..12].copy_from_slice(&entry.to_le_bytes());
-    Gba::new(bios, rom)
+    Gba::new(Bios::Image(bios), rom)
 }
 
 fn boot(entry: u32, rom: Vec<u8>) -> Gba {

@@ -1,37 +1,37 @@
 #![allow(dead_code)]
 
+use gbae::system::bios::Bios;
 use gbae::system::gba::Gba;
+use gbae::system::instructions::asm::Assembler;
 use gbae::system::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 use image::RgbImage;
 use std::path::PathBuf;
 
 pub const BIOS_LEN: usize = 0x4000;
+pub const ROM: u32 = 0x0800_0000;
 pub const VRAM: u32 = 0x0600_0000;
 pub const PALETTE: u32 = 0x0500_0000;
 pub const DISPCNT: u32 = 0x0400_0000;
 pub const BG0CNT: u32 = 0x0400_0008;
 pub const BG1CNT: u32 = 0x0400_000A;
 
+pub fn rom_that_loops() -> Vec<u8> {
+    let mut asm = Assembler::new(ROM);
+    let start = asm.here();
+    asm.b(start);
+    let mut rom = asm.finish();
+    rom.resize(0x100, 0);
+    rom
+}
+
 pub fn gba_without_rom() -> Gba {
-    let mut bios = vec![0; BIOS_LEN];
-    bios[..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
-    Gba::new(bios, vec![0; 0x100])
+    Gba::new(Bios::Builtin, rom_that_loops())
 }
 
 pub fn gba_with_save_marker(marker: &str) -> Gba {
-    let mut bios = vec![0; BIOS_LEN];
-    bios[..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
-    let mut rom = vec![0; 0x100];
+    let mut rom = rom_that_loops();
     rom[0xC0..0xC0 + marker.len()].copy_from_slice(marker.as_bytes());
-    Gba::new(bios, rom)
-}
-
-pub fn gba_from_files() -> Option<Gba> {
-    Some(Gba::new(read_project_file("gba_bios.bin")?, read_project_file("rom.gba")?))
-}
-
-pub fn read_project_file(name: &str) -> Option<Vec<u8>> {
-    std::fs::read(project_dir().join(name)).ok()
+    Gba::new(Bios::Builtin, rom)
 }
 
 pub fn project_dir() -> PathBuf {

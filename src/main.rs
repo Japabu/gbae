@@ -7,6 +7,7 @@ use audio::Audio;
 use config::{Settings, CONFIG_FILE};
 use gbae::cartridge::CartridgeInfo;
 use gbae::system::apu::SAMPLE_RATE;
+use gbae::system::bios::Bios;
 use gbae::system::cpu::CPU_FREQUENCY;
 use gbae::system::gba::{Gba, CYCLES_PER_SCANLINE, SCANLINES_PER_FRAME};
 use gbae::system::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
@@ -31,7 +32,7 @@ fn frame_duration() -> Duration {
 
 struct Emulator {
     gba: Gba,
-    bios: Vec<u8>,
+    bios: Bios,
     rom: Vec<u8>,
     save_path: PathBuf,
     state_path: PathBuf,
@@ -43,7 +44,7 @@ struct Emulator {
 }
 
 impl Emulator {
-    fn new(bios: Vec<u8>, rom_path: Option<&Path>, settings: Settings) -> Emulator {
+    fn new(bios: Bios, rom_path: Option<&Path>, settings: Settings) -> Emulator {
         let audio = Audio::new(settings.volume);
         if audio.is_none() {
             eprintln!("No audio output available, running silently");
@@ -354,10 +355,13 @@ impl ApplicationHandler for App {
 
 fn main() {
     let bios_path = std::env::var("GBA_BIOS").unwrap_or_else(|_| "gba_bios.bin".to_string());
-    let bios = std::fs::read(&bios_path).unwrap_or_else(|error| {
-        eprintln!("Could not read BIOS {}: {}", bios_path, error);
-        std::process::exit(1);
-    });
+    let bios = match std::fs::read(&bios_path) {
+        Ok(bytes) => {
+            eprintln!("Using BIOS {}", bios_path);
+            Bios::Image(bytes)
+        }
+        Err(_) => Bios::Builtin,
+    };
     let rom_path = std::env::args().nth(1).map(PathBuf::from).or_else(|| Path::new("rom.gba").exists().then(|| PathBuf::from("rom.gba")));
     let settings = Settings::load(Path::new(CONFIG_FILE));
     let emulator = Emulator::new(bios, rom_path.as_deref(), settings);

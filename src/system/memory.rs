@@ -30,6 +30,7 @@ use std::fmt::Display;
 
 use super::{
     apu::{Apu, FIFO_A, FIFO_B},
+    bios::Bios,
     rtc::Gpio,
     save::{Backup, SaveType},
     state::{Reader, StateError, Writer},
@@ -754,6 +755,8 @@ pub struct Memory {
     bios_last_opcode: u32,
     last_opcode: u32,
     executing_from_bios: bool,
+    builtin_bios: bool,
+    intr_waiting: bool,
     wait: WaitStates,
     prefetch: Prefetch,
     cycles: u32,
@@ -792,7 +795,9 @@ struct DmaChannel {
 }
 
 impl Memory {
-    pub fn new(bios: Vec<u8>, game_pak: Vec<u8>) -> Self {
+    pub fn new(bios: Bios, game_pak: Vec<u8>) -> Self {
+        let builtin_bios = bios.is_builtin();
+        let bios = bios.bytes();
         let mut bios_buffer = boxed_zeroed::<BIOS_LEN>();
         let bios_len = bios.len().min(BIOS_LEN);
         bios_buffer[..bios_len].copy_from_slice(&bios[..bios_len]);
@@ -818,6 +823,8 @@ impl Memory {
             bios_last_opcode: 0,
             last_opcode: 0,
             executing_from_bios: true,
+            builtin_bios,
+            intr_waiting: false,
             wait: WaitStates::decode(0),
             prefetch: Prefetch::default(),
             cycles: 0,
@@ -828,6 +835,18 @@ impl Memory {
     }
 
     #[inline(always)]
+    pub fn has_builtin_bios(&self) -> bool {
+        self.builtin_bios
+    }
+
+    pub fn intr_waiting(&self) -> bool {
+        self.intr_waiting
+    }
+
+    pub fn set_intr_waiting(&mut self, waiting: bool) {
+        self.intr_waiting = waiting;
+    }
+
     pub fn take_cycles(&mut self) -> u32 {
         std::mem::replace(&mut self.cycles, 0)
     }
@@ -1295,6 +1314,7 @@ impl Memory {
         writer.bool(self.next_fetch_sequential);
         writer.u32(self.next_fetch_address);
         writer.u32(self.apu_pending);
+        writer.bool(self.intr_waiting);
     }
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
@@ -1326,6 +1346,7 @@ impl Memory {
         self.next_fetch_sequential = reader.bool()?;
         self.next_fetch_address = reader.u32()?;
         self.apu_pending = reader.u32()?;
+        self.intr_waiting = reader.bool()?;
         Ok(())
     }
 
@@ -1487,7 +1508,7 @@ mod tests {
 
     #[test]
     fn test_address_decoding() {
-        let mem = Memory::new(vec![0; BIOS_LEN], vec![0; 0x100]);
+        let mem = Memory::new(Bios::Image(vec![0; BIOS_LEN]), vec![0; 0x100]);
         assert_eq!(mem.decode_address(0x0000_3FFF), RegionKey::Bios(0x3FFF));
         assert_eq!(mem.decode_address(0x0200_0000), RegionKey::Wram1(0));
         assert_eq!(mem.decode_address(0x0204_0004), RegionKey::Wram1(4));
@@ -1500,7 +1521,7 @@ mod tests {
 
     #[test]
     fn test_region_mirrors() {
-        let mut mem = Memory::new(vec![0; BIOS_LEN], vec![0; 0x100]);
+        let mut mem = Memory::new(Bios::Image(vec![0; BIOS_LEN]), vec![0; 0x100]);
         mem.write_u32(0x0200_0000, 0x1234_5678);
         assert_eq!(mem.read_u32(0x0204_0000), 0x1234_5678);
         mem.write_u16(0x0300_7FF8, 0xBEEF);
@@ -1510,7 +1531,7 @@ mod tests {
 
     #[test]
     fn test_vram_wrapping() {
-        let mut mem = Memory::new(vec![], vec![]);
+        let mut mem = Memory::new(Bios::Image(vec![]), vec![]);
         mem.write_u16(0x0600_0000, 0x1234);
         assert_eq!(mem.read_u16(0x0600_0000), 0x1234);
         mem.write_u16(0x0601_8000, 0x5678);
@@ -1523,20 +1544,20 @@ mod tests {
     fn test_rom_wait_state_mirrors_and_open_bus() {
         let mut rom = vec![0u8; 0x100];
         rom[0] = 0xAA;
-        let mem = Memory::new(vec![], rom);
+        let mem = Memory::new(Bios::Image(vec![]), rom);
         assert_eq!(mem.read_u8(0x0800_0000), 0xAA);
         assert_eq!(mem.read_u8(0x0A00_0000), 0xAA);
         assert_eq!(mem.read_u8(0x0C00_0000), 0xAA);
         assert_eq!(mem.read_u16(0x0800_0100), 0x0080);
         assert_eq!(mem.read_u8(0x0800_0201), 0x01);
         assert_eq!(mem.read_u32(0x0900_0000), 0x0001_0000);
-        let mem = Memory::new(vec![], vec![0; 0x102]);
+        let mem = Memory::new(Bios::Image(vec![]), vec![0; 0x102]);
         assert_eq!(mem.read_u16(0x0800_0102), 0x81);
     }
 
     #[test]
     fn test_unaligned_accesses_are_forced_aligned() {
-        let mut mem = Memory::new(vec![], vec![]);
+        let mut mem = Memory::new(Bios::Image(vec![]), vec![]);
         mem.write_u32(0x0300_0000, 0x0403_0201);
         assert_eq!(mem.read_u32(0x0300_0002), 0x0403_0201);
         assert_eq!(mem.read_u16(0x0300_0003), 0x0403);
@@ -1544,7 +1565,7 @@ mod tests {
 
     #[test]
     fn test_byte_writes_to_palette_and_vram_duplicate() {
-        let mut mem = Memory::new(vec![], vec![]);
+        let mut mem = Memory::new(Bios::Image(vec![]), vec![]);
         mem.write_u8(0x0500_0001, 0x7F);
         assert_eq!(mem.read_u16(0x0500_0000), 0x7F7F);
         mem.write_u8(0x0600_0002, 0x12);
@@ -1598,7 +1619,7 @@ mod tests {
     fn test_bios_reads_outside_bios_return_last_fetched_opcode() {
         let mut bios = vec![0u8; BIOS_LEN];
         bios[0x100..0x104].copy_from_slice(&0x1234_5678u32.to_le_bytes());
-        let mut mem = Memory::new(bios, vec![]);
+        let mut mem = Memory::new(Bios::Image(bios), vec![]);
         assert_eq!(mem.fetch_u32(0x100), 0x1234_5678);
         assert_eq!(mem.read_u32(0x200), 0);
         mem.fetch_u32(0x0800_0000);
@@ -1623,7 +1644,7 @@ mod tests {
 
     #[test]
     fn test_access_cycles_per_region() {
-        let mem = Memory::new(vec![], vec![0; 0x100]);
+        let mem = Memory::new(Bios::Image(vec![]), vec![0; 0x100]);
         assert_eq!(mem.access_cycles(0x0300_0000, 4, Access::Nonsequential), 1);
         assert_eq!(mem.access_cycles(0x0200_0000, 2, Access::Sequential), 3);
         assert_eq!(mem.access_cycles(0x0200_0000, 4, Access::Sequential), 6);
@@ -1638,7 +1659,7 @@ mod tests {
 
     #[test]
     fn test_prefetch_buffer_serves_sequential_fetches() {
-        let mut mem = Memory::new(vec![], vec![0; 0x100]);
+        let mut mem = Memory::new(Bios::Image(vec![]), vec![0; 0x100]);
         mem.write_u16(0x0400_0204, 0x4000);
         mem.fetch_u16(0x0800_0000);
         assert_eq!(mem.take_cycles(), 5);
@@ -1658,7 +1679,7 @@ mod tests {
 
     #[test]
     fn test_unmapped_reads_return_the_last_prefetched_opcode() {
-        let mut mem = Memory::new(vec![], vec![]);
+        let mut mem = Memory::new(Bios::Image(vec![]), vec![]);
         assert_eq!(mem.read_u32(0x1000_0000), 0);
         mem.write_u32(0x0300_0000, 0xE1A0_1234);
         mem.fetch_u32(0x0300_0000);

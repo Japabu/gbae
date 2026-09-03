@@ -7,3 +7,4 @@ pub mod ppu;
 pub mod rtc;
 pub mod save;
 pub mod state;
+pub mod synth;

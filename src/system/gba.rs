@@ -199,6 +199,16 @@ impl Gba {
         Ok(())
     }
 
+    pub fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+        self.mem.flush_apu();
+        self.mem.apu.set_sample_rate(sample_rate);
+    }
+
+    pub fn set_smooth_audio(&mut self, smooth: bool) {
+        self.mem.flush_apu();
+        self.mem.apu.set_smooth(smooth);
+    }
+
     pub fn take_audio_samples(&mut self) -> Vec<i16> {
         self.mem.flush_apu();
         self.mem.apu.take_samples()

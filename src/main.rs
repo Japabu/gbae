@@ -6,6 +6,7 @@ mod menu;
 use audio::Audio;
 use config::{Settings, CONFIG_FILE};
 use gbae::cartridge::CartridgeInfo;
+use gbae::system::apu::SAMPLE_RATE;
 use gbae::system::cpu::CPU_FREQUENCY;
 use gbae::system::gba::{Gba, CYCLES_PER_SCANLINE, SCANLINES_PER_FRAME};
 use gbae::system::ppu::{Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
@@ -59,11 +60,18 @@ impl Emulator {
             menu: Menu::new(),
             frames_since_save_check: 0,
         };
+        emulator.configure_audio();
         match rom_path {
             Some(rom_path) => emulator.load_rom(rom_path),
             None => emulator.menu.browse(&std::env::current_dir().unwrap_or_default()),
         }
         emulator
+    }
+
+    fn configure_audio(&mut self) {
+        let sample_rate = self.audio.as_ref().map_or(SAMPLE_RATE, Audio::sample_rate);
+        self.gba.set_audio_sample_rate(sample_rate);
+        self.gba.set_smooth_audio(self.settings.smooth_audio);
     }
 
     fn rom_directory(&self) -> PathBuf {
@@ -92,6 +100,7 @@ impl Emulator {
     fn reset(&mut self) {
         self.flush_save(true);
         self.gba = Gba::new(self.bios.clone(), self.rom.clone());
+        self.configure_audio();
         if let Ok(save) = std::fs::read(&self.save_path) {
             self.gba.load_save_data(&save);
         }
@@ -106,7 +115,7 @@ impl Emulator {
         }
         self.gba.run_frame();
         let samples = self.gba.take_audio_samples();
-        if let Some(audio) = &mut self.audio {
+        if let Some(audio) = &self.audio {
             if !self.settings.turbo {
                 audio.push(&samples);
             }
@@ -163,6 +172,7 @@ impl Emulator {
                     if let Some(audio) = &self.audio {
                         audio.set_volume(self.settings.volume);
                     }
+                    self.gba.set_smooth_audio(self.settings.smooth_audio);
                     self.settings.save(Path::new(CONFIG_FILE));
                 }
                 return action;

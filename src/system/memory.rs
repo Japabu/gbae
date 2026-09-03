@@ -567,6 +567,10 @@ impl IoRegisters {
         }
     }
 
+    pub fn cycles_until_timer_flush(&self) -> u32 {
+        self.timer_budget.saturating_sub(self.timer_pending).max(1)
+    }
+
     fn flush_timers(&mut self) -> u8 {
         let cycles = std::mem::replace(&mut self.timer_pending, 0);
         for channel in 0..4 {
@@ -1079,17 +1083,22 @@ impl Memory {
     }
 
     pub fn tick(&mut self, cycles: u32) {
-        self.apu_pending += cycles;
-        let overflowed = self.io_registers.tick_timers(cycles);
-        if overflowed != 0 || self.apu_pending >= APU_BATCH_CYCLES {
-            self.flush_apu();
-        }
-        for timer in 0..2u8 {
-            if overflowed & (1 << timer) != 0 {
-                let refill = self.apu.timer_overflow(timer);
-                for (fifo, address) in [(0, FIFO_A), (1, FIFO_B)] {
-                    if refill[fifo] {
-                        self.refill_fifo(address);
+        let mut remaining = cycles;
+        while remaining > 0 {
+            let step = remaining.min(self.io_registers.cycles_until_timer_flush());
+            remaining -= step;
+            self.apu_pending += step;
+            let overflowed = self.io_registers.tick_timers(step);
+            if overflowed != 0 || self.apu_pending >= APU_BATCH_CYCLES {
+                self.flush_apu();
+            }
+            for timer in 0..2u8 {
+                if overflowed & (1 << timer) != 0 {
+                    let refill = self.apu.timer_overflow(timer);
+                    for (fifo, address) in [(0, FIFO_A), (1, FIFO_B)] {
+                        if refill[fifo] {
+                            self.refill_fifo(address);
+                        }
                     }
                 }
             }

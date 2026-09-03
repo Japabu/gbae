@@ -3,10 +3,14 @@ use std::collections::VecDeque;
 use super::{
     cpu::CPU_FREQUENCY,
     state::{Reader, StateError, Writer},
+    synth::{kernel, Synth, FRACTION_BITS, KERNEL_SHIFT, LEVEL_BITS, TAPS},
 };
 
 pub const SAMPLE_RATE: u32 = 48_000;
 const FRAME_SEQUENCER_CYCLES: u32 = 32_768;
+const GRID_CYCLES: u32 = 64;
+const FLUSH_CYCLES: u32 = CPU_FREQUENCY as u32 / 8;
+const LEVEL_SCALE: i32 = 1 << (LEVEL_BITS - 10);
 const FIFO_CAPACITY: usize = 32;
 const FIFO_REFILL_THRESHOLD: usize = 16;
 const DUTY_PATTERNS: [u8; 4] = [0b0000_0001, 0b0000_0011, 0b0000_1111, 0b1111_1100];
@@ -537,13 +541,30 @@ impl Noise {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Fifo {
     samples: VecDeque<i8>,
     current: i8,
+    level: i32,
+    history: [i8; TAPS],
+    head: usize,
+    last_pop: u64,
+    interval: u64,
 }
 
 impl Fifo {
+    fn new() -> Fifo {
+        Fifo {
+            samples: VecDeque::new(),
+            current: 0,
+            level: 0,
+            history: [0; TAPS],
+            head: 0,
+            last_pop: 0,
+            interval: 0,
+        }
+    }
+
     fn push_word(&mut self, value: u32) {
         for byte in value.to_le_bytes() {
             if self.samples.len() < FIFO_CAPACITY {
@@ -552,16 +573,45 @@ impl Fifo {
         }
     }
 
-    fn pop(&mut self) -> bool {
+    fn pop(&mut self, clock: u64, smooth: bool) -> bool {
         if let Some(sample) = self.samples.pop_front() {
             self.current = sample;
         }
+        self.head = (self.head + 1) % TAPS;
+        self.history[self.head] = self.current;
+        self.interval = if self.last_pop == 0 { 0 } else { clock - self.last_pop };
+        self.last_pop = clock;
+        if !smooth {
+            self.level = self.current as i32 * LEVEL_SCALE;
+        }
         self.samples.len() <= FIFO_REFILL_THRESHOLD
+    }
+
+    fn interpolate(&self, clock: u64) -> i32 {
+        if self.interval == 0 {
+            return self.current as i32 * LEVEL_SCALE;
+        }
+        let elapsed = ((clock - self.last_pop) << FRACTION_BITS) / self.interval;
+        let weights = kernel().weights((1 << FRACTION_BITS) - elapsed.min(1 << FRACTION_BITS) as u32);
+        let mut total = 0i32;
+        for (k, weight) in weights.iter().enumerate() {
+            total += weight * self.history[(self.head + TAPS - k) % TAPS] as i32;
+        }
+        total >> (KERNEL_SHIFT - LEVEL_SCALE.trailing_zeros())
+    }
+
+    fn restart(&mut self) {
+        self.level = self.current as i32 * LEVEL_SCALE;
+        self.history = [0; TAPS];
+        self.head = 0;
+        self.last_pop = 0;
+        self.interval = 0;
     }
 
     fn reset(&mut self) {
         self.samples.clear();
         self.current = 0;
+        self.restart();
     }
 
     fn save_state(&self, writer: &mut Writer) {
@@ -573,6 +623,7 @@ impl Fifo {
     fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
         self.samples = reader.sized_bytes()?.iter().map(|byte| *byte as i8).collect();
         self.current = reader.u8()? as i8;
+        self.restart();
         Ok(())
     }
 }
@@ -596,9 +647,12 @@ pub struct Apu {
     bias: u16,
     frame_sequencer_cycles: u32,
     frame_sequencer_step: u8,
-    sample_cycles: u64,
-    channel_cycles: i32,
-    samples: Vec<i16>,
+    clock: u64,
+    frame_cycles: u32,
+    grid_cycles: u32,
+    smooth: bool,
+    last_level: [i32; 2],
+    synth: [Synth; 2],
 }
 
 impl Apu {
@@ -608,7 +662,7 @@ impl Apu {
             square2: Square::new(),
             wave: Wave::new(),
             noise: Noise::new(),
-            fifo: [Fifo::default(), Fifo::default()],
+            fifo: [Fifo::new(), Fifo::new()],
             psg_volume_right: 0,
             psg_volume_left: 0,
             psg_enable_right: 0,
@@ -622,9 +676,12 @@ impl Apu {
             bias: DEFAULT_BIAS,
             frame_sequencer_cycles: 0,
             frame_sequencer_step: 0,
-            sample_cycles: 0,
-            channel_cycles: 0,
-            samples: Vec::new(),
+            clock: 0,
+            frame_cycles: 0,
+            grid_cycles: 0,
+            smooth: false,
+            last_level: [0; 2],
+            synth: [Synth::new(SAMPLE_RATE), Synth::new(SAMPLE_RATE)],
         }
     }
 
@@ -678,6 +735,11 @@ impl Apu {
         if !self.master_enable && (0x60..0x84).contains(&offset) {
             return;
         }
+        self.write_register(offset, value);
+        self.emit();
+    }
+
+    fn write_register(&mut self, offset: u32, value: u16) {
         match offset {
             0x60 => self.square1.sweep.write(value),
             0x62 => self.square1.write_control(value),
@@ -743,36 +805,66 @@ impl Apu {
         let mut refill = [false; 2];
         for fifo in 0..2 {
             if self.fifo_timer[fifo] == timer {
-                refill[fifo] = self.fifo[fifo].pop();
+                refill[fifo] = self.fifo[fifo].pop(self.clock, self.smooth);
             }
         }
+        self.emit();
         refill
     }
 
     pub fn run(&mut self, cycles: u32) {
-        self.sample_cycles += cycles as u64 * SAMPLE_RATE as u64;
-        self.channel_cycles += cycles as i32;
         self.frame_sequencer_cycles += cycles;
         while self.frame_sequencer_cycles >= FRAME_SEQUENCER_CYCLES {
             self.frame_sequencer_cycles -= FRAME_SEQUENCER_CYCLES;
             self.tick_frame_sequencer();
         }
-        while self.sample_cycles >= CPU_FREQUENCY {
-            self.sample_cycles -= CPU_FREQUENCY;
-            self.advance_channels();
-            let (left, right) = self.mix();
-            self.samples.push(left);
-            self.samples.push(right);
+        let mut remaining = cycles;
+        while remaining > 0 {
+            let step = remaining.min(GRID_CYCLES - self.grid_cycles);
+            self.grid_cycles += step;
+            self.frame_cycles += step;
+            self.clock += step as u64;
+            remaining -= step;
+            if self.grid_cycles == GRID_CYCLES {
+                self.grid_cycles = 0;
+                self.advance_channels();
+                if self.smooth {
+                    for fifo in &mut self.fifo {
+                        fifo.level = fifo.interpolate(self.clock);
+                    }
+                }
+                self.emit();
+            }
+        }
+        if self.frame_cycles >= FLUSH_CYCLES {
+            self.flush_synth();
         }
     }
 
     fn advance_channels(&mut self) {
-        let cycles = self.channel_cycles;
-        self.channel_cycles = 0;
-        self.square1.advance(cycles);
-        self.square2.advance(cycles);
-        self.wave.advance(cycles);
-        self.noise.advance(cycles);
+        self.square1.advance(GRID_CYCLES as i32);
+        self.square2.advance(GRID_CYCLES as i32);
+        self.wave.advance(GRID_CYCLES as i32);
+        self.noise.advance(GRID_CYCLES as i32);
+    }
+
+    fn emit(&mut self) {
+        let (left, right) = self.mix();
+        if left != self.last_level[0] {
+            self.synth[0].add_delta(self.frame_cycles, left - self.last_level[0]);
+            self.last_level[0] = left;
+        }
+        if right != self.last_level[1] {
+            self.synth[1].add_delta(self.frame_cycles, right - self.last_level[1]);
+            self.last_level[1] = right;
+        }
+    }
+
+    fn flush_synth(&mut self) {
+        for synth in &mut self.synth {
+            synth.end_frame(self.frame_cycles);
+        }
+        self.frame_cycles = 0;
     }
 
     fn tick_frame_sequencer(&mut self) {
@@ -802,7 +894,7 @@ impl Apu {
         }
     }
 
-    fn mix(&self) -> (i16, i16) {
+    fn mix(&self) -> (i32, i32) {
         if !self.master_enable {
             return (0, 0);
         }
@@ -814,15 +906,15 @@ impl Apu {
                     psg_sum += *sample as i32;
                 }
             }
-            let psg_level = (psg_sum * volume as i32 * 4 / 7) >> (2 - self.psg_scale.min(2));
-            let mut level = self.bias as i32 + psg_level;
+            let psg_level = (psg_sum * volume as i32 * 4 * LEVEL_SCALE / 7) >> (2 - self.psg_scale.min(2));
+            let mut level = (self.bias & 0x3FE) as i32 * LEVEL_SCALE + psg_level;
             for fifo in 0..2 {
                 if fifo_right_or_left[fifo] {
-                    let sample = self.fifo[fifo].current as i32;
+                    let sample = self.fifo[fifo].level;
                     level += if self.fifo_full_volume[fifo] { sample * 2 } else { sample };
                 }
             }
-            ((level.clamp(0, 0x3FF) - 0x200) << 6) as i16
+            level.clamp(0, 0x400 * LEVEL_SCALE - 1) - 0x200 * LEVEL_SCALE
         };
         (
             side(self.psg_volume_left, self.psg_enable_left, self.fifo_enable_left),
@@ -850,8 +942,7 @@ impl Apu {
         writer.u16(self.bias);
         writer.u32(self.frame_sequencer_cycles);
         writer.u8(self.frame_sequencer_step);
-        writer.u64(self.sample_cycles);
-        writer.i32(self.channel_cycles);
+        writer.u64(self.synth[0].phase(self.frame_cycles));
     }
 
     pub fn load_state(&mut self, reader: &mut Reader) -> Result<(), StateError> {
@@ -874,18 +965,40 @@ impl Apu {
         self.bias = reader.u16()?;
         self.frame_sequencer_cycles = reader.u32()?;
         self.frame_sequencer_step = reader.u8()? & 7;
-        self.sample_cycles = reader.u64()?;
-        self.channel_cycles = reader.i32()?;
-        self.samples.clear();
+        let phase = reader.u64()?;
+        for synth in &mut self.synth {
+            synth.set_phase(phase);
+        }
+        self.clock = 0;
+        self.frame_cycles = 0;
+        self.grid_cycles = 0;
+        let (left, right) = self.mix();
+        self.last_level = [left, right];
         Ok(())
     }
 
+    pub fn set_sample_rate(&mut self, sample_rate: u32) {
+        for synth in &mut self.synth {
+            synth.set_sample_rate(sample_rate);
+        }
+        self.frame_cycles = 0;
+    }
+
+    pub fn set_smooth(&mut self, smooth: bool) {
+        self.smooth = smooth;
+        for fifo in &mut self.fifo {
+            fifo.level = fifo.current as i32 * LEVEL_SCALE;
+        }
+    }
+
     pub fn take_samples(&mut self) -> Vec<i16> {
-        std::mem::take(&mut self.samples)
+        self.flush_synth();
+        let (left, right) = (self.synth[0].take(), self.synth[1].take());
+        left.iter().zip(&right).flat_map(|(left, right)| [*left, *right]).collect()
     }
 
     pub fn pending_samples(&self) -> usize {
-        self.samples.len() / 2
+        self.synth[0].available(self.frame_cycles)
     }
 }
 
@@ -908,20 +1021,48 @@ mod tests {
         apu.take_samples()
     }
 
+    fn stream_fifo(apu: &mut Apu, interval: u32, samples: impl Iterator<Item = i8>) {
+        for sample in samples {
+            apu.fifo[0].samples.push_back(sample);
+            apu.run(interval);
+            apu.timer_overflow(0);
+        }
+    }
+
     #[test]
     fn test_square_wave_toggles_at_programmed_frequency() {
         let mut apu = enabled_apu();
         apu.write_u16(0x62, 0xF000 | 2 << 6);
         apu.write_u16(0x64, 0x8000 | 1792);
-        let samples = run_samples(&mut apu, 4096);
-        let left: Vec<i16> = samples.iter().step_by(2).copied().collect();
+        let samples = run_samples(&mut apu, 8192);
+        let left: Vec<i16> = samples.iter().step_by(2).skip(2048).copied().collect();
         let high = *left.iter().max().unwrap();
         let low = *left.iter().min().unwrap();
-        assert!(high > 0 && low <= 0, "high {} low {}", high, low);
-        let transitions = left.windows(2).filter(|pair| pair[0] != pair[1]).count();
+        assert!(high > 0 && low < 0, "high {} low {}", high, low);
+        let crossings = left.windows(2).filter(|pair| (pair[0] < 0) != (pair[1] < 0)).count();
         let expected_period_samples = SAMPLE_RATE as f64 / 512.0;
-        let expected_transitions = (left.len() as f64 / expected_period_samples * 2.0) as usize;
-        assert!((transitions as i64 - expected_transitions as i64).abs() <= 2, "{} transitions, expected {}", transitions, expected_transitions);
+        let expected_crossings = (left.len() as f64 / expected_period_samples * 2.0) as usize;
+        assert!((crossings as i64 - expected_crossings as i64).abs() <= 2, "{} crossings, expected {}", crossings, expected_crossings);
+    }
+
+    #[test]
+    fn test_smooth_direct_sound_rounds_off_steps() {
+        let rise = |smooth: bool| {
+            let mut apu = enabled_apu();
+            apu.set_smooth(smooth);
+            apu.write_u16(0x82, 0x2 | 0x4 | 0x100 | 0x200);
+            stream_fifo(&mut apu, 4096, std::iter::repeat(0).take(40).chain(std::iter::repeat(0x40).take(40)));
+            let left: Vec<i32> = apu.take_samples().iter().step_by(2).map(|sample| *sample as i32).collect();
+            let edge = left.iter().position(|sample| *sample > left.iter().max().unwrap() / 2).unwrap();
+            let level = left[edge + 20];
+            let rising = left[edge - 20..edge + 20].iter().filter(|sample| **sample > level / 8 && **sample < level * 7 / 8).count();
+            (level, rising)
+        };
+        let (exact_level, exact_rising) = rise(false);
+        let (smooth_level, smooth_rising) = rise(true);
+        assert!((exact_level - smooth_level).abs() < exact_level / 8, "levels {} and {}", exact_level, smooth_level);
+        assert!(exact_rising <= 2, "{} samples rising in exact mode", exact_rising);
+        assert!(smooth_rising >= 6, "{} samples rising in smooth mode", smooth_rising);
     }
 
     #[test]
@@ -930,6 +1071,18 @@ mod tests {
         apu.write_u16(0x62, 0xF000 | 2 << 6);
         apu.write_u16(0x64, 0x8000 | 1792);
         assert!(run_samples(&mut apu, 256).iter().all(|sample| *sample == 0));
+    }
+
+    #[test]
+    fn test_bias_resolution_bits_do_not_offset_output() {
+        let mut apu = enabled_apu();
+        apu.write_u16(0x88, 0xC200);
+        assert_eq!(apu.read_u16(0x88), 0xC200);
+        assert_eq!(apu.mix(), (0, 0));
+        apu.write_u16(0x82, 0x2 | 0x4 | 0x100 | 0x200);
+        apu.write_fifo(0, 0x0000_0060);
+        apu.timer_overflow(0);
+        assert_eq!(apu.mix(), (0x60 * 2 * LEVEL_SCALE, 0x60 * 2 * LEVEL_SCALE));
     }
 
     #[test]
@@ -976,8 +1129,7 @@ mod tests {
             apu.write_fifo(0, 0);
         }
         assert!(!apu.timer_overflow(0)[0]);
-        let (left, right) = apu.mix();
-        assert_eq!((left, right), ((0x60 * 2) << 6, (0x60 * 2) << 6));
+        assert_eq!(apu.mix(), (0x60 * 2 * LEVEL_SCALE, 0x60 * 2 * LEVEL_SCALE));
         for _ in 0..14 {
             assert!(!apu.timer_overflow(0)[0]);
         }

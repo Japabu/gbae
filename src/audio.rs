@@ -1,17 +1,15 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use gbae::system::apu::SAMPLE_RATE;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
-const MAX_QUEUED_FRAMES: usize = SAMPLE_RATE as usize / 5;
+const MAX_QUEUED_FRACTION_OF_SECOND: usize = 5;
 
 pub struct Audio {
     _stream: cpal::Stream,
     queue: Arc<Mutex<VecDeque<i16>>>,
     volume: Arc<AtomicU8>,
-    device_rate: u32,
-    resample_position: f64,
+    sample_rate: u32,
 }
 
 impl Audio {
@@ -21,7 +19,7 @@ impl Audio {
         let queue = Arc::new(Mutex::new(VecDeque::new()));
         let volume = Arc::new(AtomicU8::new(volume));
         let channels = config.channels() as usize;
-        let device_rate = config.sample_rate();
+        let sample_rate = config.sample_rate();
         let stream_config: cpal::StreamConfig = config.clone().into();
         let stream = match config.sample_format() {
             cpal::SampleFormat::I16 => build_stream::<i16>(&device, stream_config, queue.clone(), volume.clone(), channels),
@@ -35,33 +33,24 @@ impl Audio {
             _stream: stream,
             queue,
             volume,
-            device_rate,
-            resample_position: 0.0,
+            sample_rate,
         })
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
     }
 
     pub fn set_volume(&self, volume: u8) {
         self.volume.store(volume, Ordering::Relaxed);
     }
 
-    pub fn push(&mut self, samples: &[i16]) {
+    pub fn push(&self, samples: &[i16]) {
         let mut queue = self.queue.lock().unwrap();
-        if queue.len() / 2 > MAX_QUEUED_FRAMES {
+        if queue.len() / 2 > self.sample_rate as usize / MAX_QUEUED_FRACTION_OF_SECOND {
             return;
         }
-        let frames = samples.len() / 2;
-        if self.device_rate == SAMPLE_RATE {
-            queue.extend(samples.iter().copied());
-        } else {
-            let step = SAMPLE_RATE as f64 / self.device_rate as f64;
-            while (self.resample_position as usize) < frames {
-                let frame = self.resample_position as usize;
-                queue.push_back(samples[frame * 2]);
-                queue.push_back(samples[frame * 2 + 1]);
-                self.resample_position += step;
-            }
-            self.resample_position -= frames as f64;
-        }
+        queue.extend(samples.iter().copied());
     }
 
     pub fn clear(&self) {

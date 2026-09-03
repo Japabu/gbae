@@ -8,6 +8,7 @@ const DEFAULT_KEYS: [&str; 10] = ["KeyZ", "KeyX", "Backspace", "Enter", "ArrowRi
 pub struct Settings {
     pub volume: u8,
     pub turbo: bool,
+    pub smooth_audio: bool,
     pub keys: [String; 10],
 }
 
@@ -16,6 +17,7 @@ impl Settings {
         Settings {
             volume: 80,
             turbo: false,
+            smooth_audio: false,
             keys: DEFAULT_KEYS.map(String::from),
         }
     }
@@ -32,6 +34,7 @@ impl Settings {
             match name.trim() {
                 "volume" => settings.volume = value.trim().parse().unwrap_or(settings.volume).min(100),
                 "turbo" => settings.turbo = value.trim() == "true",
+                "smooth_audio" => settings.smooth_audio = value.trim() == "true",
                 name => {
                     if let Some(key) = Key::ALL.iter().find(|key| key_setting_name(**key) == name) {
                         settings.keys[*key as usize] = value.trim().to_string();
@@ -43,7 +46,7 @@ impl Settings {
     }
 
     pub fn save(&self, path: &Path) {
-        let mut text = format!("volume={}\nturbo={}\n", self.volume, self.turbo);
+        let mut text = format!("volume={}\nturbo={}\nsmooth_audio={}\n", self.volume, self.turbo, self.smooth_audio);
         for key in Key::ALL {
             text.push_str(&format!("{}={}\n", key_setting_name(key), self.keys[key as usize]));
         }

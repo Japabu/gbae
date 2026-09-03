@@ -15,7 +15,7 @@ const PANEL: [u8; 3] = [24, 24, 32];
 const BORDER: [u8; 3] = [90, 90, 110];
 
 const MAIN_ITEMS: [&str; 7] = ["Resume", "Reset", "Save state", "Load state", "Load ROM...", "Settings", "Quit"];
-const SETTINGS_ITEMS: [&str; 4] = ["Volume", "Speed", "Controls...", "Back"];
+const SETTINGS_ITEMS: [&str; 5] = ["Volume", "Speed", "Sound", "Controls...", "Back"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -117,6 +117,10 @@ impl Menu {
                     settings.turbo = !settings.turbo;
                     return Action::SettingsChanged;
                 }
+                2 => {
+                    settings.smooth_audio = !settings.smooth_audio;
+                    return Action::SettingsChanged;
+                }
                 _ => {}
             }
         }
@@ -143,8 +147,8 @@ impl Menu {
                 _ => Action::Quit,
             },
             Screen::Settings => match self.index {
-                0 | 1 => self.adjust(true, settings),
-                2 => {
+                0 | 1 | 2 => self.adjust(true, settings),
+                3 => {
                     self.screen = Screen::Controls;
                     self.index = 0;
                     Action::None
@@ -181,7 +185,7 @@ impl Menu {
             }
             Screen::Controls => {
                 self.screen = Screen::Settings;
-                self.index = 2;
+                self.index = 3;
                 Action::None
             }
             Screen::Files => {
@@ -219,8 +223,9 @@ impl Menu {
                 let values = [
                     format!("Volume      < {:>3}% >", settings.volume),
                     format!("Speed       < {} >", if settings.turbo { "Turbo" } else { "1x" }),
-                    SETTINGS_ITEMS[2].to_string(),
+                    format!("Sound       < {} >", if settings.smooth_audio { "Smooth" } else { "Exact" }),
                     SETTINGS_ITEMS[3].to_string(),
+                    SETTINGS_ITEMS[4].to_string(),
                 ];
                 ("Settings", values.into_iter().enumerate().map(|(i, item)| (item, i == self.index, true)).collect())
             }

@@ -72,11 +72,16 @@ effects, and writes RGB888 into the framebuffer.
 
 ## APU
 
-`apu.rs` owns the sound registers. The PSG channels advance by elapsed cycles
-between output samples, a 512 Hz frame sequencer drives length, envelope and
-sweep, the two FIFOs pop a sample on their timer's overflow and ask `Memory`
-for a DMA refill when half empty, and the mixer applies volumes and SOUNDBIAS.
-Output is 48 kHz stereo, taken by the frontend once per frame.
+`apu.rs` owns the sound registers. The PSG channels advance on a 64-cycle
+grid, a 512 Hz frame sequencer drives length, envelope and sweep, the two
+FIFOs pop a sample on their timer's overflow and ask `Memory` for a DMA refill
+when half empty, and the mixer applies volumes and SOUNDBIAS. Every change of
+the mixed level becomes a band-limited step in `synth.rs` at the cycle it
+happened, so the output has no aliasing at any sample rate; `Memory` splits
+its cycle blocks at timer overflows so FIFO steps land on their exact cycle.
+The frontend sets the rate of its audio device and takes stereo samples once
+per frame. The optional smooth mode interpolates Direct Sound samples instead
+of holding them, which removes the images of the game's sample rate.
 
 ## Saves, RTC, states
 

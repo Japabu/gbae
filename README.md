@@ -31,7 +31,7 @@ Default controls (change them in the menu, saved to `gbae.cfg`):
 | menu | Escape |
 
 The Escape menu offers resume, reset, save state, load state, a ROM browser,
-volume, turbo speed and key mapping. Save data is written to `<rom>.sav` next
+volume, turbo speed, a sound smoothing switch and key mapping. Save data is written to `<rom>.sav` next
 to the ROM, save states to `<rom>.state`.
 
 ## Tests

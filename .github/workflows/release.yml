@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux-x86_64
+          - os: macos-latest
+            name: macos-universal
+          - os: windows-latest
+            name: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that the tag matches Cargo.toml
+        shell: bash
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version"; exit 1; }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - name: Build
+        shell: bash
+        run: |
+          mkdir -p dist/gbae
+          case "$RUNNER_OS" in
+            macOS)
+              cargo build --release --locked --target aarch64-apple-darwin
+              cargo build --release --locked --target x86_64-apple-darwin
+              lipo -create -output dist/gbae/gbae target/aarch64-apple-darwin/release/gbae target/x86_64-apple-darwin/release/gbae
+              ;;
+            Windows)
+              cargo build --release --locked
+              cp target/release/gbae.exe dist/gbae/
+              ;;
+            *)
+              cargo build --release --locked
+              cp target/release/gbae dist/gbae/
+              ;;
+          esac
+          cp LICENSE README.md dist/gbae/
+      - name: Package
+        shell: bash
+        working-directory: dist
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a "gbae-$GITHUB_REF_NAME-${{ matrix.name }}.zip" gbae
+          else
+            tar czf "gbae-$GITHUB_REF_NAME-${{ matrix.name }}.tar.gz" gbae
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Release notes and checksums
+        run: |
+          previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          git log --format='- %s' "${previous:+$previous..}$GITHUB_REF_NAME" > notes.md
+          (cd artifacts && sha256sum * > SHA256SUMS)
+      - run: gh release create "$GITHUB_REF_NAME" --title "gbae $GITHUB_REF_NAME" --notes-file notes.md artifacts/*
+        env:
+          GH_TOKEN: ${{ github.token }}

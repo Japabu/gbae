@@ -8,9 +8,17 @@ is `seq-macro`. The window build adds `winit`, `softbuffer` and `cpal`.
 
 ## Running
 
+Binaries for Linux, macOS and Windows are on the
+[Releases](https://github.com/Japabu/gbae/releases) page, or build one:
+
 ```
 cargo run --release -- game.gba
 ```
+
+Building on Linux needs the ALSA headers (`libasound2-dev` and
+`pkg-config` on Debian and Ubuntu). The release binaries are unsigned:
+macOS asks you to open the first one from the right-click menu, or run
+`xattr -d com.apple.quarantine gbae`; Windows shows a SmartScreen prompt.
 
 `gbae [ROM]` runs a ROM; without one the menu opens on its file browser.
 `--help` and `--version` are the only options. Games boot with the
@@ -52,6 +60,11 @@ cycle count of every instruction class and bus region against the ARM7TDMI
 rules. Golden-frame tests compare rendered frames with PNGs in
 `tests/golden`; `UPDATE_GOLDEN=1` re-records them after you have checked
 the new image.
+
+CI runs fmt, clippy and the tests on Linux, macOS and Windows for every
+push. A release is a tag: bump the version in `Cargo.toml`, commit, then
+`git tag v0.2.0` and `git push origin v0.2.0`; the workflow builds the
+three archives and publishes them with checksums and the commit list.
 
 `benchmark.rs` assembles a workload ROM: a scrolling tiled background,
 moving sprites, a DMA tile animation, a Thumb loop in IWRAM, an ARM loop in

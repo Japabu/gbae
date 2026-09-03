@@ -2,8 +2,11 @@
 name = "gbae"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.87"
 license = "MIT"
 description = "A Game Boy Advance emulator"
+repository = "https://github.com/Japabu/gbae"
+readme = "README.md"
 
 [lib]
 path = "src/lib.rs"

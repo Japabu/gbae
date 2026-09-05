@@ -44,6 +44,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - uses: ./.github/actions/toyos-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.TOYOS_TOOLCHAIN }}
       - run: cargo +toyos build --release --locked --target x86_64-unknown-toyos
